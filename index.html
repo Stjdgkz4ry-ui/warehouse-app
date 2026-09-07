@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>仓库库存管理</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:#f5f6f8;
+  color:#222;
+}
+header{
+  background:#1677ff;
+  color:white;
+  padding:18px 16px;
+  position:sticky;
+  top:0;
+  z-index:10;
+}
+header h1{margin:0;font-size:22px}
+header p{margin:6px 0 0;font-size:13px;opacity:.9}
+
+.container{padding:15px;max-width:700px;margin:auto}
+
+.stats{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px;
+  margin-bottom:15px;
+}
+.stat{
+  background:white;
+  border-radius:12px;
+  padding:14px 8px;
+  text-align:center;
+  box-shadow:0 1px 4px #ddd;
+}
+.stat strong{
+  display:block;
+  font-size:22px;
+  color:#1677ff;
+}
+.stat span{font-size:12px;color:#777}
+
+.search{
+  background:white;
+  padding:12px;
+  border-radius:12px;
+  margin-bottom:12px;
+}
+.search input{
+  width:100%;
+  padding:12px;
+  border:1px solid #ddd;
+  border-radius:8px;
+  font-size:16px;
+}
+
+button{
+  border:0;
+  border-radius:8px;
+  padding:11px 15px;
+  font-size:15px;
+  cursor:pointer;
+}
+.primary{background:#1677ff;color:white}
+.green{background:#18a058;color:white}
+.red{background:#e53935;color:white}
+.gray{background:#eee;color:#333}
+
+.card{
+  background:white;
+  border-radius:12px;
+  padding:15px;
+  margin-bottom:12px;
+  box-shadow:0 1px 4px #ddd;
+}
+.card h3{
+  margin:0 0 8px;
+  font-size:17px;
+}
+.info{
+  color:#666;
+  font-size:14px;
+  line-height:1.8;
+}
+.qty{
+  font-size:22px;
+  font-weight:bold;
+  color:#1677ff;
+}
+.actions{
+  display:flex;
+  gap:8px;
+  margin-top:12px;
+}
+.actions button{flex:1}
+
+.add{
+  position:fixed;
+  right:20px;
+  bottom:25px;
+  width:58px;
+  height:58px;
+  border-radius:50%;
+  background:#1677ff;
+  color:white;
+  font-size:30px;
+  box-shadow:0 4px 15px #aaa;
+}
+
+.empty{
+  text-align:center;
+  padding:40px 10px;
+  color:#999;
+}
+
+.modal{
+  display:none;
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.45);
+  z-index:20;
+  align-items:flex-end;
+}
+.modal.show{display:flex}
+
+.modal-box{
+  background:white;
+  width:100%;
+  border-radius:20px 20px 0 0;
+  padding:20px;
+  max-height:90vh;
+  overflow:auto;
+}
+.modal-box h2{margin-top:0}
+
+label{
+  display:block;
+  margin-top:12px;
+  margin-bottom:5px;
+  font-size:14px;
+  color:#555;
+}
+input{
+  width:100%;
+  padding:12px;
+  border:1px solid #ddd;
+  border-radius:8px;
+  font-size:16px;
+}
+.modal-actions{
+  display:flex;
+  gap:10px;
+  margin-top:20px;
+}
+.modal-actions button{flex:1}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>📦 仓库库存管理</h1>
+  <p>库存 · 库位 · 入库 · 出库</p>
+</header>
+
+<div class="container">
+
+  <div class="stats">
+    <div class="stat">
+      <strong id="productCount">0</strong>
+      <span>商品种类</span>
+    </div>
+
+    <div class="stat">
+      <strong id="totalQty">0</strong>
+      <span>库存总数</span>
+    </div>
+
+    <div class="stat">
+      <strong id="locationCount">0</strong>
+      <span>库位数量</span>
+    </div>
+  </div>
+
+  <div class="search">
+    <input id="search" placeholder="🔍 搜商品、SKU、库位..." oninput="render()">
+  </div>
+
+  <div id="list"></div>
+
+</div>
+
+<button class="add" onclick="openAdd()">＋</button>
+
+<div class="modal" id="modal">
+  <div class="modal-box">
+
+    <h2 id="modalTitle">添加商品</h2>
+
+    <label>商品名称</label>
+    <input id="name" placeholder="例如：矿泉水">
+
+    <label>SKU / 商品编号</label>
+    <input id="sku" placeholder="例如：SP001">
+
+    <label>库存数量</label>
+    <input id="qty" type="number" placeholder="例如：100">
+
+    <label>单位</label>
+    <input id="unit" placeholder="例如：箱、件、个">
+
+    <label>库位</label>
+    <input id="location" placeholder="例如：A01-01">
+
+    <div class="modal-actions">
+      <button class="gray" onclick="closeModal()">取消</button>
+      <button class="primary" onclick="saveProduct()">保存</button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+
+let products = JSON.parse(localStorage.getItem("warehouse_products") || "[]");
+let editingId = null;
+
+function saveData(){
+  localStorage.setItem("warehouse_products", JSON.stringify(products));
+}
+
+function openAdd(){
+  editingId = null;
+
+  document.getElementById("modalTitle").innerText="添加商品";
+
+  document.getElementById("name").value="";
+  document.getElementById("sku").value="";
+  document.getElementById("qty").value="";
+  document.getElementById("unit").value="";
+  document.getElementById("location").value="";
+
+  document.getElementById("modal").classList.add("show");
+}
+
+function closeModal(){
+  document.getElementById("modal").classList.remove("show");
+}
+
+function saveProduct(){
+
+  const name=document.getElementById("name").value.trim();
+  const sku=document.getElementById("sku").value.trim();
+  const qty=Number(document.getElementById("qty").value);
+  const unit=document.getElementById("unit").value.trim();
+  const location=document.getElementById("location").value.trim();
+
+  if(!name){
+    alert("请输入商品名称");
+    return;
+  }
+
+  if(editingId){
+
+    const p=products.find(x=>x.id===editingId);
+
+    if(p){
+      p.name=name;
+      p.sku=sku;
+      p.qty=qty;
+      p.unit=unit;
+      p.location=location;
+    }
+
+  }else{
+
+    products.push({
+      id:Date.now(),
+      name,
+      sku,
+      qty,
+      unit,
+      location
+    });
+
+  }
+
+  saveData();
+  closeModal();
+  render();
+}
+
+function editProduct(id){
+
+  const p=products.find(x=>x.id===id);
+
+  if(!p)return;
+
+  editingId=id;
+
+  document.getElementById("modalTitle").innerText="编辑商品";
+
+  document.getElementById("name").value=p.name;
+  document.getElementById("sku").value=p.sku;
+  document.getElementById("qty").value=p.qty;
+  document.getElementById("unit").value=p.unit;
+  document.getElementById("location").value=p.location;
+
+  document.getElementById("modal").classList.add("show");
+}
+
+function changeQty(id,type){
+
+  const p=products.find(x=>x.id===id);
+
+  if(!p)return;
+
+  const amount=Number(prompt(type==="in" ? "请输入入库数量" : "请输入出库数量"));
+
+  if(!amount || amount<=0)return;
+
+  if(type==="out" && amount>p.qty){
+    alert("库存不足！");
+    return;
+  }
+
+  if(type==="in"){
+    p.qty+=amount;
+  }else{
+    p.qty-=amount;
+  }
+
+  saveData();
+  render();
+}
+
+function deleteProduct(id){
+
+  if(!confirm("确定要删除这个商品吗？"))return;
+
+  products=products.filter(x=>x.id!==id);
+
+  saveData();
+  render();
+}
+
+function render(){
+
+  const keyword=document.getElementById("search").value.trim().toLowerCase();
+
+  const filtered=products.filter(p=>
+    p.name.toLowerCase().includes(keyword) ||
+    p.sku.toLowerCase().includes(keyword) ||
+    p.location.toLowerCase().includes(keyword)
+  );
+
+  document.getElementById("productCount").innerText=products.length;
+
+  document.getElementById("totalQty").innerText=
+    products.reduce((sum,p)=>sum+Number(p.qty||0),0);
+
+  document.getElementById("locationCount").innerText=
+    new Set(products.map(p=>p.location).filter(Boolean)).size;
+
+  const list=document.getElementById("list");
+
+  if(filtered.length===0){
+
+    list.innerHTML=`
+      <div class="empty">
+        📦 暂时没有库存<br><br>
+        点击右下角 ＋ 添加商品
+      </div>
+    `;
+
+    return;
+  }
+
+  list.innerHTML=filtered.map(p=>`
+
+    <div class="card">
+
+      <h3>${escapeHtml(p.name)}</h3>
+
+      <div class="info">
+        SKU：${escapeHtml(p.sku || "-")}<br>
+        库位：📍 ${escapeHtml(p.location || "-")}<br>
+        单位：${escapeHtml(p.unit || "-")}
+      </div>
+
+      <div style="margin-top:8px">
+        库存：
+        <span class="qty">${p.qty}</span>
+        ${escapeHtml(p.unit || "")}
+      </div>
+
+      <div class="actions">
+
+        <button class="green"
+          onclick="changeQty(${p.id},'in')">
+          ＋入库
+        </button>
+
+        <button class="red"
+          onclick="changeQty(${p.id},'out')">
+          −出库
+        </button>
+
+        <button class="gray"
+          onclick="editProduct(${p.id})">
+          编辑
+        </button>
+
+      </div>
+
+      <button
+        class="gray"
+        style="width:100%;margin-top:8px"
+        onclick="deleteProduct(${p.id})">
+        删除商品
+      </button>
+
+    </div>
+
+  `).join("");
+}
+
+function escapeHtml(text){
+
+  return String(text)
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&#039;");
+}
+
+render();
+
+</script>
+
+</body>
+</html>
