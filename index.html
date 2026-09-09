@@ -2,446 +2,2391 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>仓库库存管理</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+
+<title>云端仓库管理系统</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 
 <style>
-*{box-sizing:border-box}
 body{
-  margin:0;
-  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
-  background:#f5f6f8;
-  color:#222;
+    background:#f5f7fb;
+    -webkit-tap-highlight-color:transparent;
 }
-header{
-  background:#1677ff;
-  color:white;
-  padding:18px 16px;
-  position:sticky;
-  top:0;
-  z-index:10;
+.safe-bottom{
+    padding-bottom:90px;
 }
-header h1{margin:0;font-size:22px}
-header p{margin:6px 0 0;font-size:13px;opacity:.9}
-
-.container{padding:15px;max-width:700px;margin:auto}
-
-.stats{
-  display:grid;
-  grid-template-columns:repeat(3,1fr);
-  gap:10px;
-  margin-bottom:15px;
+.modal-bg{
+    background:rgba(0,0,0,.55);
 }
-.stat{
-  background:white;
-  border-radius:12px;
-  padding:14px 8px;
-  text-align:center;
-  box-shadow:0 1px 4px #ddd;
+.hide{
+    display:none!important;
 }
-.stat strong{
-  display:block;
-  font-size:22px;
-  color:#1677ff;
-}
-.stat span{font-size:12px;color:#777}
-
-.search{
-  background:white;
-  padding:12px;
-  border-radius:12px;
-  margin-bottom:12px;
-}
-.search input{
-  width:100%;
-  padding:12px;
-  border:1px solid #ddd;
-  border-radius:8px;
-  font-size:16px;
-}
-
 button{
-  border:0;
-  border-radius:8px;
-  padding:11px 15px;
-  font-size:15px;
-  cursor:pointer;
+    -webkit-user-select:none;
+    user-select:none;
 }
-.primary{background:#1677ff;color:white}
-.green{background:#18a058;color:white}
-.red{background:#e53935;color:white}
-.gray{background:#eee;color:#333}
-
-.card{
-  background:white;
-  border-radius:12px;
-  padding:15px;
-  margin-bottom:12px;
-  box-shadow:0 1px 4px #ddd;
+input,select,textarea{
+    font-size:16px!important;
 }
-.card h3{
-  margin:0 0 8px;
-  font-size:17px;
-}
-.info{
-  color:#666;
-  font-size:14px;
-  line-height:1.8;
-}
-.qty{
-  font-size:22px;
-  font-weight:bold;
-  color:#1677ff;
-}
-.actions{
-  display:flex;
-  gap:8px;
-  margin-top:12px;
-}
-.actions button{flex:1}
-
-.add{
-  position:fixed;
-  right:20px;
-  bottom:25px;
-  width:58px;
-  height:58px;
-  border-radius:50%;
-  background:#1677ff;
-  color:white;
-  font-size:30px;
-  box-shadow:0 4px 15px #aaa;
-}
-
-.empty{
-  text-align:center;
-  padding:40px 10px;
-  color:#999;
-}
-
-.modal{
-  display:none;
-  position:fixed;
-  inset:0;
-  background:rgba(0,0,0,.45);
-  z-index:20;
-  align-items:flex-end;
-}
-.modal.show{display:flex}
-
-.modal-box{
-  background:white;
-  width:100%;
-  border-radius:20px 20px 0 0;
-  padding:20px;
-  max-height:90vh;
-  overflow:auto;
-}
-.modal-box h2{margin-top:0}
-
-label{
-  display:block;
-  margin-top:12px;
-  margin-bottom:5px;
-  font-size:14px;
-  color:#555;
-}
-input{
-  width:100%;
-  padding:12px;
-  border:1px solid #ddd;
-  border-radius:8px;
-  font-size:16px;
-}
-.modal-actions{
-  display:flex;
-  gap:10px;
-  margin-top:20px;
-}
-.modal-actions button{flex:1}
 </style>
 </head>
 
-<body>
+<body class="text-gray-800">
 
-<header>
-  <h1>📦 仓库库存管理</h1>
-  <p>库存 · 库位 · 入库 · 出库</p>
-</header>
+<!-- ==================== 登录页面 ==================== -->
 
-<div class="container">
+<div id="authPage" class="min-h-screen flex items-center justify-center p-5">
 
-  <div class="stats">
-    <div class="stat">
-      <strong id="productCount">0</strong>
-      <span>商品种类</span>
+    <div class="w-full max-w-md bg-white rounded-3xl shadow-xl p-6">
+
+        <div class="text-center mb-7">
+            <div class="text-5xl mb-3">📦</div>
+            <h1 class="text-2xl font-bold">云端仓库管理系统</h1>
+            <p class="text-gray-500 text-sm mt-2">
+                多人协作 · 云端同步 · 手机扫码
+            </p>
+        </div>
+
+        <!-- Supabase配置 -->
+        <div id="configBox">
+
+            <div class="bg-blue-50 rounded-xl p-4 mb-5 text-sm text-blue-800">
+                <b>第一次使用</b><br>
+                先填写 Supabase 的项目地址和 Anon Key。
+                同一套地址和 Key 可以给所有员工使用。
+            </div>
+
+            <label class="block text-sm font-medium mb-1">
+                Supabase Project URL
+            </label>
+
+            <input
+                id="supabaseUrl"
+                class="w-full border rounded-xl p-3 mb-4"
+                placeholder="https://xxxx.supabase.co"
+            >
+
+            <label class="block text-sm font-medium mb-1">
+                Supabase Anon / Publishable Key
+            </label>
+
+            <textarea
+                id="supabaseKey"
+                class="w-full border rounded-xl p-3 mb-4"
+                rows="3"
+                placeholder="粘贴你的 Anon Key"
+            ></textarea>
+
+            <button
+                onclick="saveConfig()"
+                class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold"
+            >
+                连接云端
+            </button>
+
+        </div>
+
+        <!-- 登录注册 -->
+        <div id="loginBox" class="hide">
+
+            <div class="flex bg-gray-100 rounded-xl p-1 mb-5">
+                <button
+                    id="loginTab"
+                    onclick="switchAuth('login')"
+                    class="flex-1 py-2 rounded-lg bg-white shadow font-bold"
+                >
+                    登录
+                </button>
+
+                <button
+                    id="registerTab"
+                    onclick="switchAuth('register')"
+                    class="flex-1 py-2 rounded-lg text-gray-500"
+                >
+                    注册
+                </button>
+            </div>
+
+            <input
+                id="authEmail"
+                type="email"
+                class="w-full border rounded-xl p-3 mb-3"
+                placeholder="邮箱"
+            >
+
+            <input
+                id="authPassword"
+                type="password"
+                class="w-full border rounded-xl p-3 mb-4"
+                placeholder="密码（至少6位）"
+            >
+
+            <button
+                id="authButton"
+                onclick="submitAuth()"
+                class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold"
+            >
+                登录
+            </button>
+
+            <button
+                onclick="resetConfig()"
+                class="w-full text-gray-500 py-3 mt-2"
+            >
+                修改云端配置
+            </button>
+
+        </div>
+
     </div>
+</div>
 
-    <div class="stat">
-      <strong id="totalQty">0</strong>
-      <span>库存总数</span>
+
+<!-- ==================== 仓库选择页面 ==================== -->
+
+<div id="warehousePage" class="hide min-h-screen p-5">
+
+    <div class="max-w-md mx-auto">
+
+        <div class="text-center mt-8 mb-8">
+            <div class="text-5xl mb-3">🏭</div>
+            <h1 class="text-2xl font-bold">选择仓库</h1>
+            <p id="warehouseUser" class="text-gray-500 mt-2"></p>
+        </div>
+
+        <div id="warehouseList"></div>
+
+        <div class="bg-white rounded-2xl shadow p-5 mt-5">
+
+            <h2 class="font-bold text-lg mb-4">
+                创建新仓库
+            </h2>
+
+            <input
+                id="newWarehouseName"
+                class="w-full border rounded-xl p-3 mb-3"
+                placeholder="例如：纽约仓库"
+            >
+
+            <button
+                onclick="createWarehouse()"
+                class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold"
+            >
+                创建仓库
+            </button>
+
+        </div>
+
+        <div class="bg-white rounded-2xl shadow p-5 mt-4">
+
+            <h2 class="font-bold text-lg mb-4">
+                加入已有仓库
+            </h2>
+
+            <input
+                id="joinCodeInput"
+                class="w-full border rounded-xl p-3 mb-3 text-center tracking-widest uppercase"
+                placeholder="输入6位邀请码"
+                maxlength="6"
+            >
+
+            <button
+                onclick="joinWarehouse()"
+                class="w-full bg-green-600 text-white py-3 rounded-xl font-bold"
+            >
+                加入仓库
+            </button>
+
+        </div>
+
+        <button
+            onclick="logout()"
+            class="w-full text-gray-500 py-5"
+        >
+            退出登录
+        </button>
+
     </div>
+</div>
 
-    <div class="stat">
-      <strong id="locationCount">0</strong>
-      <span>库位数量</span>
-    </div>
-  </div>
 
-  <div class="search">
-    <input id="search" placeholder="🔍 搜商品、SKU、库位..." oninput="render()">
-  </div>
+<!-- ==================== 主系统 ==================== -->
 
-  <div id="list"></div>
+<div id="appPage" class="hide min-h-screen safe-bottom">
+
+    <!-- 顶部 -->
+    <header class="bg-white shadow-sm sticky top-0 z-20">
+
+        <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+
+            <div>
+                <h1 class="font-bold text-lg">
+                    📦 <span id="appWarehouseName">仓库</span>
+                </h1>
+
+                <div class="text-xs text-gray-500" id="currentUser"></div>
+            </div>
+
+            <button
+                onclick="openWarehouseSettings()"
+                class="bg-gray-100 px-3 py-2 rounded-xl"
+            >
+                ⚙️
+            </button>
+
+        </div>
+
+    </header>
+
+
+    <!-- 内容 -->
+    <main class="max-w-6xl mx-auto p-4">
+
+        <!-- 库存 -->
+        <section id="tabInventory">
+
+            <div class="grid grid-cols-3 gap-3 mb-4">
+
+                <div class="bg-white rounded-2xl p-4 shadow">
+                    <div class="text-xs text-gray-500">商品数</div>
+                    <div id="statProducts" class="text-2xl font-bold mt-1">0</div>
+                </div>
+
+                <div class="bg-white rounded-2xl p-4 shadow">
+                    <div class="text-xs text-gray-500">库存总量</div>
+                    <div id="statQty" class="text-2xl font-bold mt-1">0</div>
+                </div>
+
+                <div class="bg-white rounded-2xl p-4 shadow">
+                    <div class="text-xs text-gray-500">低库存</div>
+                    <div id="statLow" class="text-2xl font-bold mt-1 text-red-500">0</div>
+                </div>
+
+            </div>
+
+
+            <div class="bg-white rounded-2xl shadow p-4 mb-4">
+
+                <div class="flex gap-2">
+
+                    <input
+                        id="searchInput"
+                        oninput="renderInventory()"
+                        class="flex-1 border rounded-xl p-3"
+                        placeholder="搜索商品 / SKU / 库位"
+                    >
+
+                    <button
+                        onclick="openScanner('search')"
+                        class="bg-black text-white px-4 rounded-xl text-xl"
+                    >
+                        📷
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <div class="flex gap-2 mb-4">
+
+                <button
+                    onclick="openItemModal()"
+                    class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold"
+                >
+                    ＋ 新商品
+                </button>
+
+                <button
+                    onclick="openScanner('stock')"
+                    class="bg-green-600 text-white px-5 rounded-xl font-bold"
+                >
+                    📷 扫码
+                </button>
+
+            </div>
+
+
+            <div id="inventoryList" class="space-y-3"></div>
+
+        </section>
+
+
+        <!-- 批量导入 -->
+        <section id="tabBatch" class="hide">
+
+            <div class="bg-white rounded-2xl shadow p-5">
+
+                <h2 class="font-bold text-xl mb-2">
+                    🧠 批量文本导入
+                </h2>
+
+                <p class="text-sm text-gray-500 mb-4">
+                    一次可以粘贴几十、几百个商品。
+                </p>
+
+                <textarea
+                    id="batchText"
+                    rows="12"
+                    class="w-full border rounded-xl p-3"
+                    placeholder="例如：
+
+商品：无线耳机
+SKU：HD-001
+数量：50
+库位：A-01
+
+商品：手机壳
+SKU：CASE-002
+数量：100
+库位：B-03"
+                ></textarea>
+
+                <button
+                    onclick="parseBatchText()"
+                    class="w-full bg-purple-600 text-white py-3 rounded-xl font-bold mt-4"
+                >
+                    智能识别并导入
+                </button>
+
+                <div id="batchPreview" class="mt-5"></div>
+
+            </div>
+
+        </section>
+
+
+        <!-- 日志 -->
+        <section id="tabLogs" class="hide">
+
+            <div class="bg-white rounded-2xl shadow p-4">
+
+                <div class="flex justify-between items-center mb-4">
+
+                    <h2 class="font-bold text-xl">
+                        📋 操作日志
+                    </h2>
+
+                    <button
+                        onclick="loadLogs()"
+                        class="bg-gray-100 px-3 py-2 rounded-xl"
+                    >
+                        刷新
+                    </button>
+
+                </div>
+
+                <div id="logsList"></div>
+
+            </div>
+
+        </section>
+
+
+        <!-- 设置 -->
+        <section id="tabSettings" class="hide">
+
+            <div class="space-y-4">
+
+                <div class="bg-white rounded-2xl shadow p-5">
+
+                    <h2 class="font-bold text-xl mb-4">
+                        ☁️ 云端仓库
+                    </h2>
+
+                    <div class="text-sm text-gray-500 mb-1">
+                        当前仓库
+                    </div>
+
+                    <div id="settingsWarehouseName"
+                         class="font-bold text-lg mb-4">
+                    </div>
+
+                    <div class="text-sm text-gray-500 mb-1">
+                        仓库邀请码
+                    </div>
+
+                    <div class="flex gap-2">
+
+                        <div
+                            id="settingsJoinCode"
+                            class="flex-1 bg-gray-100 rounded-xl p-3 text-center font-bold tracking-widest"
+                        >
+                        </div>
+
+                        <button
+                            onclick="copyJoinCode()"
+                            class="bg-blue-600 text-white px-4 rounded-xl"
+                        >
+                            复制
+                        </button>
+
+                    </div>
+
+                </div>
+
+
+                <div class="bg-white rounded-2xl shadow p-5">
+
+                    <h2 class="font-bold text-xl mb-4">
+                        💾 数据备份
+                    </h2>
+
+                    <button
+                        onclick="exportBackup()"
+                        class="w-full bg-gray-800 text-white py-3 rounded-xl font-bold"
+                    >
+                        导出库存备份
+                    </button>
+
+                </div>
+
+
+                <div class="bg-white rounded-2xl shadow p-5">
+
+                    <h2 class="font-bold text-xl mb-4">
+                        👤 当前账号
+                    </h2>
+
+                    <div id="settingsEmail"
+                         class="text-gray-600 mb-4">
+                    </div>
+
+                    <button
+                        onclick="logout()"
+                        class="w-full bg-red-500 text-white py-3 rounded-xl font-bold"
+                    >
+                        退出登录
+                    </button>
+
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <!-- 底部导航 -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white border-t z-30">
+
+        <div class="max-w-6xl mx-auto grid grid-cols-4">
+
+            <button
+                onclick="switchTab('inventory')"
+                id="navInventory"
+                class="py-3 text-blue-600 font-bold"
+            >
+                <div>📦</div>
+                <div class="text-xs">库存</div>
+            </button>
+
+            <button
+                onclick="switchTab('batch')"
+                id="navBatch"
+                class="py-3 text-gray-500"
+            >
+                <div>🧠</div>
+                <div class="text-xs">批量</div>
+            </button>
+
+            <button
+                onclick="switchTab('logs')"
+                id="navLogs"
+                class="py-3 text-gray-500"
+            >
+                <div>📋</div>
+                <div class="text-xs">日志</div>
+            </button>
+
+            <button
+                onclick="switchTab('settings')"
+                id="navSettings"
+                class="py-3 text-gray-500"
+            >
+                <div>⚙️</div>
+                <div class="text-xs">设置</div>
+            </button>
+
+        </div>
+
+    </nav>
 
 </div>
 
-<button class="add" onclick="openAdd()">＋</button>
 
-<div class="modal" id="modal">
-  <div class="modal-box">
+<!-- ==================== 商品弹窗 ==================== -->
 
-    <h2 id="modalTitle">添加商品</h2>
+<div id="itemModal"
+     class="hide fixed inset-0 z-50 modal-bg flex items-end sm:items-center justify-center">
 
-    <label>商品名称</label>
-    <input id="name" placeholder="例如：矿泉水">
+    <div class="bg-white w-full sm:max-w-lg sm:rounded-3xl rounded-t-3xl p-5 max-h-[90vh] overflow-y-auto">
 
-    <label>SKU / 商品编号</label>
-    <input id="sku" placeholder="例如：SP001">
+        <div class="flex justify-between items-center mb-5">
 
-    <label>库存数量</label>
-    <input id="qty" type="number" placeholder="例如：100">
+            <h2 id="itemModalTitle"
+                class="text-xl font-bold">
+                新商品
+            </h2>
 
-    <label>单位</label>
-    <input id="unit" placeholder="例如：箱、件、个">
+            <button
+                onclick="closeItemModal()"
+                class="text-2xl"
+            >
+                ×
+            </button>
 
-    <label>库位</label>
-    <input id="location" placeholder="例如：A01-01">
+        </div>
 
-    <div class="modal-actions">
-      <button class="gray" onclick="closeModal()">取消</button>
-      <button class="primary" onclick="saveProduct()">保存</button>
+        <input type="hidden" id="itemId">
+
+        <label class="text-sm font-medium">商品名称</label>
+
+        <input
+            id="itemName"
+            class="w-full border rounded-xl p-3 mb-3"
+            placeholder="商品名称"
+        >
+
+        <label class="text-sm font-medium">SKU / 条码</label>
+
+        <div class="flex gap-2 mb-3">
+
+            <input
+                id="itemSku"
+                class="flex-1 border rounded-xl p-3"
+                placeholder="SKU或条码"
+            >
+
+            <button
+                onclick="openScanner('sku')"
+                class="bg-black text-white px-4 rounded-xl"
+            >
+                📷
+            </button>
+
+        </div>
+
+
+        <label class="text-sm font-medium">
+            库存数量
+        </label>
+
+        <input
+            id="itemQty"
+            type="number"
+            min="0"
+            class="w-full border rounded-xl p-3 mb-3"
+            value="0"
+        >
+
+        <div id="editQtyNotice"
+             class="hide text-xs text-orange-600 bg-orange-50 p-3 rounded-xl mb-3">
+            已有商品的库存请通过“入库 / 出库”调整，这样系统才能准确记录操作日志。
+        </div>
+
+
+        <label class="text-sm font-medium">
+            低库存预警
+        </label>
+
+        <input
+            id="itemAlert"
+            type="number"
+            min="0"
+            class="w-full border rounded-xl p-3 mb-3"
+            value="5"
+        >
+
+
+        <label class="text-sm font-medium">
+            库位
+        </label>
+
+        <input
+            id="itemBin"
+            class="w-full border rounded-xl p-3 mb-5"
+            placeholder="例如 A-01-02"
+        >
+
+
+        <button
+            onclick="saveItem()"
+            class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold"
+        >
+            保存
+        </button>
+
+    </div>
+</div>
+
+
+<!-- ==================== 出入库弹窗 ==================== -->
+
+<div id="stockModal"
+     class="hide fixed inset-0 z-50 modal-bg flex items-end sm:items-center justify-center">
+
+    <div class="bg-white w-full sm:max-w-md sm:rounded-3xl rounded-t-3xl p-5">
+
+        <div class="flex justify-between items-center mb-5">
+
+            <h2 class="text-xl font-bold">
+                📦 库存调整
+            </h2>
+
+            <button
+                onclick="closeStockModal()"
+                class="text-2xl"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <div id="stockProductName"
+             class="font-bold text-lg mb-1">
+        </div>
+
+        <div id="stockCurrentQty"
+             class="text-gray-500 mb-5">
+        </div>
+
+
+        <div class="grid grid-cols-2 gap-3 mb-4">
+
+            <button
+                onclick="setStockType('in')"
+                id="stockInBtn"
+                class="bg-green-600 text-white py-3 rounded-xl font-bold"
+            >
+                ＋ 入库
+            </button>
+
+            <button
+                onclick="setStockType('out')"
+                id="stockOutBtn"
+                class="bg-gray-100 py-3 rounded-xl font-bold"
+            >
+                − 出库
+            </button>
+
+        </div>
+
+
+        <input
+            type="number"
+            id="stockQty"
+            min="1"
+            value="1"
+            class="w-full border rounded-xl p-3 mb-3"
+            placeholder="数量"
+        >
+
+        <input
+            id="stockNote"
+            class="w-full border rounded-xl p-3 mb-5"
+            placeholder="备注（可选）"
+        >
+
+        <button
+            onclick="submitStockAdjustment()"
+            class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold"
+        >
+            确认
+        </button>
+
+    </div>
+</div>
+
+
+<!-- ==================== 扫码弹窗 ==================== -->
+
+<div id="scannerModal"
+     class="hide fixed inset-0 z-[60] bg-black flex flex-col">
+
+    <div class="p-4 text-white flex justify-between">
+
+        <div class="font-bold text-lg">
+            📷 扫描条码
+        </div>
+
+        <button
+            onclick="closeScanner()"
+            class="text-3xl"
+        >
+            ×
+        </button>
+
     </div>
 
-  </div>
+    <div id="reader"
+         class="bg-white mx-4 rounded-2xl overflow-hidden">
+    </div>
+
+    <div class="text-white text-center p-5">
+        将条码放入框内
+    </div>
+
 </div>
+
+
+<!-- ==================== 仓库设置弹窗 ==================== -->
+
+<div id="warehouseSettingsModal"
+     class="hide fixed inset-0 z-50 modal-bg flex items-end sm:items-center justify-center">
+
+    <div class="bg-white w-full sm:max-w-md sm:rounded-3xl rounded-t-3xl p-5">
+
+        <div class="flex justify-between mb-5">
+
+            <h2 class="text-xl font-bold">
+                仓库设置
+            </h2>
+
+            <button
+                onclick="closeWarehouseSettings()"
+                class="text-2xl"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <div class="bg-blue-50 rounded-xl p-4 text-sm mb-4">
+
+            <b>邀请码</b>
+
+            <div
+                id="modalJoinCode"
+                class="text-2xl font-bold tracking-widest mt-2"
+            ></div>
+
+            <div class="mt-2">
+                把这个邀请码给员工，员工登录自己的账号后即可加入这个仓库。
+            </div>
+
+        </div>
+
+        <button
+            onclick="copyJoinCode()"
+            class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold mb-3"
+        >
+            复制邀请码
+        </button>
+
+        <button
+            onclick="closeWarehouseSettings();switchTab('settings')"
+            class="w-full bg-gray-100 py-3 rounded-xl font-bold"
+        >
+            更多设置
+        </button>
+
+    </div>
+</div>
+
+
+<!-- ==================== 提示 ==================== -->
+
+<div id="toast"
+     class="fixed left-1/2 -translate-x-1/2 bottom-24 z-[100] hide">
+    <div
+        id="toastText"
+        class="bg-gray-900 text-white px-5 py-3 rounded-full shadow-xl text-sm"
+    ></div>
+</div>
+
 
 <script>
 
-let products = JSON.parse(localStorage.getItem("warehouse_products") || "[]");
-let editingId = null;
+/* ============================================================
+   全局变量
+============================================================ */
 
-function saveData(){
-  localStorage.setItem("warehouse_products", JSON.stringify(products));
+let sb = null;
+
+let currentUser = null;
+let currentWarehouse = null;
+let inventory = [];
+let logs = [];
+
+let realtimeChannel = null;
+
+let authMode = 'login';
+
+let stockItem = null;
+let stockType = 'in';
+
+let scanner = null;
+let scannerMode = null;
+
+
+/* ============================================================
+   工具函数
+============================================================ */
+
+function $(id){
+    return document.getElementById(id);
 }
 
-function openAdd(){
-  editingId = null;
-
-  document.getElementById("modalTitle").innerText="添加商品";
-
-  document.getElementById("name").value="";
-  document.getElementById("sku").value="";
-  document.getElementById("qty").value="";
-  document.getElementById("unit").value="";
-  document.getElementById("location").value="";
-
-  document.getElementById("modal").classList.add("show");
+function escapeHtml(value){
+    return String(value ?? '')
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#039;');
 }
 
-function closeModal(){
-  document.getElementById("modal").classList.remove("show");
+function toast(message){
+
+    $('toastText').textContent = message;
+    $('toast').classList.remove('hide');
+
+    clearTimeout(window.toastTimer);
+
+    window.toastTimer = setTimeout(()=>{
+        $('toast').classList.add('hide');
+    },2500);
 }
 
-function saveProduct(){
+function showPage(page){
 
-  const name=document.getElementById("name").value.trim();
-  const sku=document.getElementById("sku").value.trim();
-  const qty=Number(document.getElementById("qty").value);
-  const unit=document.getElementById("unit").value.trim();
-  const location=document.getElementById("location").value.trim();
+    $('authPage').classList.add('hide');
+    $('warehousePage').classList.add('hide');
+    $('appPage').classList.add('hide');
 
-  if(!name){
-    alert("请输入商品名称");
-    return;
-  }
+    $(page).classList.remove('hide');
+}
 
-  if(editingId){
+function getConfig(){
 
-    const p=products.find(x=>x.id===editingId);
+    return {
+        url:localStorage.getItem('warehouse_supabase_url') || '',
+        key:localStorage.getItem('warehouse_supabase_key') || ''
+    };
+}
 
-    if(p){
-      p.name=name;
-      p.sku=sku;
-      p.qty=qty;
-      p.unit=unit;
-      p.location=location;
+
+/* ============================================================
+   Supabase配置
+============================================================ */
+
+function saveConfig(){
+
+    const url = $('supabaseUrl').value.trim();
+    const key = $('supabaseKey').value.trim();
+
+    if(!url || !key){
+        toast('请填写 Supabase URL 和 Key');
+        return;
     }
 
-  }else{
+    localStorage.setItem('warehouse_supabase_url',url);
+    localStorage.setItem('warehouse_supabase_key',key);
 
-    products.push({
-      id:Date.now(),
-      name,
-      sku,
-      qty,
-      unit,
-      location
+    initSupabase();
+
+    toast('云端配置已保存');
+}
+
+function resetConfig(){
+
+    localStorage.removeItem('warehouse_supabase_url');
+    localStorage.removeItem('warehouse_supabase_key');
+
+    location.reload();
+}
+
+function initSupabase(){
+
+    const config = getConfig();
+
+    if(!config.url || !config.key){
+
+        $('configBox').classList.remove('hide');
+        $('loginBox').classList.add('hide');
+
+        return;
+    }
+
+    sb = window.supabase.createClient(
+        config.url,
+        config.key
+    );
+
+    $('configBox').classList.add('hide');
+    $('loginBox').classList.remove('hide');
+
+    sb.auth.onAuthStateChange((event,session)=>{
+
+        setTimeout(()=>{
+            handleSession(session);
+        },0);
+
     });
 
-  }
-
-  saveData();
-  closeModal();
-  render();
+    sb.auth.getSession().then(({data})=>{
+        handleSession(data.session);
+    });
 }
 
-function editProduct(id){
 
-  const p=products.find(x=>x.id===id);
+/* ============================================================
+   登录注册
+============================================================ */
 
-  if(!p)return;
+function switchAuth(mode){
 
-  editingId=id;
+    authMode = mode;
 
-  document.getElementById("modalTitle").innerText="编辑商品";
+    if(mode === 'login'){
 
-  document.getElementById("name").value=p.name;
-  document.getElementById("sku").value=p.sku;
-  document.getElementById("qty").value=p.qty;
-  document.getElementById("unit").value=p.unit;
-  document.getElementById("location").value=p.location;
+        $('loginTab').className =
+            'flex-1 py-2 rounded-lg bg-white shadow font-bold';
 
-  document.getElementById("modal").classList.add("show");
+        $('registerTab').className =
+            'flex-1 py-2 rounded-lg text-gray-500';
+
+        $('authButton').textContent = '登录';
+
+    }else{
+
+        $('registerTab').className =
+            'flex-1 py-2 rounded-lg bg-white shadow font-bold';
+
+        $('loginTab').className =
+            'flex-1 py-2 rounded-lg text-gray-500';
+
+        $('authButton').textContent = '注册';
+
+    }
 }
 
-function changeQty(id,type){
+async function submitAuth(){
 
-  const p=products.find(x=>x.id===id);
+    if(!sb){
+        toast('请先连接云端');
+        return;
+    }
 
-  if(!p)return;
+    const email = $('authEmail').value.trim();
+    const password = $('authPassword').value;
 
-  const amount=Number(prompt(type==="in" ? "请输入入库数量" : "请输入出库数量"));
+    if(!email || !password){
+        toast('请输入邮箱和密码');
+        return;
+    }
 
-  if(!amount || amount<=0)return;
+    if(password.length < 6){
+        toast('密码至少6位');
+        return;
+    }
 
-  if(type==="out" && amount>p.qty){
-    alert("库存不足！");
-    return;
-  }
+    $('authButton').disabled = true;
 
-  if(type==="in"){
-    p.qty+=amount;
-  }else{
-    p.qty-=amount;
-  }
+    try{
 
-  saveData();
-  render();
+        if(authMode === 'login'){
+
+            const {error} = await sb.auth.signInWithPassword({
+                email,
+                password
+            });
+
+            if(error) throw error;
+
+            toast('登录成功');
+
+        }else{
+
+            const {data,error} = await sb.auth.signUp({
+                email,
+                password
+            });
+
+            if(error) throw error;
+
+            if(!data.session){
+
+                toast('注册成功，请检查邮箱完成验证');
+
+            }else{
+
+                toast('注册成功');
+
+            }
+        }
+
+    }catch(err){
+
+        toast(err.message || '操作失败');
+
+    }finally{
+
+        $('authButton').disabled = false;
+
+    }
 }
 
-function deleteProduct(id){
+async function logout(){
 
-  if(!confirm("确定要删除这个商品吗？"))return;
+    if(sb){
 
-  products=products.filter(x=>x.id!==id);
+        await sb.auth.signOut();
 
-  saveData();
-  render();
+    }
+
+    currentUser = null;
+    currentWarehouse = null;
+
+    if(realtimeChannel){
+
+        await sb.removeChannel(realtimeChannel);
+        realtimeChannel = null;
+
+    }
+
+    showPage('authPage');
+
+    $('configBox').classList.add('hide');
+    $('loginBox').classList.remove('hide');
 }
 
-function render(){
 
-  const keyword=document.getElementById("search").value.trim().toLowerCase();
+/* ============================================================
+   Session
+============================================================ */
 
-  const filtered=products.filter(p=>
-    p.name.toLowerCase().includes(keyword) ||
-    p.sku.toLowerCase().includes(keyword) ||
-    p.location.toLowerCase().includes(keyword)
-  );
+async function handleSession(session){
 
-  document.getElementById("productCount").innerText=products.length;
+    if(!session){
 
-  document.getElementById("totalQty").innerText=
-    products.reduce((sum,p)=>sum+Number(p.qty||0),0);
+        showPage('authPage');
 
-  document.getElementById("locationCount").innerText=
-    new Set(products.map(p=>p.location).filter(Boolean)).size;
+        const config = getConfig();
 
-  const list=document.getElementById("list");
+        if(config.url && config.key){
 
-  if(filtered.length===0){
+            $('configBox').classList.add('hide');
+            $('loginBox').classList.remove('hide');
 
-    list.innerHTML=`
-      <div class="empty">
-        📦 暂时没有库存<br><br>
-        点击右下角 ＋ 添加商品
-      </div>
+        }else{
+
+            $('configBox').classList.remove('hide');
+            $('loginBox').classList.add('hide');
+
+        }
+
+        return;
+    }
+
+    currentUser = session.user;
+
+    await loadWarehouses();
+
+}
+
+
+/* ============================================================
+   仓库
+============================================================ */
+
+async function loadWarehouses(){
+
+    if(!currentUser) return;
+
+    const {data,error} = await sb
+        .from('warehouse_members')
+        .select(`
+            warehouse_id,
+            role,
+            warehouses (
+                id,
+                name,
+                join_code
+            )
+        `)
+        .eq('user_id',currentUser.id);
+
+    if(error){
+
+        console.error(error);
+        toast('读取仓库失败：'+error.message);
+        return;
+
+    }
+
+    $('warehouseUser').textContent =
+        currentUser.email;
+
+    const list = $('warehouseList');
+
+    if(!data || data.length === 0){
+
+        list.innerHTML = `
+            <div class="bg-yellow-50 text-yellow-800 rounded-2xl p-4 text-sm mb-4">
+                你现在还没有加入任何仓库。
+                <br>你可以创建一个新仓库，或者输入其他仓库的邀请码。
+            </div>
+        `;
+
+    }else{
+
+        list.innerHTML = data.map(row=>{
+
+            const w = row.warehouses;
+
+            return `
+                <button
+                    onclick="selectWarehouse('${w.id}')"
+                    class="w-full bg-white shadow rounded-2xl p-5 mb-3 text-left active:scale-[.98]"
+                >
+                    <div class="font-bold text-lg">
+                        🏭 ${escapeHtml(w.name)}
+                    </div>
+
+                    <div class="text-sm text-gray-500 mt-1">
+                        ${row.role === 'owner' ? '仓库所有者' :
+                          row.role === 'admin' ? '管理员' : '成员'}
+                    </div>
+
+                    <div class="text-xs text-gray-400 mt-2">
+                        邀请码：${escapeHtml(w.join_code)}
+                    </div>
+                </button>
+            `;
+
+        }).join('');
+
+    }
+
+    showPage('warehousePage');
+}
+
+async function createWarehouse(){
+
+    const name = $('newWarehouseName').value.trim();
+
+    if(!name){
+
+        toast('请输入仓库名称');
+        return;
+
+    }
+
+    const {data,error} = await sb.rpc(
+        'create_warehouse',
+        {
+            p_name:name
+        }
+    );
+
+    if(error){
+
+        toast(error.message);
+        return;
+
+    }
+
+    $('newWarehouseName').value = '';
+
+    toast('仓库创建成功');
+
+    await loadWarehouses();
+}
+
+async function joinWarehouse(){
+
+    const code = $('joinCodeInput').value.trim().toUpperCase();
+
+    if(code.length !== 6){
+
+        toast('请输入6位邀请码');
+        return;
+
+    }
+
+    const {data,error} = await sb.rpc(
+        'join_warehouse',
+        {
+            p_join_code:code
+        }
+    );
+
+    if(error){
+
+        toast(error.message);
+        return;
+
+    }
+
+    $('joinCodeInput').value = '';
+
+    toast('加入仓库成功');
+
+    await loadWarehouses();
+}
+
+async function selectWarehouse(id){
+
+    const {data,error} = await sb
+        .from('warehouses')
+        .select('*')
+        .eq('id',id)
+        .single();
+
+    if(error){
+
+        toast(error.message);
+        return;
+
+    }
+
+    currentWarehouse = data;
+
+    $('appWarehouseName').textContent =
+        currentWarehouse.name;
+
+    $('currentUser').textContent =
+        currentUser.email;
+
+    $('settingsWarehouseName').textContent =
+        currentWarehouse.name;
+
+    $('settingsJoinCode').textContent =
+        currentWarehouse.join_code;
+
+    $('modalJoinCode').textContent =
+        currentWarehouse.join_code;
+
+    $('settingsEmail').textContent =
+        currentUser.email;
+
+    showPage('appPage');
+
+    await loadCloudData();
+
+    setupRealtime();
+
+}
+
+
+/* ============================================================
+   云端库存
+============================================================ */
+
+async function loadCloudData(){
+
+    if(!currentWarehouse) return;
+
+    const {data,error} = await sb
+        .from('inventory')
+        .select('*')
+        .eq('warehouse_id',currentWarehouse.id)
+        .order('updated_at',{ascending:false});
+
+    if(error){
+
+        toast('读取库存失败：'+error.message);
+        return;
+
+    }
+
+    inventory = data || [];
+
+    renderInventory();
+
+    await loadLogs();
+}
+
+async function loadLogs(){
+
+    if(!currentWarehouse) return;
+
+    const {data,error} = await sb
+        .from('stock_logs')
+        .select('*')
+        .eq('warehouse_id',currentWarehouse.id)
+        .order('created_at',{ascending:false})
+        .limit(200);
+
+    if(error){
+
+        toast('读取日志失败：'+error.message);
+        return;
+
+    }
+
+    logs = data || [];
+
+    renderLogs();
+}
+
+
+/* ============================================================
+   Realtime 多人同步
+============================================================ */
+
+async function setupRealtime(){
+
+    if(!currentWarehouse) return;
+
+    if(realtimeChannel){
+
+        await sb.removeChannel(realtimeChannel);
+
+    }
+
+    realtimeChannel = sb
+        .channel('warehouse-'+currentWarehouse.id)
+
+        .on(
+            'postgres_changes',
+            {
+                event:'*',
+                schema:'public',
+                table:'inventory',
+                filter:`warehouse_id=eq.${currentWarehouse.id}`
+            },
+            async ()=>{
+                await loadCloudData();
+            }
+        )
+
+        .on(
+            'postgres_changes',
+            {
+                event:'*',
+                schema:'public',
+                table:'stock_logs',
+                filter:`warehouse_id=eq.${currentWarehouse.id}`
+            },
+            async ()=>{
+                await loadLogs();
+            }
+        )
+
+        .subscribe();
+
+}
+
+
+/* ============================================================
+   库存显示
+============================================================ */
+
+function renderInventory(){
+
+    const search = $('searchInput').value.trim().toLowerCase();
+
+    let data = inventory.filter(item=>{
+
+        if(!search) return true;
+
+        return (
+            String(item.name || '').toLowerCase().includes(search) ||
+            String(item.sku || '').toLowerCase().includes(search) ||
+            String(item.bin || '').toLowerCase().includes(search)
+        );
+
+    });
+
+    const totalQty = inventory.reduce(
+        (sum,item)=>sum + Number(item.qty || 0),
+        0
+    );
+
+    const lowCount = inventory.filter(
+        item=>Number(item.qty || 0) <= Number(item.alert || 0)
+    ).length;
+
+    $('statProducts').textContent =
+        inventory.length;
+
+    $('statQty').textContent =
+        totalQty;
+
+    $('statLow').textContent =
+        lowCount;
+
+
+    if(data.length === 0){
+
+        $('inventoryList').innerHTML = `
+            <div class="bg-white rounded-2xl shadow p-8 text-center text-gray-500">
+                没有找到商品
+            </div>
+        `;
+
+        return;
+
+    }
+
+
+    $('inventoryList').innerHTML = data.map(item=>{
+
+        const low =
+            Number(item.qty) <= Number(item.alert);
+
+        return `
+            <div class="bg-white rounded-2xl shadow p-4">
+
+                <div class="flex justify-between gap-3">
+
+                    <div class="min-w-0">
+
+                        <div class="font-bold text-lg truncate">
+                            ${escapeHtml(item.name)}
+                        </div>
+
+                        <div class="text-sm text-gray-500 mt-1">
+                            SKU：${escapeHtml(item.sku)}
+                        </div>
+
+                        <div class="text-sm text-gray-500">
+                            库位：${escapeHtml(item.bin || '未设置')}
+                        </div>
+
+                    </div>
+
+                    <div class="text-right">
+
+                        <div class="text-2xl font-bold ${low ? 'text-red-500' : 'text-gray-900'}">
+                            ${Number(item.qty || 0)}
+                        </div>
+
+                        <div class="text-xs ${low ? 'text-red-500' : 'text-gray-400'}">
+                            ${low ? '⚠️ 库存不足' : '库存'}
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <div class="grid grid-cols-3 gap-2 mt-4">
+
+                    <button
+                        onclick="openStockModal('${item.id}','in')"
+                        class="bg-green-50 text-green-700 py-2 rounded-xl font-bold"
+                    >
+                        ＋入库
+                    </button>
+
+                    <button
+                        onclick="openStockModal('${item.id}','out')"
+                        class="bg-orange-50 text-orange-700 py-2 rounded-xl font-bold"
+                    >
+                        −出库
+                    </button>
+
+                    <button
+                        onclick="openItemModal('${item.id}')"
+                        class="bg-gray-100 py-2 rounded-xl font-bold"
+                    >
+                        编辑
+                    </button>
+
+                </div>
+
+            </div>
+        `;
+
+    }).join('');
+
+}
+
+
+/* ============================================================
+   新建 / 编辑商品
+============================================================ */
+
+function openItemModal(id=null){
+
+    $('itemModal').classList.remove('hide');
+
+    if(id){
+
+        const item = inventory.find(x=>x.id===id);
+
+        if(!item) return;
+
+        $('itemModalTitle').textContent = '编辑商品';
+
+        $('itemId').value = item.id;
+
+        $('itemName').value = item.name || '';
+
+        $('itemSku').value = item.sku || '';
+
+        $('itemQty').value = item.qty || 0;
+
+        $('itemAlert').value = item.alert ?? 5;
+
+        $('itemBin').value = item.bin || '';
+
+        $('itemQty').disabled = true;
+
+        $('editQtyNotice').classList.remove('hide');
+
+    }else{
+
+        $('itemModalTitle').textContent = '新商品';
+
+        $('itemId').value = '';
+
+        $('itemName').value = '';
+
+        $('itemSku').value = '';
+
+        $('itemQty').value = 0;
+
+        $('itemAlert').value = 5;
+
+        $('itemBin').value = '';
+
+        $('itemQty').disabled = false;
+
+        $('editQtyNotice').classList.add('hide');
+
+    }
+
+}
+
+function closeItemModal(){
+
+    $('itemModal').classList.add('hide');
+
+}
+
+async function saveItem(){
+
+    const id = $('itemId').value;
+
+    const name = $('itemName').value.trim();
+
+    const sku = $('itemSku').value.trim();
+
+    const qty = Number($('itemQty').value || 0);
+
+    const alertQty = Number($('itemAlert').value || 0);
+
+    const bin = $('itemBin').value.trim();
+
+
+    if(!name){
+
+        toast('请输入商品名称');
+        return;
+
+    }
+
+    if(!sku){
+
+        toast('请输入SKU或条码');
+        return;
+
+    }
+
+
+    try{
+
+        if(id){
+
+            const {error} = await sb.rpc(
+                'update_inventory_info',
+                {
+                    p_inventory_id:id,
+                    p_name:name,
+                    p_sku:sku,
+                    p_alert:alertQty,
+                    p_bin:bin
+                }
+            );
+
+            if(error) throw error;
+
+            toast('商品更新成功');
+
+        }else{
+
+            const {error} = await sb.rpc(
+                'create_inventory',
+                {
+                    p_warehouse_id:currentWarehouse.id,
+                    p_name:name,
+                    p_sku:sku,
+                    p_qty:qty,
+                    p_alert:alertQty,
+                    p_bin:bin
+                }
+            );
+
+            if(error) throw error;
+
+            toast('商品创建成功');
+
+        }
+
+        closeItemModal();
+
+        await loadCloudData();
+
+    }catch(err){
+
+        toast(err.message || '保存失败');
+
+    }
+
+}
+
+
+/* ============================================================
+   出入库
+============================================================ */
+
+function openStockModal(id,type='in'){
+
+    stockItem = inventory.find(x=>x.id===id);
+
+    if(!stockItem) return;
+
+    $('stockModal').classList.remove('hide');
+
+    $('stockProductName').textContent =
+        stockItem.name;
+
+    $('stockCurrentQty').textContent =
+        `当前库存：${stockItem.qty}`;
+
+    $('stockQty').value = 1;
+
+    $('stockNote').value = '';
+
+    setStockType(type);
+
+}
+
+function closeStockModal(){
+
+    $('stockModal').classList.add('hide');
+
+    stockItem = null;
+
+}
+
+function setStockType(type){
+
+    stockType = type;
+
+    if(type === 'in'){
+
+        $('stockInBtn').className =
+            'bg-green-600 text-white py-3 rounded-xl font-bold';
+
+        $('stockOutBtn').className =
+            'bg-gray-100 py-3 rounded-xl font-bold';
+
+    }else{
+
+        $('stockOutBtn').className =
+            'bg-orange-600 text-white py-3 rounded-xl font-bold';
+
+        $('stockInBtn').className =
+            'bg-gray-100 py-3 rounded-xl font-bold';
+
+    }
+
+}
+
+async function submitStockAdjustment(){
+
+    if(!stockItem){
+
+        toast('没有选择商品');
+        return;
+
+    }
+
+    const qty = Number($('stockQty').value);
+
+    const note = $('stockNote').value.trim();
+
+    if(!qty || qty <= 0){
+
+        toast('请输入正确数量');
+        return;
+
+    }
+
+    try{
+
+        const {data,error} = await sb.rpc(
+            'adjust_inventory',
+            {
+                p_inventory_id:stockItem.id,
+                p_type:stockType,
+                p_qty:qty,
+                p_note:note || null
+            }
+        );
+
+        if(error) throw error;
+
+        closeStockModal();
+
+        toast(
+            stockType === 'in'
+            ? `入库成功 +${qty}`
+            : `出库成功 -${qty}`
+        );
+
+        await loadCloudData();
+
+    }catch(err){
+
+        toast(err.message || '库存调整失败');
+
+    }
+
+}
+
+
+/* ============================================================
+   扫码
+============================================================ */
+
+async function openScanner(mode){
+
+    scannerMode = mode;
+
+    $('scannerModal').classList.remove('hide');
+
+    try{
+
+        scanner = new Html5Qrcode('reader');
+
+        await scanner.start(
+            {facingMode:'environment'},
+            {
+                fps:10,
+                qrbox:{
+                    width:280,
+                    height:180
+                }
+            },
+            async decodedText=>{
+
+                await handleScan(decodedText);
+
+            },
+            ()=>{}
+        );
+
+    }catch(err){
+
+        console.error(err);
+
+        toast('无法打开摄像头，请允许浏览器使用摄像头');
+
+        closeScanner();
+
+    }
+
+}
+
+async function handleScan(code){
+
+    code = String(code).trim();
+
+    if(!code) return;
+
+    await closeScanner();
+
+    if(scannerMode === 'sku'){
+
+        $('itemSku').value = code;
+
+        toast('已读取条码：'+code);
+
+        return;
+
+    }
+
+    if(scannerMode === 'search'){
+
+        $('searchInput').value = code;
+
+        renderInventory();
+
+        toast('已搜索：'+code);
+
+        return;
+
+    }
+
+    if(scannerMode === 'stock'){
+
+        const item = inventory.find(
+            x=>String(x.sku).toLowerCase() === code.toLowerCase()
+        );
+
+        if(!item){
+
+            $('searchInput').value = code;
+
+            renderInventory();
+
+            toast('没有找到该SKU，请先建立商品');
+
+            return;
+
+        }
+
+        openStockModal(item.id,'in');
+
+    }
+
+}
+
+async function closeScanner(){
+
+    if(scanner){
+
+        try{
+
+            await scanner.stop();
+
+        }catch(e){}
+
+        try{
+
+            await scanner.clear();
+
+        }catch(e){}
+
+        scanner = null;
+
+    }
+
+    $('scannerModal').classList.add('hide');
+
+}
+
+
+/* ============================================================
+   批量文本导入
+============================================================ */
+
+function parseBatchText(){
+
+    const text = $('batchText').value.trim();
+
+    if(!text){
+
+        toast('请先粘贴商品信息');
+        return;
+
+    }
+
+    const blocks = text
+        .split(/\n\s*\n/)
+        .map(x=>x.trim())
+        .filter(Boolean);
+
+    let rows = [];
+
+    for(const block of blocks){
+
+        const row = parseOneBlock(block);
+
+        if(row.name || row.sku){
+
+            rows.push(row);
+
+        }
+
+    }
+
+
+    if(rows.length === 0){
+
+        // 尝试逐行解析
+        const lines = text
+            .split('\n')
+            .map(x=>x.trim())
+            .filter(Boolean);
+
+        for(const line of lines){
+
+            const row = parseOneBlock(line);
+
+            if(row.name || row.sku){
+
+                rows.push(row);
+
+            }
+
+        }
+
+    }
+
+
+    $('batchPreview').innerHTML = `
+        <div class="font-bold mb-3">
+            识别到 ${rows.length} 个商品
+        </div>
+
+        ${
+            rows.length
+            ? `
+            <div class="space-y-2">
+                ${rows.map((r,i)=>`
+                    <div class="border rounded-xl p-3 text-sm">
+                        <b>${i+1}. ${escapeHtml(r.name || '未识别名称')}</b>
+                        <br>SKU：${escapeHtml(r.sku || '未识别')}
+                        <br>数量：${r.qty}
+                        <br>库位：${escapeHtml(r.bin || '')}
+                    </div>
+                `).join('')}
+            </div>
+
+            <button
+                onclick='confirmBatchImport(${JSON.stringify(rows)})'
+                class="w-full bg-green-600 text-white py-3 rounded-xl font-bold mt-4"
+            >
+                确认导入 ${rows.length} 个商品
+            </button>
+            `
+            : `
+            <div class="text-red-500">
+                没有识别到有效商品，请检查格式。
+            </div>
+            `
+        }
     `;
 
-    return;
-  }
-
-  list.innerHTML=filtered.map(p=>`
-
-    <div class="card">
-
-      <h3>${escapeHtml(p.name)}</h3>
-
-      <div class="info">
-        SKU：${escapeHtml(p.sku || "-")}<br>
-        库位：📍 ${escapeHtml(p.location || "-")}<br>
-        单位：${escapeHtml(p.unit || "-")}
-      </div>
-
-      <div style="margin-top:8px">
-        库存：
-        <span class="qty">${p.qty}</span>
-        ${escapeHtml(p.unit || "")}
-      </div>
-
-      <div class="actions">
-
-        <button class="green"
-          onclick="changeQty(${p.id},'in')">
-          ＋入库
-        </button>
-
-        <button class="red"
-          onclick="changeQty(${p.id},'out')">
-          −出库
-        </button>
-
-        <button class="gray"
-          onclick="editProduct(${p.id})">
-          编辑
-        </button>
-
-      </div>
-
-      <button
-        class="gray"
-        style="width:100%;margin-top:8px"
-        onclick="deleteProduct(${p.id})">
-        删除商品
-      </button>
-
-    </div>
-
-  `).join("");
 }
 
-function escapeHtml(text){
+function parseOneBlock(block){
 
-  return String(text)
-    .replace(/&/g,"&amp;")
-    .replace(/</g,"&lt;")
-    .replace(/>/g,"&gt;")
-    .replace(/"/g,"&quot;")
-    .replace(/'/g,"&#039;");
+    const result = {
+        name:'',
+        sku:'',
+        qty:0,
+        alert:5,
+        bin:''
+    };
+
+
+    const lines = block
+        .split(/\n/)
+        .map(x=>x.trim())
+        .filter(Boolean);
+
+
+    for(const line of lines){
+
+        let m;
+
+
+        m = line.match(
+            /^(?:商品名称|商品|名称|品名)\s*[:：=]\s*(.+)$/i
+        );
+
+        if(m){
+
+            result.name = m[1].trim();
+            continue;
+
+        }
+
+
+        m = line.match(
+            /^(?:SKU|条码|条形码|编码)\s*[:：=]\s*(.+)$/i
+        );
+
+        if(m){
+
+            result.sku = m[1].trim();
+            continue;
+
+        }
+
+
+        m = line.match(
+            /^(?:数量|库存|qty)\s*[:：=]\s*(-?\d+(?:\.\d+)?)$/i
+        );
+
+        if(m){
+
+            result.qty = Math.max(0,Number(m[1]));
+            continue;
+
+        }
+
+
+        m = line.match(
+            /^(?:库位|位置|货位|货架)\s*[:：=]\s*(.+)$/i
+        );
+
+        if(m){
+
+            result.bin = m[1].trim();
+            continue;
+
+        }
+
+
+        // 单行格式：
+        // 商品 SKU 数量 库位
+        if(lines.length === 1){
+
+            const parts = line.split(/[,，\t|]/)
+                .map(x=>x.trim())
+                .filter(Boolean);
+
+            if(parts.length >= 2){
+
+                result.name = parts[0];
+
+                result.sku = parts[1];
+
+                if(parts[2] && !isNaN(parts[2])){
+
+                    result.qty = Number(parts[2]);
+
+                }
+
+                if(parts[3]){
+
+                    result.bin = parts[3];
+
+                }
+
+            }
+
+        }
+
+    }
+
+
+    return result;
+
 }
 
-render();
+
+async function confirmBatchImport(rows){
+
+    if(!rows.length) return;
+
+    let success = 0;
+    let failed = 0;
+
+    for(const row of rows){
+
+        if(!row.name || !row.sku){
+
+            failed++;
+            continue;
+
+        }
+
+        try{
+
+            const {error} = await sb.rpc(
+                'create_inventory',
+                {
+                    p_warehouse_id:currentWarehouse.id,
+                    p_name:row.name,
+                    p_sku:row.sku,
+                    p_qty:Number(row.qty || 0),
+                    p_alert:Number(row.alert || 5),
+                    p_bin:row.bin || ''
+                }
+            );
+
+            if(error) throw error;
+
+            success++;
+
+        }catch(err){
+
+            console.error(err);
+
+            failed++;
+
+        }
+
+    }
+
+
+    toast(`导入完成：成功 ${success} 个，失败 ${failed} 个`);
+
+    $('batchText').value = '';
+
+    $('batchPreview').innerHTML = '';
+
+    await loadCloudData();
+
+}
+
+
+/* ============================================================
+   日志
+============================================================ */
+
+function renderLogs(){
+
+    if(!logs.length){
+
+        $('logsList').innerHTML = `
+            <div class="text-center text-gray-500 py-8">
+                暂无操作日志
+            </div>
+        `;
+
+        return;
+
+    }
+
+
+    $('logsList').innerHTML = logs.map(log=>{
+
+        const isIn = log.type === 'in';
+
+        const date = new Date(log.created_at);
+
+        return `
+            <div class="border-b py-3 last:border-0">
+
+                <div class="flex justify-between gap-3">
+
+                    <div>
+
+                        <div class="font-bold">
+                            ${isIn ? '🟢 入库' : '🟠 出库'}
+                            ${escapeHtml(log.name || '')}
+                        </div>
+
+                        <div class="text-sm text-gray-500">
+                            SKU：${escapeHtml(log.sku || '')}
+                        </div>
+
+                        ${
+                            log.note
+                            ? `<div class="text-sm text-gray-500">
+                                备注：${escapeHtml(log.note)}
+                               </div>`
+                            : ''
+                        }
+
+                    </div>
+
+                    <div class="text-right">
+
+                        <div class="font-bold ${isIn ? 'text-green-600' : 'text-orange-600'}">
+                            ${isIn ? '+' : '-'}${log.qty}
+                        </div>
+
+                        <div class="text-xs text-gray-400">
+                            ${formatDate(date)}
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <div class="text-xs text-gray-400 mt-1">
+                    操作人：${escapeHtml(log.operator_email || '未知用户')}
+                </div>
+
+            </div>
+        `;
+
+    }).join('');
+
+}
+
+function formatDate(date){
+
+    return date.toLocaleString(
+        'zh-CN',
+        {
+            year:'numeric',
+            month:'2-digit',
+            day:'2-digit',
+            hour:'2-digit',
+            minute:'2-digit'
+        }
+    );
+
+}
+
+
+/* ============================================================
+   Tab
+============================================================ */
+
+function switchTab(tab){
+
+    const sections = {
+        inventory:'tabInventory',
+        batch:'tabBatch',
+        logs:'tabLogs',
+        settings:'tabSettings'
+    };
+
+    Object.values(sections).forEach(id=>{
+        $(id).classList.add('hide');
+    });
+
+    Object.keys(sections).forEach(name=>{
+
+        const nav = $('nav'+name.charAt(0).toUpperCase()+name.slice(1));
+
+        if(nav){
+
+            nav.className =
+                'py-3 text-gray-500';
+
+        }
+
+    });
+
+
+    $(sections[tab]).classList.remove('hide');
+
+    const nav = $('nav'+tab.charAt(0).toUpperCase()+tab.slice(1));
+
+    if(nav){
+
+        nav.className =
+            'py-3 text-blue-600 font-bold';
+
+    }
+
+
+    if(tab === 'logs'){
+
+        loadLogs();
+
+    }
+
+}
+
+
+/* ============================================================
+   仓库设置
+============================================================ */
+
+function openWarehouseSettings(){
+
+    if(!currentWarehouse) return;
+
+    $('modalJoinCode').textContent =
+        currentWarehouse.join_code;
+
+    $('warehouseSettingsModal').classList.remove('hide');
+
+}
+
+function closeWarehouseSettings(){
+
+    $('warehouseSettingsModal').classList.add('hide');
+
+}
+
+async function copyJoinCode(){
+
+    if(!currentWarehouse) return;
+
+    const code = currentWarehouse.join_code;
+
+    try{
+
+        await navigator.clipboard.writeText(code);
+
+        toast('邀请码已复制：'+code);
+
+    }catch(e){
+
+        toast('邀请码：'+code);
+
+    }
+
+}
+
+
+/* ============================================================
+   数据备份
+============================================================ */
+
+function exportBackup(){
+
+    const data = {
+
+        warehouse:currentWarehouse,
+
+        exported_at:new Date().toISOString(),
+
+        inventory:inventory,
+
+        logs:logs
+
+    };
+
+
+    const blob = new Blob(
+        [JSON.stringify(data,null,2)],
+        {type:'application/json'}
+    );
+
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+
+    a.href = url;
+
+    a.download =
+        'warehouse-backup-' +
+        new Date().toISOString().slice(0,10) +
+        '.json';
+
+    a.click();
+
+    URL.revokeObjectURL(url);
+
+    toast('备份文件已生成');
+
+}
+
+
+/* ============================================================
+   初始化
+============================================================ */
+
+document.addEventListener('DOMContentLoaded',()=>{
+
+    const config = getConfig();
+
+    if(config.url){
+
+        $('supabaseUrl').value =
+            config.url;
+
+        $('supabaseKey').value =
+            config.key;
+
+    }
+
+    initSupabase();
+
+});
 
 </script>
 
