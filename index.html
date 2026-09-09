@@ -2,660 +2,1493 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>云端仓库管理系统</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+<title>智能仓库管理系统 V2</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
 <style>
-body{background:#f5f7fb;-webkit-tap-highlight-color:transparent}
-.hide{display:none!important}
-.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
-.btn{min-height:44px;border-radius:12px;font-weight:600}
-input,select,textarea{width:100%;border:1px solid #d9dee8;border-radius:12px;padding:12px;background:#fff;outline:none}
-input:focus,select:focus,textarea:focus{border-color:#6366f1}
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:flex;align-items:flex-end;justify-content:center}
-.modal{background:#fff;width:100%;max-width:600px;max-height:90vh;overflow:auto;border-radius:22px 22px 0 0;padding:20px}
-.toast{position:fixed;left:50%;bottom:25px;transform:translateX(-50%);z-index:100;background:#111827;color:#fff;padding:12px 18px;border-radius:12px;max-width:90%;text-align:center}
-.low{color:#dc2626;font-weight:700}
-.tab{padding:10px 16px;border-radius:10px;font-weight:600}
-.tab.active{background:#111827;color:#fff}
+*{
+    box-sizing:border-box;
+}
+
+body{
+    margin:0;
+    background:#f3f4f6;
+    color:#111827;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;
+}
+
+input,textarea,select{
+    width:100%;
+    border:1px solid #d1d5db;
+    border-radius:12px;
+    padding:12px;
+    background:white;
+    outline:none;
+    font-size:16px;
+}
+
+input:focus,textarea:focus,select:focus{
+    border-color:#4f46e5;
+    box-shadow:0 0 0 2px rgba(79,70,229,.12);
+}
+
+button{
+    touch-action:manipulation;
+}
+
+.btn{
+    border-radius:12px;
+    padding:11px 14px;
+    font-weight:600;
+    min-height:44px;
+}
+
+.card{
+    background:white;
+    border-radius:16px;
+    box-shadow:0 2px 12px rgba(0,0,0,.06);
+}
+
+.hide{
+    display:none !important;
+}
+
+.modal-bg{
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.55);
+    display:flex;
+    align-items:flex-end;
+    justify-content:center;
+    z-index:1000;
+}
+
+.modal{
+    background:white;
+    width:100%;
+    max-width:600px;
+    max-height:90vh;
+    overflow-y:auto;
+    border-radius:22px 22px 0 0;
+    padding:20px;
+}
+
+.navbar{
+    position:fixed;
+    bottom:0;
+    left:0;
+    right:0;
+    background:white;
+    border-top:1px solid #e5e7eb;
+    z-index:100;
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+}
+
+.nav-item{
+    padding:9px 3px;
+    text-align:center;
+    font-size:12px;
+    color:#6b7280;
+}
+
+.nav-item.active{
+    color:#4f46e5;
+    font-weight:700;
+}
+
+.stat{
+    border-radius:15px;
+    padding:14px;
+}
+
+.safe-area{
+    padding-bottom:90px;
+}
+
+.small-btn{
+    min-height:40px;
+    border-radius:10px;
+    padding:8px 12px;
+    font-weight:600;
+}
+
+.scanner-box{
+    width:100%;
+    overflow:hidden;
+    border-radius:16px;
+    background:#000;
+}
+
+.table-scroll{
+    overflow-x:auto;
+}
+
+pre{
+    white-space:pre-wrap;
+    word-break:break-word;
+}
+
+.badge{
+    display:inline-flex;
+    align-items:center;
+    padding:4px 9px;
+    border-radius:999px;
+    font-size:12px;
+    font-weight:700;
+}
+
+.result-row{
+    border:1px solid #e5e7eb;
+    border-radius:14px;
+    padding:12px;
+    margin-bottom:8px;
+    background:#fff;
+}
+
+.qty-positive{
+    color:#059669;
+    font-weight:700;
+}
+
+.qty-negative{
+    color:#dc2626;
+    font-weight:700;
+}
 </style>
 </head>
 
 <body>
 
-<div id="authPage" class="min-h-screen p-5 flex items-center justify-center">
-<div class="w-full max-w-md">
+<!-- ==================== 登录 ==================== -->
 
-<div class="text-center mb-6">
-<div class="text-4xl mb-2">📦</div>
-<h1 class="text-2xl font-bold">云端仓库管理系统</h1>
-<p class="text-gray-500 mt-2">多人协作 · 云端同步 · 手机扫码</p>
-</div>
+<div id="authPage" class="min-h-screen flex items-center justify-center p-5">
 
-<div id="configBox" class="card p-5 mb-4">
-<h2 class="font-bold text-lg mb-2">第一次使用</h2>
-<p class="text-sm text-gray-500 mb-4">填写 Supabase 项目地址和 Publishable / Anon Key。</p>
+    <div class="card w-full max-w-md p-6">
 
-<label class="text-sm font-semibold">Supabase Project URL</label>
-<input id="projectUrl" class="mt-2 mb-4" placeholder="https://xxxx.supabase.co">
+        <div class="text-center mb-6">
+            <div class="text-5xl mb-3">📦</div>
+            <h1 class="text-2xl font-bold">智能仓库管理系统</h1>
+            <p class="text-gray-500 mt-2">云端共享 · 手机扫码 · 多人协作</p>
+        </div>
 
-<label class="text-sm font-semibold">Supabase Anon / Publishable Key</label>
-<input id="projectKey" class="mt-2 mb-4" placeholder="粘贴你的 Publishable / Anon Key" type="password">
+        <div id="configBox">
 
-<button onclick="saveConfig()" class="btn w-full bg-indigo-600 text-white">
-连接云端
-</button>
-</div>
+            <label class="text-sm font-semibold">Supabase 项目地址</label>
+            <input
+                id="supabaseUrl"
+                class="mt-2 mb-4"
+                placeholder="https://xxxx.supabase.co"
+            >
 
-<div id="loginBox" class="card p-5 hide">
+            <label class="text-sm font-semibold">Publishable / Anon Key</label>
+            <input
+                id="supabaseKey"
+                class="mt-2 mb-4"
+                placeholder="粘贴你的 Publishable Key"
+            >
 
-<div class="flex bg-gray-100 rounded-xl p-1 mb-5">
-<button id="loginTab" class="tab active flex-1" onclick="showLogin()">登录</button>
-<button id="registerTab" class="tab flex-1" onclick="showRegister()">注册</button>
-</div>
+            <button
+                onclick="saveConfig()"
+                class="btn bg-indigo-600 text-white w-full mb-4"
+            >
+                ☁️ 连接云端
+            </button>
 
-<label class="text-sm font-semibold">邮箱</label>
-<input id="email" class="mt-2 mb-4" type="email" autocomplete="email" placeholder="请输入邮箱">
+        </div>
 
-<label class="text-sm font-semibold">密码</label>
-<input id="password" class="mt-2 mb-4" type="password" autocomplete="current-password" placeholder="至少 6 位">
+        <div id="authForm" class="hide">
 
-<button id="authButton" onclick="submitAuth()" class="btn w-full bg-indigo-600 text-white">
-登录
-</button>
+            <div class="flex gap-2 mb-4">
+                <button
+                    id="loginTab"
+                    onclick="setAuthMode('login')"
+                    class="btn bg-indigo-600 text-white flex-1"
+                >
+                    登录
+                </button>
 
-<button onclick="resetConfig()" class="w-full text-sm text-gray-500 mt-4">
-修改云端配置
-</button>
+                <button
+                    id="registerTab"
+                    onclick="setAuthMode('register')"
+                    class="btn bg-gray-100 flex-1"
+                >
+                    注册
+                </button>
+            </div>
 
-</div>
-</div>
-</div>
+            <input
+                id="authEmail"
+                type="email"
+                placeholder="邮箱"
+                class="mb-3"
+            >
 
+            <input
+                id="authPassword"
+                type="password"
+                placeholder="密码（至少6位）"
+                class="mb-4"
+            >
 
-<div id="appPage" class="hide min-h-screen">
+            <button
+                onclick="submitAuth()"
+                id="authSubmit"
+                class="btn bg-indigo-600 text-white w-full"
+            >
+                登录
+            </button>
 
-<header class="bg-white sticky top-0 z-20 border-b">
-<div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-<div>
-<div class="font-bold">📦 云端仓库</div>
-<div id="warehouseTitle" class="text-xs text-gray-500">未选择仓库</div>
-</div>
-<button onclick="logout()" class="text-sm text-red-500">退出</button>
-</div>
-</header>
+            <button
+                onclick="resetPassword()"
+                class="w-full text-sm text-indigo-600 mt-4"
+            >
+                忘记密码
+            </button>
 
-<main class="max-w-6xl mx-auto p-4 pb-24">
+            <div id="authMessage" class="text-sm mt-4"></div>
 
-<section class="card p-4 mb-4">
-<div class="flex items-center justify-between mb-3">
-<h2 class="font-bold text-lg">我的仓库</h2>
-<button onclick="openWarehouseModal()" class="text-indigo-600 font-semibold">管理</button>
-</div>
+        </div>
 
-<select id="warehouseSelect" onchange="selectWarehouse(this.value)">
-<option value="">请选择仓库</option>
-</select>
-
-<div class="grid grid-cols-2 gap-3 mt-3">
-<button onclick="openCreateWarehouse()" class="btn bg-indigo-600 text-white">➕ 创建仓库</button>
-<button onclick="openJoinWarehouse()" class="btn bg-gray-100">🔗 加入仓库</button>
-</div>
-
-<div id="joinCodeBox" class="mt-3 p-3 rounded-xl bg-indigo-50 text-sm hide">
-<div class="text-gray-500">当前仓库加入码</div>
-<div id="currentJoinCode" class="text-2xl font-bold tracking-widest mt-1"></div>
-</div>
-</section>
-
-
-<div id="mainContent" class="hide">
-
-<div class="grid grid-cols-4 gap-2 mb-4">
-<button id="navInventory" onclick="showPage('inventory')" class="btn bg-indigo-600 text-white text-sm">库存</button>
-<button id="navStock" onclick="showPage('stock')" class="btn bg-gray-100 text-sm">出入库</button>
-<button id="navLogs" onclick="showPage('logs')" class="btn bg-gray-100 text-sm">日志</button>
-<button id="navSettings" onclick="showPage('settings')" class="btn bg-gray-100 text-sm">设置</button>
-</div>
-
-
-<section id="pageInventory">
-
-<div class="card p-4 mb-4">
-<div class="flex gap-2">
-<input id="searchInput" placeholder="搜索名称 / SKU / 库位" oninput="renderInventory()">
-<button onclick="startScanner()" class="btn bg-indigo-600 text-white px-4">📷</button>
-</div>
-
-<div class="grid grid-cols-2 gap-3 mt-3">
-<button onclick="openAddItem()" class="btn bg-green-600 text-white">➕ 新增商品</button>
-<button onclick="openImportModal()" class="btn bg-gray-100">📥 批量导入</button>
-</div>
-</div>
-
-<div id="inventoryStats" class="grid grid-cols-3 gap-3 mb-4"></div>
-<div id="inventoryList" class="space-y-3"></div>
-
-</section>
-
-
-<section id="pageStock" class="hide">
-<div class="card p-4">
-<h2 class="font-bold text-lg mb-4">快速出入库</h2>
-<label class="text-sm font-semibold">SKU</label>
-<input id="stockSku" class="mt-2 mb-4" placeholder="输入或扫描 SKU">
-
-<div class="grid grid-cols-2 gap-3">
-<button onclick="openStockBySku('in')" class="btn bg-green-600 text-white">📥 入库</button>
-<button onclick="openStockBySku('out')" class="btn bg-red-600 text-white">📤 出库</button>
-</div>
-</div>
-</section>
-
-
-<section id="pageLogs" class="hide">
-<div class="card p-4">
-<div class="flex items-center justify-between mb-4">
-<h2 class="font-bold text-lg">操作日志</h2>
-<button onclick="loadLogs()" class="text-indigo-600">刷新</button>
-</div>
-<div id="logsList" class="space-y-3"></div>
-</div>
-</section>
-
-
-<section id="pageSettings" class="hide">
-
-<div class="card p-4 mb-4">
-<h2 class="font-bold text-lg mb-4">仓库设置</h2>
-
-<div class="p-4 bg-gray-50 rounded-xl">
-<div class="text-sm text-gray-500">仓库名称</div>
-<div id="settingsWarehouseName" class="font-bold mt-1"></div>
-
-<div class="text-sm text-gray-500 mt-4">我的权限</div>
-<div id="myRole" class="font-bold mt-1"></div>
-
-<div class="text-sm text-gray-500 mt-4">加入码</div>
-<div id="settingsJoinCode" class="font-bold tracking-widest mt-1"></div>
-</div>
-</div>
-
-<div class="card p-4">
-<h2 class="font-bold text-lg mb-3">数据</h2>
-<button onclick="exportBackup()" class="btn bg-gray-100 w-full">💾 导出备份</button>
-</div>
-
-</section>
-
-</div>
-</main>
+    </div>
 </div>
 
 
-<!-- 商品 -->
+<!-- ==================== 主程序 ==================== -->
+
+<div id="appPage" class="hide safe-area">
+
+    <!-- 顶部 -->
+
+    <header class="bg-indigo-600 text-white px-4 py-4 sticky top-0 z-50">
+
+        <div class="flex items-center justify-between gap-3">
+
+            <div class="min-w-0">
+
+                <div class="text-xs opacity-80">
+                    智能仓库
+                </div>
+
+                <div class="font-bold text-lg truncate">
+                    <span id="warehouseName">请选择仓库</span>
+                </div>
+
+            </div>
+
+            <div class="flex gap-2">
+
+                <button
+                    onclick="openWarehouseModal()"
+                    class="bg-white/20 rounded-xl px-3 py-2 text-sm"
+                >
+                    仓库
+                </button>
+
+                <button
+                    onclick="logout()"
+                    class="bg-white/20 rounded-xl px-3 py-2 text-sm"
+                >
+                    退出
+                </button>
+
+            </div>
+
+        </div>
+
+    </header>
+
+
+    <main class="p-4">
+
+        <!-- ==================== 仪表盘 ==================== -->
+
+        <section id="pageHome">
+
+            <div id="noWarehouseBox" class="card p-5 mb-4">
+
+                <div class="text-5xl text-center mb-3">🏭</div>
+
+                <h2 class="text-xl font-bold text-center">
+                    还没有选择仓库
+                </h2>
+
+                <p class="text-gray-500 text-center mt-2">
+                    创建自己的仓库，或者加入别人创建的仓库
+                </p>
+
+                <div class="grid grid-cols-2 gap-3 mt-5">
+
+                    <button
+                        onclick="openCreateWarehouse()"
+                        class="btn bg-indigo-600 text-white"
+                    >
+                        ➕ 创建仓库
+                    </button>
+
+                    <button
+                        onclick="openJoinWarehouse()"
+                        class="btn bg-gray-100"
+                    >
+                        🔑 加入仓库
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <div id="dashboardBox" class="hide">
+
+                <div class="grid grid-cols-2 gap-3 mb-4">
+
+                    <div class="stat bg-indigo-50">
+                        <div class="text-gray-500 text-sm">商品种类</div>
+                        <div id="statItems" class="text-2xl font-bold mt-1">0</div>
+                    </div>
+
+                    <div class="stat bg-green-50">
+                        <div class="text-gray-500 text-sm">库存总数</div>
+                        <div id="statQty" class="text-2xl font-bold mt-1">0</div>
+                    </div>
+
+                    <div class="stat bg-red-50">
+                        <div class="text-gray-500 text-sm">低库存</div>
+                        <div id="statLow" class="text-2xl font-bold mt-1">0</div>
+                    </div>
+
+                    <div class="stat bg-yellow-50">
+                        <div class="text-gray-500 text-sm">今日操作</div>
+                        <div id="statToday" class="text-2xl font-bold mt-1">0</div>
+                    </div>
+
+                </div>
+
+
+                <div class="card p-4">
+
+                    <h2 class="font-bold text-lg mb-3">
+                        ⚡ 快速操作
+                    </h2>
+
+                    <div class="grid grid-cols-2 gap-3">
+
+                        <button
+                            onclick="openAddItem()"
+                            class="btn bg-green-600 text-white"
+                        >
+                            ➕ 新增商品
+                        </button>
+
+                        <button
+                            onclick="showPage('stock')"
+                            class="btn bg-indigo-600 text-white"
+                        >
+                            📦 出入库
+                        </button>
+
+                        <button
+                            onclick="startScanner('find')"
+                            class="btn bg-purple-600 text-white"
+                        >
+                            📷 扫码找货
+                        </button>
+
+                        <button
+                            onclick="openBatchStock('in')"
+                            class="btn bg-blue-600 text-white"
+                        >
+                            📁 批量入库
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ==================== 库存 ==================== -->
+
+        <section id="pageInventory" class="hide">
+
+            <div class="card p-4 mb-4">
+
+                <div class="flex gap-2">
+
+                    <input
+                        id="searchInput"
+                        placeholder="搜索名称 / SKU / 库位 / SKU后三位"
+                        oninput="renderInventory()"
+                    >
+
+                    <button
+                        onclick="startScanner('find')"
+                        class="btn bg-indigo-600 text-white px-4"
+                    >
+                        📷
+                    </button>
+
+                </div>
+
+
+                <div class="grid grid-cols-2 gap-3 mt-3">
+
+                    <button
+                        onclick="openAddItem()"
+                        class="btn bg-green-600 text-white"
+                    >
+                        ➕ 新增商品
+                    </button>
+
+                    <button
+                        onclick="openImportModal()"
+                        class="btn bg-gray-100"
+                    >
+                        📥 批量新增
+                    </button>
+
+                </div>
+
+                <div
+                    id="inventorySearchHint"
+                    class="text-xs text-gray-500 mt-3"
+                ></div>
+
+            </div>
+
+
+            <div id="inventoryList"></div>
+
+        </section>
+
+
+        <!-- ==================== 快速出入库 ==================== -->
+
+        <section id="pageStock" class="hide">
+
+            <div class="card p-4 mb-4">
+
+                <h2 class="font-bold text-lg mb-1">
+                    ⚡ 快速出入库
+                </h2>
+
+                <p class="text-sm text-gray-500 mb-4">
+                    输入 SKU，或者直接扫码
+                </p>
+
+
+                <label class="text-sm font-semibold">
+                    SKU
+                </label>
+
+                <div class="flex gap-2 mt-2">
+
+                    <input
+                        id="stockSku"
+                        placeholder="输入 SKU 或最后3位"
+                        oninput="renderStockSkuMatches()"
+                    >
+
+                    <button
+                        onclick="startScanner('stock')"
+                        class="btn bg-purple-600 text-white"
+                    >
+                        📷 扫码
+                    </button>
+
+                </div>
+
+
+                <div class="grid grid-cols-2 gap-3 mt-4">
+
+                    <button
+                        onclick="openStockBySku('in')"
+                        class="btn bg-green-600 text-white"
+                    >
+                        📥 入库
+                    </button>
+
+                    <button
+                        onclick="openStockBySku('out')"
+                        class="btn bg-red-600 text-white"
+                    >
+                        📤 出库
+                    </button>
+
+                </div>
+
+
+                <div class="grid grid-cols-2 gap-3 mt-3">
+
+                    <button
+                        onclick="startScanner('stock-in')"
+                        class="btn bg-green-100 text-green-700"
+                    >
+                        📷 扫码入库
+                    </button>
+
+                    <button
+                        onclick="startScanner('stock-out')"
+                        class="btn bg-red-100 text-red-700"
+                    >
+                        📷 扫码出库
+                    </button>
+
+                </div>
+
+
+                <div id="stockSkuMatches" class="mt-4"></div>
+
+            </div>
+
+
+            <!-- 批量出入库 -->
+
+            <div class="card p-4">
+
+                <h2 class="font-bold text-lg mb-2">
+                    📁 批量出入库
+                </h2>
+
+                <p class="text-sm text-gray-500 mb-4">
+                    支持 CSV、TXT、Excel 文件，一次处理多条库存
+                </p>
+
+                <div class="grid grid-cols-2 gap-3">
+
+                    <button
+                        onclick="openBatchStock('in')"
+                        class="btn bg-green-600 text-white"
+                    >
+                        📥 批量入库
+                    </button>
+
+                    <button
+                        onclick="openBatchStock('out')"
+                        class="btn bg-red-600 text-white"
+                    >
+                        📤 批量出库
+                    </button>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ==================== 操作日志 ==================== -->
+
+        <section id="pageLogs" class="hide">
+
+            <div class="card p-4 mb-4">
+
+                <div class="flex justify-between items-center">
+
+                    <div>
+                        <h2 class="font-bold text-lg">
+                            📋 操作日志
+                        </h2>
+
+                        <p class="text-sm text-gray-500">
+                            最近库存操作记录
+                        </p>
+                    </div>
+
+                    <button
+                        onclick="loadLogs()"
+                        class="small-btn bg-gray-100"
+                    >
+                        🔄
+                    </button>
+
+                </div>
+
+            </div>
+
+            <div id="logsList"></div>
+
+        </section>
+
+
+        <!-- ==================== 设置 ==================== -->
+
+        <section id="pageSettings" class="hide">
+
+            <div class="card p-4 mb-4">
+
+                <h2 class="font-bold text-lg mb-4">
+                    ⚙️ 设置
+                </h2>
+
+                <button
+                    onclick="openWarehouseModal()"
+                    class="btn bg-indigo-600 text-white w-full mb-3"
+                >
+                    🏭 仓库管理
+                </button>
+
+                <button
+                    onclick="exportInventory()"
+                    class="btn bg-green-600 text-white w-full mb-3"
+                >
+                    💾 导出库存备份
+                </button>
+
+                <button
+                    onclick="openImportModal()"
+                    class="btn bg-gray-100 w-full"
+                >
+                    📥 批量新增商品
+                </button>
+
+            </div>
+
+
+            <div class="card p-4">
+
+                <div class="text-sm text-gray-500">
+                    当前登录账号
+                </div>
+
+                <div
+                    id="currentEmail"
+                    class="font-semibold mt-1 break-all"
+                >
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <!-- ==================== 底部导航 ==================== -->
+
+    <nav class="navbar">
+
+        <button
+            id="navHome"
+            onclick="showPage('home')"
+            class="nav-item active"
+        >
+            <div class="text-xl">🏠</div>
+            首页
+        </button>
+
+        <button
+            id="navInventory"
+            onclick="showPage('inventory')"
+            class="nav-item"
+        >
+            <div class="text-xl">📦</div>
+            库存
+        </button>
+
+        <button
+            id="navStock"
+            onclick="showPage('stock')"
+            class="nav-item"
+        >
+            <div class="text-xl">🔄</div>
+            出入库
+        </button>
+
+        <button
+            id="navSettings"
+            onclick="showPage('settings')"
+            class="nav-item"
+        >
+            <div class="text-xl">⚙️</div>
+            设置
+        </button>
+
+    </nav>
+
+</div>
+
+
+<!-- ==================== 新增/编辑商品 ==================== -->
+
 <div id="itemModal" class="modal-bg hide">
-<div class="modal">
 
-<div class="flex justify-between items-center mb-5">
-<h2 id="itemModalTitle" class="text-xl font-bold">新增商品</h2>
-<button onclick="closeModal('itemModal')" class="text-2xl">×</button>
+    <div class="modal">
+
+        <div class="flex justify-between items-center mb-5">
+
+            <h2 id="itemModalTitle" class="text-xl font-bold">
+                新增商品
+            </h2>
+
+            <button
+                onclick="closeModal('itemModal')"
+                class="text-2xl"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <label class="text-sm font-semibold">
+            商品名称
+        </label>
+
+        <input
+            id="itemName"
+            class="mt-2 mb-4"
+            placeholder="例如：可口可乐"
+        >
+
+
+        <label class="text-sm font-semibold">
+            SKU / 条码
+        </label>
+
+        <div class="flex gap-2 mt-2 mb-4">
+
+            <input
+                id="itemSku"
+                placeholder="例如：COKE001"
+            >
+
+            <button
+                onclick="startScanner('fill-sku')"
+                class="btn bg-purple-600 text-white whitespace-nowrap"
+            >
+                📷 扫码
+            </button>
+
+        </div>
+
+
+        <label class="text-sm font-semibold">
+            初始库存
+        </label>
+
+        <input
+            id="itemQty"
+            type="number"
+            min="0"
+            class="mt-2 mb-4"
+            value="0"
+        >
+
+
+        <label class="text-sm font-semibold">
+            预警数量
+        </label>
+
+        <input
+            id="itemAlert"
+            type="number"
+            min="0"
+            class="mt-2 mb-4"
+            value="5"
+        >
+
+
+        <label class="text-sm font-semibold">
+            库位
+        </label>
+
+        <input
+            id="itemBin"
+            class="mt-2 mb-5"
+            placeholder="例如：A-01-03"
+        >
+
+
+        <button
+            onclick="saveItem()"
+            class="btn bg-indigo-600 text-white w-full"
+        >
+            💾 保存商品
+        </button>
+
+    </div>
+
 </div>
 
-<label class="text-sm font-semibold">商品名称</label>
-<input id="itemName" class="mt-2 mb-4" placeholder="例如：可乐">
 
-<label class="text-sm font-semibold">SKU</label>
-<input id="itemSku" class="mt-2 mb-4" placeholder="例如：COKE001">
+<!-- ==================== 出入库 ==================== -->
 
-<label class="text-sm font-semibold">数量</label>
-<input id="itemQty" class="mt-2 mb-4" type="number" min="0" value="0">
-
-<label class="text-sm font-semibold">库存预警</label>
-<input id="itemAlert" class="mt-2 mb-4" type="number" min="0" value="5">
-
-<label class="text-sm font-semibold">库位</label>
-<input id="itemBin" class="mt-2 mb-5" placeholder="例如：A-01-02">
-
-<button onclick="saveItem()" class="btn w-full bg-indigo-600 text-white">保存</button>
-
-</div>
-</div>
-
-
-<!-- 出入库 -->
 <div id="stockModal" class="modal-bg hide">
-<div class="modal">
 
-<div class="flex justify-between items-center mb-5">
-<h2 id="stockModalTitle" class="text-xl font-bold">入库</h2>
-<button onclick="closeModal('stockModal')" class="text-2xl">×</button>
+    <div class="modal">
+
+        <div class="flex justify-between items-center mb-5">
+
+            <div>
+
+                <h2 id="stockModalTitle" class="text-xl font-bold">
+                    入库
+                </h2>
+
+                <div
+                    id="stockItemInfo"
+                    class="text-sm text-gray-500 mt-1"
+                ></div>
+
+            </div>
+
+            <button
+                onclick="closeModal('stockModal')"
+                class="text-2xl"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <div
+            id="stockItemCard"
+            class="bg-gray-50 rounded-xl p-4 mb-4"
+        >
+        </div>
+
+
+        <label class="text-sm font-semibold">
+            数量
+        </label>
+
+        <input
+            id="stockQty"
+            type="number"
+            min="1"
+            class="mt-2 mb-4"
+            value="1"
+        >
+
+
+        <label class="text-sm font-semibold">
+            备注
+        </label>
+
+        <input
+            id="stockNote"
+            class="mt-2 mb-5"
+            placeholder="例如：供应商送货"
+        >
+
+
+        <button
+            onclick="saveStock()"
+            id="stockSaveBtn"
+            class="btn bg-green-600 text-white w-full"
+        >
+            确认入库
+        </button>
+
+    </div>
+
 </div>
 
-<div id="stockItemInfo" class="p-3 bg-gray-50 rounded-xl mb-4"></div>
 
-<label class="text-sm font-semibold">数量</label>
-<input id="stockQty" class="mt-2 mb-4" type="number" min="1" value="1">
+<!-- ==================== 批量新增商品 ==================== -->
 
-<label class="text-sm font-semibold">备注</label>
-<textarea id="stockNote" class="mt-2 mb-5" rows="3" placeholder="例如：供应商送货"></textarea>
-
-<button onclick="saveStock()" class="btn w-full bg-indigo-600 text-white">确认</button>
-
-</div>
-</div>
-
-
-<!-- 批量导入 -->
 <div id="importModal" class="modal-bg hide">
-<div class="modal">
 
-<div class="flex justify-between items-center mb-5">
-<h2 class="text-xl font-bold">批量导入</h2>
-<button onclick="closeModal('importModal')" class="text-2xl">×</button>
-</div>
+    <div class="modal">
 
-<p class="text-sm text-gray-500 mb-3">
-每行：商品名称，SKU，数量，预警数量，库位
-</p>
+        <div class="flex justify-between items-center mb-4">
 
-<textarea id="importText" rows="10" placeholder="可乐,COKE001,100,10,A-01
-矿泉水,WATER001,50,5,A-02"></textarea>
+            <h2 class="text-xl font-bold">
+                📥 批量新增商品
+            </h2>
 
-<button onclick="runImport()" class="btn w-full bg-indigo-600 text-white mt-4">开始导入</button>
+            <button
+                onclick="closeModal('importModal')"
+                class="text-2xl"
+            >
+                ×
+            </button>
 
-</div>
-</div>
+        </div>
 
+        <p class="text-sm text-gray-500 mb-3">
+            每行：商品名称，SKU，数量，预警数量，库位
+        </p>
 
-<!-- 创建仓库 -->
-<div id="createWarehouseModal" class="modal-bg hide">
-<div class="modal">
+        <textarea
+            id="importText"
+            rows="10"
+            placeholder="可乐,COKE001,100,10,A-01
+矿泉水,WATER001,50,5,A-02"
+        ></textarea>
 
-<div class="flex justify-between items-center mb-5">
-<h2 class="text-xl font-bold">创建仓库</h2>
-<button onclick="closeModal('createWarehouseModal')" class="text-2xl">×</button>
-</div>
+        <button
+            onclick="runImport()"
+            class="btn bg-indigo-600 text-white w-full mt-4"
+        >
+            🚀 开始导入
+        </button>
 
-<label class="text-sm font-semibold">仓库名称</label>
-<input id="newWarehouseName" class="mt-2 mb-5" placeholder="例如：我的仓库">
-
-<button onclick="createWarehouse()" class="btn w-full bg-indigo-600 text-white">创建</button>
-
-</div>
-</div>
-
-
-<!-- 加入仓库 -->
-<div id="joinWarehouseModal" class="modal-bg hide">
-<div class="modal">
-
-<div class="flex justify-between items-center mb-5">
-<h2 class="text-xl font-bold">加入仓库</h2>
-<button onclick="closeModal('joinWarehouseModal')" class="text-2xl">×</button>
-</div>
-
-<p class="text-sm text-gray-500 mb-3">输入仓库管理员提供的 6 位加入码。</p>
-
-<input id="joinCode" class="mb-5 uppercase" maxlength="6" placeholder="例如 ABC123">
-
-<button onclick="joinWarehouse()" class="btn w-full bg-indigo-600 text-white">加入</button>
+    </div>
 
 </div>
+
+
+<!-- ==================== 批量出入库 ==================== -->
+
+<div id="batchStockModal" class="modal-bg hide">
+
+    <div class="modal">
+
+        <div class="flex justify-between items-center mb-4">
+
+            <h2
+                id="batchStockTitle"
+                class="text-xl font-bold"
+            >
+                📥 批量入库
+            </h2>
+
+            <button
+                onclick="closeModal('batchStockModal')"
+                class="text-2xl"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <div class="grid grid-cols-2 gap-2 mb-4">
+
+            <button
+                id="batchInBtn"
+                onclick="setBatchStockMode('in')"
+                class="btn bg-green-600 text-white"
+            >
+                📥 入库
+            </button>
+
+            <button
+                id="batchOutBtn"
+                onclick="setBatchStockMode('out')"
+                class="btn bg-gray-100"
+            >
+                📤 出库
+            </button>
+
+        </div>
+
+
+        <div class="bg-blue-50 rounded-xl p-3 text-sm mb-4">
+
+            <div class="font-semibold mb-1">
+                文件格式：
+            </div>
+
+            <div>
+                SKU,数量,备注
+            </div>
+
+            <div class="mt-1 text-gray-500">
+                例如：COKE001,20,供应商送货
+            </div>
+
+        </div>
+
+
+        <button
+            onclick="downloadBatchTemplate()"
+            class="btn bg-gray-100 w-full mb-3"
+        >
+            📄 下载批量出入库模板
+        </button>
+
+
+        <label class="text-sm font-semibold">
+            上传文件
+        </label>
+
+        <input
+            id="batchStockFile"
+            type="file"
+            accept=".csv,.txt,.tsv,.xlsx,.xls"
+            onchange="handleBatchStockFile(event)"
+            class="mt-2 mb-4"
+        >
+
+
+        <div class="text-center text-gray-400 text-sm mb-3">
+            或者直接粘贴数据
+        </div>
+
+
+        <textarea
+            id="batchStockText"
+            rows="7"
+            placeholder="SKU,数量,备注
+COKE001,20,供应商送货
+WATER001,50,补货"
+        ></textarea>
+
+
+        <button
+            onclick="prepareBatchStockFromText()"
+            class="btn bg-indigo-600 text-white w-full mt-3"
+        >
+            🔍 读取并检查
+        </button>
+
+
+        <div
+            id="batchStockPreview"
+            class="mt-4"
+        ></div>
+
+
+        <button
+            id="batchStockExecuteBtn"
+            onclick="executeBatchStock()"
+            class="btn bg-green-600 text-white w-full mt-4 hide"
+        >
+            🚀 确认执行批量操作
+        </button>
+
+
+        <div
+            id="batchStockResult"
+            class="mt-4"
+        ></div>
+
+    </div>
+
 </div>
 
 
-<!-- 仓库管理 -->
+<!-- ==================== 仓库选择 ==================== -->
+
 <div id="warehouseModal" class="modal-bg hide">
-<div class="modal">
 
-<div class="flex justify-between items-center mb-5">
-<h2 class="text-xl font-bold">仓库管理</h2>
-<button onclick="closeModal('warehouseModal')" class="text-2xl">×</button>
+    <div class="modal">
+
+        <div class="flex justify-between items-center mb-5">
+
+            <h2 class="text-xl font-bold">
+                🏭 仓库管理
+            </h2>
+
+            <button
+                onclick="closeModal('warehouseModal')"
+                class="text-2xl"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <div class="grid grid-cols-2 gap-3 mb-5">
+
+            <button
+                onclick="openCreateWarehouse()"
+                class="btn bg-indigo-600 text-white"
+            >
+                ➕ 创建仓库
+            </button>
+
+            <button
+                onclick="openJoinWarehouse()"
+                class="btn bg-gray-100"
+            >
+                🔑 加入仓库
+            </button>
+
+        </div>
+
+
+        <h3 class="font-semibold mb-3">
+            我的仓库
+        </h3>
+
+        <div id="warehouseList"></div>
+
+    </div>
+
 </div>
 
-<div id="warehouseManageList"></div>
+
+<!-- ==================== 创建仓库 ==================== -->
+
+<div id="createWarehouseModal" class="modal-bg hide">
+
+    <div class="modal">
+
+        <div class="flex justify-between items-center mb-5">
+
+            <h2 class="text-xl font-bold">
+                ➕ 创建仓库
+            </h2>
+
+            <button
+                onclick="closeModal('createWarehouseModal')"
+                class="text-2xl"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <label class="text-sm font-semibold">
+            仓库名称
+        </label>
+
+        <input
+            id="newWarehouseName"
+            class="mt-2 mb-5"
+            placeholder="例如：纽约主仓"
+        >
+
+        <button
+            onclick="createWarehouse()"
+            class="btn bg-indigo-600 text-white w-full"
+        >
+            创建仓库
+        </button>
+
+    </div>
 
 </div>
+
+
+<!-- ==================== 加入仓库 ==================== -->
+
+<div id="joinWarehouseModal" class="modal-bg hide">
+
+    <div class="modal">
+
+        <div class="flex justify-between items-center mb-5">
+
+            <h2 class="text-xl font-bold">
+                🔑 加入仓库
+            </h2>
+
+            <button
+                onclick="closeModal('joinWarehouseModal')"
+                class="text-2xl"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <p class="text-sm text-gray-500 mb-4">
+            输入仓库管理员给你的6位加入码
+        </p>
+
+        <input
+            id="joinCode"
+            maxlength="6"
+            inputmode="numeric"
+            class="text-center text-2xl tracking-widest mb-5"
+            placeholder="000000"
+        >
+
+        <button
+            onclick="joinWarehouse()"
+            class="btn bg-indigo-600 text-white w-full"
+        >
+            加入仓库
+        </button>
+
+    </div>
+
 </div>
 
 
-<!-- 扫码 -->
+<!-- ==================== 扫码 ==================== -->
+
 <div id="scannerModal" class="modal-bg hide">
-<div class="modal">
 
-<div class="flex justify-between items-center mb-4">
-<h2 class="text-xl font-bold">扫描条码</h2>
-<button onclick="stopScanner()" class="text-2xl">×</button>
+    <div class="modal">
+
+        <div class="flex justify-between items-center mb-4">
+
+            <h2
+                id="scannerTitle"
+                class="text-xl font-bold"
+            >
+                📷 扫码
+            </h2>
+
+            <button
+                onclick="stopScanner()"
+                class="text-2xl"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <div class="scanner-box">
+
+            <div id="reader"></div>
+
+        </div>
+
+        <p
+            id="scannerHint"
+            class="text-sm text-gray-500 text-center mt-4"
+        >
+            请将条形码放入扫描框
+        </p>
+
+        <button
+            onclick="stopScanner()"
+            class="btn bg-gray-100 w-full mt-4"
+        >
+            关闭扫码
+        </button>
+
+    </div>
+
 </div>
 
-<div id="reader" style="width:100%"></div>
-<p class="text-sm text-gray-500 mt-3 text-center">将条形码或二维码放入框内</p>
 
+<!-- ==================== Toast ==================== -->
+
+<div
+    id="toast"
+    class="fixed left-4 right-4 bottom-24 z-[2000] hide"
+>
+    <div
+        id="toastText"
+        class="bg-gray-900 text-white rounded-xl px-4 py-3 text-center shadow-lg"
+    >
+    </div>
 </div>
-</div>
-
-
-<div id="toast" class="toast hide"></div>
 
 
 <script>
 
-let sb=null;
-let currentUser=null;
-let currentWarehouse=null;
-let currentRole=null;
-let warehouses=[];
-let inventory=[];
-let logs=[];
-let editingItem=null;
-let stockType='in';
-let stockItem=null;
-let scanner=null;
-let authMode='login';
+let sb = null;
 
+let currentUser = null;
+
+let warehouses = [];
+
+let currentWarehouse = null;
+
+let inventory = [];
+
+let logs = [];
+
+let editingItem = null;
+
+let stockItem = null;
+
+let stockType = 'in';
+
+let scanner = null;
+
+let scannerMode = 'find';
+
+let scannerProcessing = false;
+
+let pendingStockInAfterCreate = false;
+
+let batchStockMode = 'in';
+
+let batchStockRows = [];
+
+let authMode = 'login';
+
+
+// ==================== 基础 ====================
 
 function $(id){
     return document.getElementById(id);
 }
 
 
-function toast(message){
-    const el=$('toast');
-    el.textContent=String(message);
-    el.classList.remove('hide');
-    clearTimeout(window.toastTimer);
-    window.toastTimer=setTimeout(()=>el.classList.add('hide'),4000);
+function getErrorMessage(error){
+
+    if(!error) return '未知错误';
+
+    return error.message ||
+           error.error_description ||
+           String(error);
+
 }
 
 
-function closeModal(id){
-    const el=$(id);
-    if(el) el.classList.add('hide');
+function toast(message){
+
+    $('toastText').textContent = message;
+
+    $('toast').classList.remove('hide');
+
+    clearTimeout(window.toastTimer);
+
+    window.toastTimer = setTimeout(function(){
+
+        $('toast').classList.add('hide');
+
+    },3000);
 }
 
 
 function openModal(id){
-    const el=$(id);
-    if(el) el.classList.remove('hide');
+
+    $(id).classList.remove('hide');
+
 }
 
 
-function escapeHtml(value){
-    return String(value ?? '')
-    .replace(/&/g,'&amp;')
-    .replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;')
-    .replace(/'/g,'&#039;');
+function closeModal(id){
+
+    $(id).classList.add('hide');
+
 }
 
 
-function getConfig(){
-    try{
-        return JSON.parse(localStorage.getItem('warehouse_supabase_config') || 'null');
-    }catch(e){
-        return null;
-    }
-}
+document.querySelectorAll('.modal-bg').forEach(function(el){
 
+    el.addEventListener('click',function(e){
 
-/* ================= 初始化 ================= */
+        if(e.target !== el) return;
 
-document.addEventListener('DOMContentLoaded',function(){
+        if(el.id === 'scannerModal'){
 
-    const config=getConfig();
+            stopScanner();
 
-    if(config && config.url && config.key){
+        }else{
 
-        $('projectUrl').value=config.url;
-        $('projectKey').value=config.key;
+            el.classList.add('hide');
 
-        initSupabase(config);
+        }
 
-    }else{
-
-        $('configBox').classList.remove('hide');
-        $('loginBox').classList.add('hide');
-
-    }
+    });
 
 });
 
 
-/* ================= Supabase ================= */
+// ==================== 配置 ====================
 
-function initSupabase(config){
+function loadConfig(){
+
+    const url = localStorage.getItem('warehouse_supabase_url') || '';
+
+    const key = localStorage.getItem('warehouse_supabase_key') || '';
+
+    $('supabaseUrl').value = url;
+
+    $('supabaseKey').value = key;
+
+}
+
+
+async function saveConfig(){
+
+    const url = $('supabaseUrl').value.trim();
+
+    const key = $('supabaseKey').value.trim();
+
+    if(!url || !key){
+
+        toast('请填写 Supabase 项目地址和 Key');
+
+        return;
+
+    }
+
+    localStorage.setItem('warehouse_supabase_url',url);
+
+    localStorage.setItem('warehouse_supabase_key',key);
+
+    await connectSupabase();
+
+}
+
+
+async function connectSupabase(){
+
+    const url = localStorage.getItem('warehouse_supabase_url');
+
+    const key = localStorage.getItem('warehouse_supabase_key');
+
+    if(!url || !key) return false;
 
     try{
 
-        if(!window.supabase){
-            throw new Error('Supabase 程序没有加载成功，请检查网络');
-        }
+        sb = window.supabase.createClient(url,key);
 
-        const url=String(config.url || '').trim();
-        const key=String(config.key || '').trim();
+        const result = await sb.auth.getSession();
 
-        if(!url){
-            throw new Error('没有填写 Project URL');
-        }
+        if(result.error){
 
-        if(!key){
-            throw new Error('没有填写 Publishable / Anon Key');
-        }
+            toast(result.error.message);
 
-        sb=window.supabase.createClient(url,key);
+            return false;
 
-        if(!sb || !sb.auth){
-            throw new Error('Supabase 初始化失败');
         }
 
         $('configBox').classList.add('hide');
-        $('loginBox').classList.remove('hide');
 
-        sb.auth.onAuthStateChange(function(event,session){
+        $('authForm').classList.remove('hide');
 
-            setTimeout(function(){
-                handleSession(session);
-            },0);
-
-        });
-
-        sb.auth.getSession()
-        .then(function(result){
-
-            if(result && result.error){
-                console.error(result.error);
-                toast('云端连接异常：'+getErrorMessage(result.error));
-                return;
-            }
-
-            toast('云端连接成功');
-
-            if(result && result.data){
-                handleSession(result.data.session);
-            }
-
-        })
-        .catch(function(error){
-
-            console.error('GET SESSION ERROR:',error);
-
-            toast('云端连接失败：'+getErrorMessage(error));
-
-        });
+        return true;
 
     }catch(error){
 
-        console.error('INIT ERROR:',error);
+        console.error(error);
 
-        toast('连接失败：'+getErrorMessage(error));
+        toast('云端连接失败：'+getErrorMessage(error));
 
-        $('configBox').classList.remove('hide');
-        $('loginBox').classList.add('hide');
-
-    }
-
-}
-
-
-/* ================= 错误处理 ================= */
-
-function getErrorMessage(error){
-
-    try{
-
-        if(!error){
-            return '未知错误';
-        }
-
-        if(typeof error==='string'){
-            return error;
-        }
-
-        if(error.message){
-            return String(error.message);
-        }
-
-        if(error.error_description){
-            return String(error.error_description);
-        }
-
-        if(error.msg){
-            return String(error.msg);
-        }
-
-        return JSON.stringify(error);
-
-    }catch(e){
-
-        return '未知错误';
+        return false;
 
     }
 
 }
 
 
-function friendlyAuthError(error){
+// ==================== 登录注册 ====================
 
-    const message=getErrorMessage(error);
-    const lower=message.toLowerCase();
+function setAuthMode(mode){
 
-    if(lower.includes('invalid login credentials')){
-        return '邮箱或密码错误';
+    authMode = mode;
+
+    if(mode === 'login'){
+
+        $('loginTab').className =
+            'btn bg-indigo-600 text-white flex-1';
+
+        $('registerTab').className =
+            'btn bg-gray-100 flex-1';
+
+        $('authSubmit').textContent = '登录';
+
+    }else{
+
+        $('registerTab').className =
+            'btn bg-indigo-600 text-white flex-1';
+
+        $('loginTab').className =
+            'btn bg-gray-100 flex-1';
+
+        $('authSubmit').textContent = '注册';
+
     }
 
-    if(lower.includes('user already registered')){
-        return '这个邮箱已经注册，请直接登录';
-    }
-
-    if(lower.includes('email not confirmed')){
-        return '邮箱还没有验证，请先去邮箱完成验证';
-    }
-
-    if(lower.includes('password should be at least')){
-        return '密码至少需要 6 位';
-    }
-
-    if(lower.includes('email rate limit')){
-        return '邮箱发送过于频繁，请稍等 10–15 分钟再试';
-    }
-
-    if(lower.includes('rate limit')){
-        return '请求过于频繁，请稍等几分钟再试';
-    }
-
-    if(lower.includes('typeerror')){
-        return '网页连接程序出现错误，请刷新页面后再试';
-    }
-
-    return message;
-
-}
-
-
-/* ================= 配置 ================= */
-
-function saveConfig(){
-
-    const url=String($('projectUrl').value || '').trim();
-    const key=String($('projectKey').value || '').trim();
-
-    if(!url){
-        toast('请输入 Supabase Project URL');
-        return;
-    }
-
-    if(!key){
-        toast('请输入 Publishable / Anon Key');
-        return;
-    }
-
-    if(!url.startsWith('https://')){
-        toast('Project URL 应该以 https:// 开头');
-        return;
-    }
-
-    localStorage.setItem(
-        'warehouse_supabase_config',
-        JSON.stringify({
-            url:url,
-            key:key
-        })
-    );
-
-    initSupabase({
-        url:url,
-        key:key
-    });
-
-}
-
-
-async function resetConfig(){
-
-    if(!confirm('确定要修改云端配置吗？')) return;
-
-    try{
-        if(sb){
-            await sb.auth.signOut();
-        }
-    }catch(e){}
-
-    localStorage.removeItem('warehouse_supabase_config');
-    location.reload();
-
-}
-
-
-/* ================= 登录注册 ================= */
-
-function showLogin(){
-
-    authMode='login';
-
-    $('loginTab').classList.add('active');
-    $('registerTab').classList.remove('active');
-
-    $('authButton').textContent='登录';
-    $('password').autocomplete='current-password';
-
-}
-
-
-function showRegister(){
-
-    authMode='register';
-
-    $('registerTab').classList.add('active');
-    $('loginTab').classList.remove('active');
-
-    $('authButton').textContent='注册';
-    $('password').autocomplete='new-password';
+    $('authMessage').textContent = '';
 
 }
 
@@ -663,95 +1496,83 @@ function showRegister(){
 async function submitAuth(){
 
     if(!sb){
-        toast('还没有连接 Supabase');
+
+        toast('请先连接云端');
+
         return;
+
     }
 
-    const email=String($('email').value || '').trim();
-    const password=String($('password').value || '');
+    const email = $('authEmail').value.trim();
 
-    if(!email){
-        toast('请输入邮箱');
+    const password = $('authPassword').value;
+
+    if(!email || !password){
+
+        toast('请输入邮箱和密码');
+
         return;
+
     }
 
-    if(!password){
-        toast('请输入密码');
+    if(password.length < 6){
+
+        toast('密码至少需要6位');
+
         return;
+
     }
 
-    if(password.length<6){
-        toast('密码至少需要 6 位');
-        return;
-    }
+    $('authSubmit').disabled = true;
 
-    const button=$('authButton');
-
-    button.disabled=true;
-    button.textContent='处理中...';
+    $('authSubmit').textContent = '处理中...';
 
     try{
 
-        if(authMode==='login'){
+        if(authMode === 'login'){
 
-            const result=await sb.auth.signInWithPassword({
+            const result = await sb.auth.signInWithPassword({
+
                 email:email,
+
                 password:password
+
             });
 
-            if(!result){
-                throw new Error('登录没有返回结果');
-            }
-
-            if(result.error){
-                throw result.error;
-            }
-
-            if(!result.data || !result.data.user){
-                throw new Error('登录失败：没有取得用户信息');
-            }
+            if(result.error) throw result.error;
 
             toast('登录成功');
 
         }else{
 
-            const result=await sb.auth.signUp({
+            const redirectUrl =
+                window.location.origin +
+                window.location.pathname;
+
+            const result = await sb.auth.signUp({
+
                 email:email,
-                password:password
+
+                password:password,
+
+                options:{
+                    emailRedirectTo:redirectUrl
+                }
+
             });
 
-            if(!result){
-                throw new Error('注册没有返回结果');
-            }
+            if(result.error) throw result.error;
 
-            if(result.error){
-                throw result.error;
-            }
+            if(result.data.session){
 
-            /*
-             * 这里特别修复之前的 TypeError 问题。
-             * 不再直接访问可能不存在的对象。
-             */
-
-            const data=result.data || {};
-            const user=data.user || null;
-            const session=data.session || null;
-
-            if(!user){
-
-                throw new Error(
-                    'Supabase 没有返回注册用户。请检查 Supabase Auth 设置。'
-                );
-
-            }
-
-            if(session){
-
-                toast('注册成功，已经登录');
+                toast('注册成功');
 
             }else{
 
-                toast('注册成功，请检查邮箱完成验证');
+                $('authMessage').innerHTML =
+                    '<div class="bg-green-50 text-green-700 rounded-xl p-3">' +
+                    '注册成功！请打开邮箱确认账号，然后回来登录。' +
+                    '</div>';
 
             }
 
@@ -759,44 +1580,68 @@ async function submitAuth(){
 
     }catch(error){
 
-        console.error('AUTH ERROR:',error);
+        console.error(error);
 
-        toast('操作失败：'+friendlyAuthError(error));
+        $('authMessage').innerHTML =
+            '<div class="bg-red-50 text-red-700 rounded-xl p-3">' +
+            getErrorMessage(error) +
+            '</div>';
 
     }finally{
 
-        button.disabled=false;
-        button.textContent=authMode==='login'?'登录':'注册';
+        $('authSubmit').disabled = false;
+
+        $('authSubmit').textContent =
+            authMode === 'login' ? '登录' : '注册';
 
     }
 
 }
 
 
-/* ================= Session ================= */
+async function resetPassword(){
 
-async function handleSession(session){
+    if(!sb){
 
-    if(session && session.user){
+        toast('请先连接云端');
 
-        currentUser=session.user;
+        return;
 
-        $('authPage').classList.add('hide');
-        $('appPage').classList.remove('hide');
+    }
 
-        await loadWarehouses();
+    const email = $('authEmail').value.trim();
 
-    }else{
+    if(!email){
 
-        currentUser=null;
+        toast('先输入邮箱');
 
-        $('appPage').classList.add('hide');
-        $('authPage').classList.remove('hide');
+        return;
 
-        if(getConfig()){
-            $('configBox').classList.add('hide');
-            $('loginBox').classList.remove('hide');
-        }
+    }
+
+    try{
+
+        const redirectUrl =
+            window.location.origin +
+            window.location.pathname;
+
+        const result = await sb.auth.resetPasswordForEmail(
+
+            email,
+
+            {
+                redirectTo:redirectUrl
+            }
+
+        );
+
+        if(result.error) throw result.error;
+
+        toast('重置密码邮件已发送');
+
+    }catch(error){
+
+        toast(getErrorMessage(error));
 
     }
 
@@ -805,106 +1650,212 @@ async function handleSession(session){
 
 async function logout(){
 
-    if(!sb) return;
+    if(sb){
 
-    try{
         await sb.auth.signOut();
-    }catch(error){
-        toast('退出失败：'+getErrorMessage(error));
+
     }
 
-}
-
-
-/* ================= 仓库 ================= */
-
-function roleText(role){
-
-    if(role==='owner') return '所有者';
-    if(role==='admin') return '管理员';
-    return '员工';
+    location.reload();
 
 }
 
 
-async function loadWarehouses(){
+// ==================== 初始化 ====================
 
-    if(!currentUser) return;
+async function init(){
 
-    try{
+    loadConfig();
 
-        const result=await sb
-        .from('warehouse_members')
-        .select('warehouse_id,role')
-        .eq('user_id',currentUser.id);
+    const connected = await connectSupabase();
 
-        if(result.error) throw result.error;
+    if(!connected || !sb) return;
 
-        const members=result.data || [];
+    const result = await sb.auth.getSession();
 
-        if(members.length===0){
+    if(result.data && result.data.session){
 
-            warehouses=[];
-            renderWarehouses();
+        currentUser = result.data.session.user;
 
-            $('mainContent').classList.add('hide');
+        await enterApp();
 
-            toast('你还没有仓库，请创建或加入一个仓库');
+    }
 
-            return;
+    sb.auth.onAuthStateChange(function(event,session){
+
+        if(session && !currentUser){
+
+            currentUser = session.user;
+
+            enterApp();
 
         }
 
-        const ids=members.map(function(x){
-            return x.warehouse_id;
-        });
+    });
 
-        const result2=await sb
-        .from('warehouses')
-        .select('*')
-        .in('id',ids)
-        .order('created_at',{ascending:false});
+}
 
-        if(result2.error) throw result2.error;
 
-        const warehouseData=result2.data || [];
+async function enterApp(){
 
-        warehouses=warehouseData.map(function(w){
+    $('authPage').classList.add('hide');
 
-            const member=members.find(function(x){
-                return x.warehouse_id===w.id;
-            });
+    $('appPage').classList.remove('hide');
 
-            return Object.assign({},w,{
-                role:member ? member.role : 'member'
-            });
+    $('currentEmail').textContent =
+        currentUser ? currentUser.email : '';
 
-        });
+    await loadWarehouses();
 
-        renderWarehouses();
+    showPage('home');
 
-        if(currentWarehouse){
+}
 
-            const exists=warehouses.find(function(w){
-                return w.id===currentWarehouse.id;
-            });
 
-            if(exists){
+window.addEventListener('load',init);
 
-                currentWarehouse=exists;
-                currentRole=exists.role;
 
-                await loadWarehouseData();
+// ==================== 页面 ====================
 
-                return;
+function showPage(page){
+
+    const pages = [
+        'home',
+        'inventory',
+        'stock',
+        'logs',
+        'settings'
+    ];
+
+    pages.forEach(function(name){
+
+        const el = $('page'+name.charAt(0).toUpperCase()+name.slice(1));
+
+        if(el){
+
+            if(name === page){
+
+                el.classList.remove('hide');
+
+            }else{
+
+                el.classList.add('hide');
 
             }
 
         }
 
-        if(warehouses.length>0){
-            selectWarehouse(warehouses[0].id);
+    });
+
+
+    document.querySelectorAll('.nav-item').forEach(function(el){
+
+        el.classList.remove('active');
+
+    });
+
+    const nav = $('nav'+page.charAt(0).toUpperCase()+page.slice(1));
+
+    if(nav) nav.classList.add('active');
+
+
+    if(page === 'home'){
+
+        renderDashboard();
+
+    }
+
+    if(page === 'inventory'){
+
+        loadInventory();
+
+    }
+
+    if(page === 'stock'){
+
+        loadInventory();
+
+    }
+
+    if(page === 'logs'){
+
+        loadLogs();
+
+    }
+
+}
+
+
+// ==================== 仓库 ====================
+
+async function loadWarehouses(){
+
+    try{
+
+        const result = await sb
+
+            .from('warehouse_members')
+
+            .select(`
+                warehouse_id,
+                role,
+                warehouses (
+                    id,
+                    name,
+                    join_code,
+                    created_at
+                )
+            `)
+
+            .eq('user_id',currentUser.id);
+
+        if(result.error) throw result.error;
+
+        warehouses = (result.data || []).map(function(row){
+
+            return {
+                id:row.warehouse_id,
+                role:row.role,
+                name:row.warehouses ? row.warehouses.name : '',
+                join_code:row.warehouses ? row.warehouses.join_code : ''
+            };
+
+        });
+
+
+        const savedId =
+            localStorage.getItem('current_warehouse_id');
+
+        let found = null;
+
+        if(savedId){
+
+            found = warehouses.find(function(w){
+
+                return String(w.id) === String(savedId);
+
+            });
+
         }
+
+        if(!found && warehouses.length){
+
+            found = warehouses[0];
+
+        }
+
+        currentWarehouse = found || null;
+
+        if(currentWarehouse){
+
+            localStorage.setItem(
+                'current_warehouse_id',
+                currentWarehouse.id
+            );
+
+        }
+
+        renderWarehouseState();
 
     }catch(error){
 
@@ -917,33 +1868,160 @@ async function loadWarehouses(){
 }
 
 
-function renderWarehouses(){
+function renderWarehouseState(){
 
-    const select=$('warehouseSelect');
+    if(currentWarehouse){
 
-    select.innerHTML='<option value="">请选择仓库</option>';
+        $('warehouseName').textContent =
+            currentWarehouse.name;
 
-    warehouses.forEach(function(w){
+        $('noWarehouseBox').classList.add('hide');
 
-        const option=document.createElement('option');
+        $('dashboardBox').classList.remove('hide');
 
-        option.value=w.id;
-        option.textContent=w.name+'（'+roleText(w.role)+'）';
+        loadInventory();
 
-        if(currentWarehouse && currentWarehouse.id===w.id){
-            option.selected=true;
-        }
+        loadLogs();
 
-        select.appendChild(option);
+    }else{
+
+        $('warehouseName').textContent =
+            '请选择仓库';
+
+        $('noWarehouseBox').classList.remove('hide');
+
+        $('dashboardBox').classList.add('hide');
+
+        $('inventoryList').innerHTML =
+            '<div class="card p-6 text-center text-gray-500">' +
+            '请先创建或加入仓库' +
+            '</div>';
+
+    }
+
+}
+
+
+function openWarehouseModal(){
+
+    renderWarehouseList();
+
+    openModal('warehouseModal');
+
+}
+
+
+function renderWarehouseList(){
+
+    if(!warehouses.length){
+
+        $('warehouseList').innerHTML =
+            '<div class="text-gray-500 text-center py-5">' +
+            '暂时没有仓库' +
+            '</div>';
+
+        return;
+
+    }
+
+    $('warehouseList').innerHTML =
+        warehouses.map(function(w){
+
+            const selected =
+                currentWarehouse &&
+                String(currentWarehouse.id) === String(w.id);
+
+            return `
+                <div class="result-row">
+
+                    <div class="flex justify-between gap-3">
+
+                        <div class="min-w-0">
+
+                            <div class="font-bold truncate">
+                                ${escapeHtml(w.name)}
+                            </div>
+
+                            <div class="text-xs text-gray-500 mt-1">
+                                ${w.role === 'owner' ? '👑 管理员' : '👤 成员'}
+                            </div>
+
+                        </div>
+
+                        ${
+                            selected
+                            ?
+                            '<span class="badge bg-green-100 text-green-700">当前</span>'
+                            :
+                            ''
+                        }
+
+                    </div>
+
+                    ${
+                        w.role === 'owner'
+                        ?
+                        `
+                        <div class="text-sm mt-3 bg-gray-50 rounded-xl p-3">
+                            加入码：
+                            <b class="tracking-widest">${escapeHtml(w.join_code || '')}</b>
+                        </div>
+                        `
+                        :
+                        ''
+                    }
+
+                    <button
+                        onclick="selectWarehouse('${w.id}')"
+                        class="btn ${
+                            selected
+                            ? 'bg-gray-100'
+                            : 'bg-indigo-600 text-white'
+                        } w-full mt-3"
+                    >
+                        ${selected ? '已选择' : '选择此仓库'}
+                    </button>
+
+                </div>
+            `;
+
+        }).join('');
+
+}
+
+
+async function selectWarehouse(id){
+
+    const found = warehouses.find(function(w){
+
+        return String(w.id) === String(id);
 
     });
+
+    if(!found) return;
+
+    currentWarehouse = found;
+
+    localStorage.setItem(
+        'current_warehouse_id',
+        currentWarehouse.id
+    );
+
+    closeModal('warehouseModal');
+
+    renderWarehouseState();
+
+    toast('已切换到：'+currentWarehouse.name);
 
 }
 
 
 function openCreateWarehouse(){
 
-    $('newWarehouseName').value='';
+    closeModal('warehouseModal');
+
+    $('newWarehouseName').value = '';
+
     openModal('createWarehouseModal');
 
 }
@@ -951,30 +2029,60 @@ function openCreateWarehouse(){
 
 async function createWarehouse(){
 
-    const name=String($('newWarehouseName').value || '').trim();
+    const name =
+        $('newWarehouseName').value.trim();
 
     if(!name){
+
         toast('请输入仓库名称');
+
         return;
+
     }
 
     try{
 
-        const result=await sb.rpc('create_warehouse',{
-            p_name:name
-        });
+        const result = await sb.rpc(
+            'create_warehouse',
+            {
+                p_name:name
+            }
+        );
 
         if(result.error) throw result.error;
 
-        closeModal('createWarehouseModal');
-
         toast('仓库创建成功');
 
+        closeModal('createWarehouseModal');
+
         await loadWarehouses();
+
+        if(result.data){
+
+            let newId = null;
+
+            if(Array.isArray(result.data)){
+
+                newId = result.data[0]?.id;
+
+            }else{
+
+                newId = result.data.id;
+
+            }
+
+            if(newId){
+
+                await selectWarehouse(newId);
+
+            }
+
+        }
 
     }catch(error){
 
         console.error(error);
+
         toast('创建失败：'+getErrorMessage(error));
 
     }
@@ -984,7 +2092,10 @@ async function createWarehouse(){
 
 function openJoinWarehouse(){
 
-    $('joinCode').value='';
+    closeModal('warehouseModal');
+
+    $('joinCode').value = '';
+
     openModal('joinWarehouseModal');
 
 }
@@ -992,28 +2103,31 @@ function openJoinWarehouse(){
 
 async function joinWarehouse(){
 
-    const code=String($('joinCode').value || '').trim().toUpperCase();
+    const code =
+        $('joinCode').value.trim();
 
-    if(!code){
-        toast('请输入加入码');
+    if(!/^\d{6}$/.test(code)){
+
+        toast('请输入6位数字加入码');
+
         return;
+
     }
 
     try{
 
-        const result=await sb.rpc('join_warehouse',{
-            /*
-             * 这里修复原来的 p_code 错误。
-             * SQL 函数使用的是 p_join_code。
-             */
-            p_join_code:code
-        });
+        const result = await sb.rpc(
+            'join_warehouse',
+            {
+                p_join_code:code
+            }
+        );
 
         if(result.error) throw result.error;
 
-        closeModal('joinWarehouseModal');
-
         toast('加入仓库成功');
+
+        closeModal('joinWarehouseModal');
 
         await loadWarehouses();
 
@@ -1028,117 +2142,43 @@ async function joinWarehouse(){
 }
 
 
-function selectWarehouse(id){
-
-    if(!id){
-
-        currentWarehouse=null;
-        currentRole=null;
-
-        $('mainContent').classList.add('hide');
-
-        return;
-
-    }
-
-    const warehouse=warehouses.find(function(w){
-        return w.id===id;
-    });
-
-    if(!warehouse) return;
-
-    currentWarehouse=warehouse;
-    currentRole=warehouse.role;
-
-    $('warehouseTitle').textContent=
-        warehouse.name+' · '+roleText(warehouse.role);
-
-    $('mainContent').classList.remove('hide');
-
-    $('settingsWarehouseName').textContent=warehouse.name;
-    $('myRole').textContent=roleText(warehouse.role);
-    $('settingsJoinCode').textContent=warehouse.join_code || '';
-    $('currentJoinCode').textContent=warehouse.join_code || '';
-
-    $('joinCodeBox').classList.remove('hide');
-
-    loadWarehouseData();
-
-}
-
-
-async function loadWarehouseData(){
-
-    if(!currentWarehouse) return;
-
-    await Promise.all([
-        loadInventory(),
-        loadLogs()
-    ]);
-
-}
-
-
-/* ================= 仓库管理 ================= */
-
-function openWarehouseModal(){
-
-    if(!currentWarehouse){
-        toast('请先选择仓库');
-        return;
-    }
-
-    $('warehouseManageList').innerHTML=`
-
-    <div class="p-4 bg-indigo-50 rounded-xl">
-
-    <div class="text-sm text-gray-500">仓库名称</div>
-    <div class="font-bold mt-1">
-    ${escapeHtml(currentWarehouse.name)}
-    </div>
-
-    <div class="text-sm text-gray-500 mt-4">加入码</div>
-    <div class="text-2xl font-bold tracking-widest mt-1">
-    ${escapeHtml(currentWarehouse.join_code || '')}
-    </div>
-
-    <div class="text-sm text-gray-500 mt-2">
-    把这个 6 位加入码给员工即可。
-    </div>
-
-    </div>
-
-    <div class="p-4 bg-gray-50 rounded-xl mt-3">
-    <div class="font-semibold">我的权限</div>
-    <div class="mt-2">${roleText(currentRole)}</div>
-    </div>
-
-    `;
-
-    openModal('warehouseModal');
-
-}
-
-
-/* ================= 库存 ================= */
+// ==================== 库存 ====================
 
 async function loadInventory(){
 
-    if(!currentWarehouse) return;
+    if(!currentWarehouse){
+
+        inventory = [];
+
+        renderInventory();
+
+        renderDashboard();
+
+        return;
+
+    }
 
     try{
 
-        const result=await sb
-        .from('inventory')
-        .select('*')
-        .eq('warehouse_id',currentWarehouse.id)
-        .order('name',{ascending:true});
+        const result = await sb
+
+            .from('inventory')
+
+            .select('*')
+
+            .eq('warehouse_id',currentWarehouse.id)
+
+            .order('created_at',{ascending:false});
 
         if(result.error) throw result.error;
 
-        inventory=result.data || [];
+        inventory = result.data || [];
 
         renderInventory();
+
+        renderDashboard();
+
+        renderStockSkuMatches();
 
     }catch(error){
 
@@ -1151,141 +2191,310 @@ async function loadInventory(){
 }
 
 
-function renderInventory(){
+function skuNorm(value){
 
-    const keyword=String(($('searchInput') && $('searchInput').value) || '')
-        .trim().toLowerCase();
+    return String(value || '')
+        .trim()
+        .toLowerCase();
 
-    const list=inventory.filter(function(item){
+}
 
-        if(!keyword) return true;
 
-        return String(item.name || '').toLowerCase().includes(keyword)
-        || String(item.sku || '').toLowerCase().includes(keyword)
-        || String(item.bin || '').toLowerCase().includes(keyword);
+function escapeHtml(value){
+
+    return String(value ?? '')
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#039;');
+
+}
+
+
+function getInventoryMatches(keyword){
+
+    keyword = skuNorm(keyword);
+
+    if(!keyword){
+
+        return inventory.map(function(item){
+
+            return {
+                item:item,
+                score:5
+            };
+
+        });
+
+    }
+
+    const list = [];
+
+    inventory.forEach(function(item){
+
+        const name = skuNorm(item.name);
+
+        const sku = skuNorm(item.sku);
+
+        const bin = skuNorm(item.bin);
+
+        let score = 99;
+
+        if(sku === keyword){
+
+            score = 0;
+
+        }else if(sku.endsWith(keyword)){
+
+            score = 1;
+
+        }else if(sku.includes(keyword)){
+
+            score = 2;
+
+        }else if(name.includes(keyword)){
+
+            score = 3;
+
+        }else if(bin.includes(keyword)){
+
+            score = 4;
+
+        }
+
+        if(score < 99){
+
+            list.push({
+                item:item,
+                score:score
+            });
+
+        }
 
     });
 
-    const totalSku=inventory.length;
+    list.sort(function(a,b){
 
-    const totalQty=inventory.reduce(function(sum,item){
-        return sum+Number(item.qty || 0);
-    },0);
+        if(a.score !== b.score){
 
-    const lowCount=inventory.filter(function(item){
-        return Number(item.qty)<=Number(item.alert);
-    }).length;
+            return a.score - b.score;
 
-    $('inventoryStats').innerHTML=`
+        }
 
-    <div class="card p-3">
-    <div class="text-xs text-gray-500">SKU</div>
-    <div class="text-xl font-bold mt-1">${totalSku}</div>
-    </div>
+        return String(a.item.name || '')
+            .localeCompare(String(b.item.name || ''));
 
-    <div class="card p-3">
-    <div class="text-xs text-gray-500">总数量</div>
-    <div class="text-xl font-bold mt-1">${totalQty}</div>
-    </div>
+    });
 
-    <div class="card p-3">
-    <div class="text-xs text-gray-500">低库存</div>
-    <div class="text-xl font-bold mt-1 ${lowCount?'low':''}">
-    ${lowCount}
-    </div>
-    </div>
+    return list;
 
-    `;
+}
 
-    if(list.length===0){
 
-        $('inventoryList').innerHTML=`
-        <div class="card p-8 text-center text-gray-500">
-        暂无库存商品
-        </div>`;
+function renderInventory(){
+
+    const keyword =
+        $('searchInput')?.value.trim() || '';
+
+    const matches =
+        getInventoryMatches(keyword);
+
+    if(keyword){
+
+        $('inventorySearchHint').textContent =
+            `搜索“${keyword}”：找到 ${matches.length} 个商品；支持 SKU 后三位搜索`;
+
+    }else{
+
+        $('inventorySearchHint').textContent =
+            `共 ${inventory.length} 个商品`;
+
+    }
+
+
+    if(!currentWarehouse){
+
+        $('inventoryList').innerHTML =
+            '<div class="card p-6 text-center text-gray-500">' +
+            '请先创建或加入仓库' +
+            '</div>';
 
         return;
 
     }
 
-    $('inventoryList').innerHTML=list.map(function(item){
 
-        const low=Number(item.qty)<=Number(item.alert);
+    if(!matches.length){
 
-        return `
+        $('inventoryList').innerHTML =
+            '<div class="card p-6 text-center">' +
 
-        <div class="card p-4">
+            '<div class="text-4xl mb-3">📦</div>' +
 
-        <div class="flex justify-between gap-3">
+            '<div class="font-semibold">没有找到商品</div>' +
 
-        <div class="min-w-0">
+            '<div class="text-sm text-gray-500 mt-2">' +
+            '可以检查 SKU、商品名称或库位' +
+            '</div>' +
 
-        <div class="font-bold text-lg truncate">
-        ${escapeHtml(item.name)}
-        </div>
+            '</div>';
 
-        <div class="text-sm text-gray-500 mt-1">
-        SKU：${escapeHtml(item.sku)}
-        </div>
+        return;
 
-        <div class="text-sm text-gray-500 mt-1">
-        库位：${escapeHtml(item.bin || '未设置')}
-        </div>
+    }
 
-        </div>
 
-        <div class="text-right">
+    $('inventoryList').innerHTML =
+        matches.map(function(row){
 
-        <div class="text-2xl font-bold ${low?'low':''}">
-        ${Number(item.qty)}
-        </div>
+            const item = row.item;
 
-        <div class="text-xs text-gray-500">
-        预警 ${Number(item.alert)}
-        </div>
+            const qty = Number(item.qty || 0);
 
-        </div>
+            const alertQty =
+                Number(item.alert_qty ?? item.alert ?? 0);
 
-        </div>
+            const low =
+                qty <= alertQty;
 
-        <div class="grid grid-cols-3 gap-2 mt-4">
+            return `
 
-        <button onclick="openStockModal('${item.id}','in')"
-        class="btn bg-green-50 text-green-700 text-sm">
-        入库
-        </button>
+                <div class="card p-4 mb-3">
 
-        <button onclick="openStockModal('${item.id}','out')"
-        class="btn bg-red-50 text-red-700 text-sm">
-        出库
-        </button>
+                    <div class="flex justify-between gap-3">
 
-        <button onclick="openEditItem('${item.id}')"
-        class="btn bg-gray-100 text-sm">
-        编辑
-        </button>
+                        <div class="min-w-0">
 
-        </div>
+                            <div class="font-bold text-lg truncate">
+                                ${escapeHtml(item.name)}
+                            </div>
 
-        </div>
+                            <div class="text-sm text-gray-500 mt-1 break-all">
+                                SKU：${escapeHtml(item.sku)}
+                            </div>
 
-        `;
+                        </div>
 
-    }).join('');
+                        <div class="text-right">
+
+                            <div class="text-2xl font-bold ${
+                                low
+                                ? 'text-red-600'
+                                : 'text-green-600'
+                            }">
+                                ${qty}
+                            </div>
+
+                            <div class="text-xs text-gray-500">
+                                库存
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="grid grid-cols-2 gap-2 mt-4">
+
+                        <div class="bg-blue-50 rounded-xl p-3">
+
+                            <div class="text-xs text-gray-500">
+                                📍 库位
+                            </div>
+
+                            <div class="font-bold mt-1">
+                                ${escapeHtml(item.bin || '未设置')}
+                            </div>
+
+                        </div>
+
+                        <div class="${
+                            low
+                            ? 'bg-red-50'
+                            : 'bg-gray-50'
+                        } rounded-xl p-3">
+
+                            <div class="text-xs text-gray-500">
+                                预警
+                            </div>
+
+                            <div class="font-bold mt-1">
+                                ${alertQty}
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    ${
+                        low
+                        ?
+                        `
+                        <div class="mt-3">
+                            <span class="badge bg-red-100 text-red-700">
+                                ⚠️ 库存不足
+                            </span>
+                        </div>
+                        `
+                        :
+                        ''
+                    }
+
+
+                    <div class="grid grid-cols-3 gap-2 mt-4">
+
+                        <button
+                            onclick="openStockModal('${item.id}','in')"
+                            class="small-btn bg-green-100 text-green-700"
+                        >
+                            📥 入库
+                        </button>
+
+                        <button
+                            onclick="openStockModal('${item.id}','out')"
+                            class="small-btn bg-red-100 text-red-700"
+                        >
+                            📤 出库
+                        </button>
+
+                        <button
+                            onclick="openEditItem('${item.id}')"
+                            class="small-btn bg-gray-100"
+                        >
+                            ✏️ 编辑
+                        </button>
+
+                    </div>
+
+                </div>
+
+            `;
+
+        }).join('');
 
 }
 
 
 function openAddItem(){
 
-    editingItem=null;
+    editingItem = null;
 
-    $('itemModalTitle').textContent='新增商品';
-    $('itemName').value='';
-    $('itemSku').value='';
-    $('itemQty').value=0;
-    $('itemAlert').value=5;
-    $('itemBin').value='';
+    pendingStockInAfterCreate = false;
+
+    $('itemModalTitle').textContent =
+        '新增商品';
+
+    $('itemName').value = '';
+
+    $('itemSku').value = '';
+
+    $('itemQty').value = 0;
+
+    $('itemAlert').value = 5;
+
+    $('itemBin').value = '';
 
     openModal('itemModal');
 
@@ -1294,20 +2503,33 @@ function openAddItem(){
 
 function openEditItem(id){
 
-    const item=inventory.find(function(x){
-        return x.id===id;
+    const item = inventory.find(function(x){
+
+        return String(x.id) === String(id);
+
     });
 
     if(!item) return;
 
-    editingItem=item;
+    editingItem = item;
 
-    $('itemModalTitle').textContent='编辑商品';
-    $('itemName').value=item.name || '';
-    $('itemSku').value=item.sku || '';
-    $('itemQty').value=item.qty ?? 0;
-    $('itemAlert').value=item.alert ?? 5;
-    $('itemBin').value=item.bin || '';
+    $('itemModalTitle').textContent =
+        '编辑商品';
+
+    $('itemName').value =
+        item.name || '';
+
+    $('itemSku').value =
+        item.sku || '';
+
+    $('itemQty').value =
+        Number(item.qty || 0);
+
+    $('itemAlert').value =
+        Number(item.alert_qty ?? item.alert ?? 0);
+
+    $('itemBin').value =
+        item.bin || '';
 
     openModal('itemModal');
 
@@ -1317,42 +2539,66 @@ function openEditItem(id){
 async function saveItem(){
 
     if(!currentWarehouse){
+
         toast('请先选择仓库');
+
         return;
+
     }
 
-    const name=String($('itemName').value || '').trim();
-    const sku=String($('itemSku').value || '').trim();
-    const qty=parseInt($('itemQty').value || '0',10);
-    const alert=parseInt($('itemAlert').value || '0',10);
-    const bin=String($('itemBin').value || '').trim();
+    const name =
+        $('itemName').value.trim();
+
+    const sku =
+        $('itemSku').value.trim();
+
+    const qty =
+        Number($('itemQty').value || 0);
+
+    const alertQty =
+        Number($('itemAlert').value || 0);
+
+    const bin =
+        $('itemBin').value.trim();
 
     if(!name){
+
         toast('请输入商品名称');
+
         return;
+
     }
 
     if(!sku){
-        toast('请输入 SKU');
+
+        toast('SKU不能为空');
+
         return;
+
     }
 
-    if(qty<0 || alert<0){
-        toast('数量不能小于 0');
+    if(qty < 0){
+
+        toast('库存不能小于0');
+
         return;
+
     }
 
     try{
 
         if(editingItem){
 
-            const result=await sb.rpc('update_inventory_info',{
-                p_inventory_id:editingItem.id,
-                p_name:name,
-                p_sku:sku,
-                p_alert:alert,
-                p_bin:bin
-            });
+            const result = await sb.rpc(
+                'update_inventory_info',
+                {
+                    p_inventory_id:editingItem.id,
+                    p_name:name,
+                    p_sku:sku,
+                    p_alert:alertQty,
+                    p_bin:bin
+                }
+            );
 
             if(result.error) throw result.error;
 
@@ -1360,14 +2606,17 @@ async function saveItem(){
 
         }else{
 
-            const result=await sb.rpc('create_inventory',{
-                p_warehouse_id:currentWarehouse.id,
-                p_name:name,
-                p_sku:sku,
-                p_qty:qty,
-                p_alert:alert,
-                p_bin:bin
-            });
+            const result = await sb.rpc(
+                'create_inventory',
+                {
+                    p_warehouse_id:currentWarehouse.id,
+                    p_name:name,
+                    p_sku:sku,
+                    p_qty:qty,
+                    p_alert:alertQty,
+                    p_bin:bin
+                }
+            );
 
             if(result.error) throw result.error;
 
@@ -1376,7 +2625,37 @@ async function saveItem(){
         }
 
         closeModal('itemModal');
+
         await loadInventory();
+
+
+        if(
+            !editingItem &&
+            pendingStockInAfterCreate
+        ){
+
+            pendingStockInAfterCreate = false;
+
+            const newItem = inventory.find(function(x){
+
+                return skuNorm(x.sku) === skuNorm(sku);
+
+            });
+
+            if(newItem){
+
+                setTimeout(function(){
+
+                    openStockModal(
+                        newItem.id,
+                        'in'
+                    );
+
+                },300);
+
+            }
+
+        }
 
     }catch(error){
 
@@ -1389,35 +2668,83 @@ async function saveItem(){
 }
 
 
-/* ================= 出入库 ================= */
+// ==================== 出入库 ====================
 
 function openStockModal(id,type){
 
-    const item=inventory.find(function(x){
-        return x.id===id;
+    const item = inventory.find(function(x){
+
+        return String(x.id) === String(id);
+
     });
 
-    if(!item) return;
+    if(!item){
 
-    stockItem=item;
-    stockType=type;
+        toast('没有找到这个商品');
 
-    $('stockModalTitle').textContent=type==='in'?'📥 入库':'📤 出库';
+        return;
 
-    $('stockItemInfo').innerHTML=`
+    }
 
-    <div class="font-bold">${escapeHtml(item.name)}</div>
-    <div class="text-sm text-gray-500 mt-1">
-    SKU：${escapeHtml(item.sku)}
-    </div>
-    <div class="text-sm text-gray-500 mt-1">
-    当前库存：${Number(item.qty)}
-    </div>
+    stockItem = item;
 
+    stockType = type;
+
+    $('stockModalTitle').textContent =
+        type === 'in' ? '📥 入库' : '📤 出库';
+
+    $('stockItemInfo').textContent =
+        `SKU：${item.sku}`;
+
+    $('stockItemCard').innerHTML = `
+
+        <div class="font-bold text-lg">
+            ${escapeHtml(item.name)}
+        </div>
+
+        <div class="text-sm text-gray-500 mt-1">
+            SKU：${escapeHtml(item.sku)}
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 mt-3">
+
+            <div>
+                <div class="text-xs text-gray-500">
+                    当前库存
+                </div>
+                <div class="font-bold text-lg">
+                    ${Number(item.qty || 0)}
+                </div>
+            </div>
+
+            <div>
+                <div class="text-xs text-gray-500">
+                    📍 库位
+                </div>
+                <div class="font-bold">
+                    ${escapeHtml(item.bin || '未设置')}
+                </div>
+            </div>
+
+        </div>
     `;
 
-    $('stockQty').value=1;
-    $('stockNote').value='';
+
+    $('stockQty').value = 1;
+
+    $('stockNote').value = '';
+
+
+    $('stockSaveBtn').textContent =
+        type === 'in'
+        ? '确认入库'
+        : '确认出库';
+
+    $('stockSaveBtn').className =
+        type === 'in'
+        ? 'btn bg-green-600 text-white w-full'
+        : 'btn bg-red-600 text-white w-full';
+
 
     openModal('stockModal');
 
@@ -1426,23 +2753,169 @@ function openStockModal(id,type){
 
 function openStockBySku(type){
 
-    const sku=String($('stockSku').value || '').trim().toLowerCase();
+    const value =
+        $('stockSku').value.trim();
 
-    if(!sku){
-        toast('请输入 SKU');
+    if(!value){
+
+        toast('请输入或扫描 SKU');
+
         return;
+
     }
 
-    const item=inventory.find(function(x){
-        return String(x.sku).toLowerCase()===sku;
+    const exact = inventory.find(function(item){
+
+        return skuNorm(item.sku) === skuNorm(value);
+
     });
 
-    if(!item){
-        toast('没有找到这个 SKU');
+    if(exact){
+
+        openStockModal(exact.id,type);
+
         return;
+
     }
 
-    openStockModal(item.id,type);
+
+    const matches =
+        getInventoryMatches(value)
+        .filter(function(row){
+
+            return row.score <= 2;
+
+        });
+
+
+    if(matches.length === 1){
+
+        openStockModal(matches[0].item.id,type);
+
+        return;
+
+    }
+
+
+    if(matches.length > 1){
+
+        renderStockSkuMatches(type);
+
+        toast('找到多个匹配商品，请选择');
+
+        return;
+
+    }
+
+
+    toast('没有找到这个 SKU');
+
+}
+
+
+function renderStockSkuMatches(){
+
+    const box = $('stockSkuMatches');
+
+    if(!box) return;
+
+    const keyword =
+        $('stockSku').value.trim();
+
+    if(!keyword){
+
+        box.innerHTML = '';
+
+        return;
+
+    }
+
+    const matches =
+        getInventoryMatches(keyword)
+        .filter(function(row){
+
+            return row.score <= 2;
+
+        });
+
+
+    if(!matches.length){
+
+        box.innerHTML =
+            '<div class="text-sm text-gray-500">' +
+            '没有匹配的 SKU' +
+            '</div>';
+
+        return;
+
+    }
+
+
+    box.innerHTML = `
+
+        <div class="text-sm font-semibold mb-2">
+            找到 ${matches.length} 个匹配商品
+        </div>
+
+        ${
+            matches.map(function(row){
+
+                const item = row.item;
+
+                return `
+
+                    <div class="result-row">
+
+                        <div class="flex justify-between gap-2">
+
+                            <div>
+
+                                <div class="font-bold">
+                                    ${escapeHtml(item.name)}
+                                </div>
+
+                                <div class="text-xs text-gray-500 mt-1">
+                                    SKU：${escapeHtml(item.sku)}
+                                </div>
+
+                                <div class="text-xs text-blue-600 mt-1">
+                                    📍 ${escapeHtml(item.bin || '未设置')}
+                                </div>
+
+                            </div>
+
+                            <div class="font-bold">
+                                ${Number(item.qty || 0)}
+                            </div>
+
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2 mt-3">
+
+                            <button
+                                onclick="openStockModal('${item.id}','in')"
+                                class="small-btn bg-green-100 text-green-700"
+                            >
+                                📥 入库
+                            </button>
+
+                            <button
+                                onclick="openStockModal('${item.id}','out')"
+                                class="small-btn bg-red-100 text-red-700"
+                            >
+                                📤 出库
+                            </button>
+
+                        </div>
+
+                    </div>
+
+                `;
+
+            }).join('')
+        }
+
+    `;
 
 }
 
@@ -1450,39 +2923,71 @@ function openStockBySku(type){
 async function saveStock(){
 
     if(!stockItem){
+
         toast('没有选择商品');
+
         return;
+
     }
 
-    const qty=parseInt($('stockQty').value || '0',10);
-    const note=String($('stockNote').value || '').trim();
+    const qty =
+        Number($('stockQty').value || 0);
 
-    if(qty<=0){
-        toast('数量必须大于 0');
+    const note =
+        $('stockNote').value.trim();
+
+
+    if(!Number.isFinite(qty) || qty <= 0){
+
+        toast('请输入正确数量');
+
         return;
+
     }
 
-    if(stockType==='out' && qty>Number(stockItem.qty)){
-        toast('库存不足，不能出库');
+
+    const currentQty =
+        Number(stockItem.qty || 0);
+
+
+    if(
+        stockType === 'out' &&
+        qty > currentQty
+    ){
+
+        toast(
+            `库存不足，目前只有 ${currentQty}`
+        );
+
         return;
+
     }
+
 
     try{
 
-        const result=await sb.rpc('adjust_inventory',{
-            p_inventory_id:stockItem.id,
-            p_type:stockType,
-            p_qty:qty,
-            p_note:note
-        });
+        const result = await sb.rpc(
+            'adjust_inventory',
+            {
+                p_inventory_id:stockItem.id,
+                p_type:stockType,
+                p_qty:qty,
+                p_note:note
+            }
+        );
 
         if(result.error) throw result.error;
 
         closeModal('stockModal');
 
-        toast(stockType==='in'?'入库成功':'出库成功');
+        toast(
+            stockType === 'in'
+            ? '入库成功'
+            : '出库成功'
+        );
 
         await loadInventory();
+
         await loadLogs();
 
     }catch(error){
@@ -1496,229 +3001,140 @@ async function saveStock(){
 }
 
 
-/* ================= 日志 ================= */
+// ==================== 扫码系统 ====================
 
-async function loadLogs(){
+function scannerModeInfo(mode){
 
-    if(!currentWarehouse) return;
+    if(mode === 'fill-sku'){
 
-    try{
-
-        const result=await sb
-        .from('stock_logs')
-        .select('*')
-        .eq('warehouse_id',currentWarehouse.id)
-        .order('created_at',{ascending:false})
-        .limit(100);
-
-        if(result.error) throw result.error;
-
-        logs=result.data || [];
-
-        renderLogs();
-
-    }catch(error){
-
-        console.error(error);
-
-        toast('读取日志失败：'+getErrorMessage(error));
+        return {
+            title:'📷 扫描 SKU',
+            hint:'扫描后会自动填入商品 SKU'
+        };
 
     }
+
+    if(mode === 'stock-in'){
+
+        return {
+            title:'📷 扫码入库',
+            hint:'扫描商品条码后直接进入入库'
+        };
+
+    }
+
+    if(mode === 'stock-out'){
+
+        return {
+            title:'📷 扫码出库',
+            hint:'扫描商品条码后直接进入出库'
+        };
+
+    }
+
+    if(mode === 'stock'){
+
+        return {
+            title:'📷 扫码出入库',
+            hint:'扫描商品条码'
+        };
+
+    }
+
+    return {
+        title:'📷 扫码找货',
+        hint:'扫描商品条码，自动显示商品和库位'
+    };
 
 }
 
 
-function renderLogs(){
+async function startScanner(mode='find'){
 
-    if(logs.length===0){
+    if(typeof Html5Qrcode === 'undefined'){
 
-        $('logsList').innerHTML=
-        '<div class="text-center text-gray-500 p-6">暂无出入库记录</div>';
-
-        return;
-
-    }
-
-    $('logsList').innerHTML=logs.map(function(log){
-
-        const isIn=log.type==='in';
-        const date=new Date(log.created_at).toLocaleString();
-
-        return `
-
-        <div class="p-3 rounded-xl bg-gray-50">
-
-        <div class="flex justify-between">
-
-        <div>
-
-        <div class="font-semibold">
-        ${isIn?'📥 入库':'📤 出库'}
-        ${escapeHtml(log.name || '')}
-        </div>
-
-        <div class="text-sm text-gray-500 mt-1">
-        SKU：${escapeHtml(log.sku || '')}
-        </div>
-
-        </div>
-
-        <div class="font-bold ${isIn?'text-green-600':'text-red-600'}">
-        ${isIn?'+':'-'}${Number(log.qty)}
-        </div>
-
-        </div>
-
-        <div class="text-xs text-gray-400 mt-2">
-        ${escapeHtml(log.operator_email || '')} · ${escapeHtml(date)}
-        </div>
-
-        ${log.note?`
-        <div class="text-sm text-gray-600 mt-2">
-        备注：${escapeHtml(log.note)}
-        </div>`:''}
-
-        </div>
-
-        `;
-
-    }).join('');
-
-}
-
-
-/* ================= 批量导入 ================= */
-
-function openImportModal(){
-
-    $('importText').value='';
-    openModal('importModal');
-
-}
-
-
-async function runImport(){
-
-    if(!currentWarehouse){
-        toast('请先选择仓库');
-        return;
-    }
-
-    const text=String($('importText').value || '').trim();
-
-    if(!text){
-        toast('请粘贴要导入的内容');
-        return;
-    }
-
-    const lines=text.split(/\r?\n/).map(function(x){
-        return x.trim();
-    }).filter(Boolean);
-
-    let success=0;
-    let failed=0;
-
-    for(const line of lines){
-
-        let parts;
-
-        if(line.includes(',')){
-            parts=line.split(',');
-        }else if(line.includes('，')){
-            parts=line.split('，');
-        }else if(line.includes('\t')){
-            parts=line.split('\t');
-        }else{
-            failed++;
-            continue;
-        }
-
-        const name=String(parts[0] || '').trim();
-        const sku=String(parts[1] || '').trim();
-        const qty=parseInt(String(parts[2] || '0').trim(),10);
-        const alert=parseInt(String(parts[3] || '5').trim(),10);
-        const bin=String(parts[4] || '').trim();
-
-        if(!name || !sku || Number.isNaN(qty)){
-            failed++;
-            continue;
-        }
-
-        try{
-
-            const result=await sb.rpc('create_inventory',{
-                p_warehouse_id:currentWarehouse.id,
-                p_name:name,
-                p_sku:sku,
-                p_qty:qty,
-                p_alert:Number.isNaN(alert)?5:alert,
-                p_bin:bin
-            });
-
-            if(result.error){
-                failed++;
-            }else{
-                success++;
-            }
-
-        }catch(error){
-            failed++;
-        }
-
-    }
-
-    closeModal('importModal');
-
-    await loadInventory();
-
-    toast('导入完成：成功 '+success+' 条，失败 '+failed+' 条');
-
-}
-
-
-/* ================= 扫码 ================= */
-
-async function startScanner(){
-
-    if(typeof Html5Qrcode==='undefined'){
         toast('扫码程序没有加载成功');
+
         return;
+
     }
+
+
+    scannerMode = mode;
+
+    scannerProcessing = false;
+
+    const info = scannerModeInfo(mode);
+
+    $('scannerTitle').textContent =
+        info.title;
+
+    $('scannerHint').textContent =
+        info.hint;
+
+    $('reader').innerHTML = '';
 
     openModal('scannerModal');
 
+
     try{
 
-        scanner=new Html5Qrcode('reader');
+        if(scanner){
+
+            try{
+
+                await scanner.stop();
+
+            }catch(e){}
+
+            scanner = null;
+
+        }
+
+
+        scanner = new Html5Qrcode('reader');
+
 
         await scanner.start(
-            {facingMode:'environment'},
+
+            {
+                facingMode:'environment'
+            },
+
             {
                 fps:10,
-                qrbox:{width:250,height:150}
+                qrbox:{
+                    width:280,
+                    height:160
+                }
             },
-            function(decodedText){
 
-                stopScanner();
+            async function(decodedText){
 
-                const sku=String(decodedText || '').trim();
+                if(scannerProcessing) return;
 
-                $('searchInput').value=sku;
+                scannerProcessing = true;
 
-                renderInventory();
+                const sku =
+                    String(decodedText || '').trim();
 
-                const item=inventory.find(function(x){
-                    return String(x.sku).toLowerCase()===sku.toLowerCase();
-                });
+                if(!sku){
 
-                if(item){
-                    openStockModal(item.id,'in');
-                }else{
-                    toast('扫描结果：'+sku);
+                    scannerProcessing = false;
+
+                    return;
+
                 }
 
+                await handleScanResult(sku);
+
             },
-            function(){}
+
+            function(errorMessage){
+
+                // 正常扫描过程中的识别失败，不提示
+
+            }
 
         );
 
@@ -1726,9 +3142,146 @@ async function startScanner(){
 
         console.error(error);
 
-        toast('无法打开摄像头：'+getErrorMessage(error));
+        toast(
+            '无法打开摄像头：'+
+            getErrorMessage(error)
+        );
 
-        closeModal('scannerModal');
+        await stopScanner();
+
+    }
+
+}
+
+
+async function handleScanResult(sku){
+
+    await stopScanner();
+
+    if(scannerMode === 'fill-sku'){
+
+        $('itemSku').value = sku;
+
+        toast('已扫描 SKU：'+sku);
+
+        return;
+
+    }
+
+
+    const item = inventory.find(function(x){
+
+        return skuNorm(x.sku) === skuNorm(sku);
+
+    });
+
+
+    if(scannerMode === 'find'){
+
+        if(item){
+
+            $('searchInput').value = sku;
+
+            showPage('inventory');
+
+            renderInventory();
+
+            setTimeout(function(){
+
+                toast(
+                    `找到：${item.name} · 库位：${item.bin || '未设置'}`
+                );
+
+            },300);
+
+        }else{
+
+            $('searchInput').value = sku;
+
+            showPage('inventory');
+
+            renderInventory();
+
+            toast(
+                '没有找到 SKU：'+sku
+            );
+
+        }
+
+        return;
+
+    }
+
+
+    if(
+        scannerMode === 'stock-in' ||
+        scannerMode === 'stock'
+    ){
+
+        if(item){
+
+            $('stockSku').value = item.sku;
+
+            showPage('stock');
+
+            openStockModal(
+                item.id,
+                'in'
+            );
+
+        }else{
+
+            if(scannerMode === 'stock-in'){
+
+                showPage('inventory');
+
+                openAddItem();
+
+                pendingStockInAfterCreate = true;
+
+                $('itemSku').value = sku;
+
+                toast(
+                    '这个条码还没有商品，已自动填入 SKU，请填写商品信息'
+                );
+
+            }else{
+
+                toast(
+                    '没有找到这个 SKU：'+sku
+                );
+
+            }
+
+        }
+
+        return;
+
+    }
+
+
+    if(scannerMode === 'stock-out'){
+
+        if(item){
+
+            $('stockSku').value = item.sku;
+
+            showPage('stock');
+
+            openStockModal(
+                item.id,
+                'out'
+            );
+
+        }else{
+
+            toast(
+                '没有找到这个 SKU，无法出库'
+            );
+
+        }
+
+        return;
 
     }
 
@@ -1741,9 +3294,19 @@ async function stopScanner(){
 
         if(scanner){
 
-            await scanner.stop();
+            try{
 
-            scanner.clear();
+                await scanner.stop();
+
+            }catch(e){}
+
+            try{
+
+                await scanner.clear();
+
+            }catch(e){}
+
+            scanner = null;
 
         }
 
@@ -1753,131 +3316,1377 @@ async function stopScanner(){
 
     }
 
-    scanner=null;
+    $('reader').innerHTML = '';
 
-    closeModal('scannerModal');
+    $('scannerModal').classList.add('hide');
 
-}
-
-
-/* ================= 页面 ================= */
-
-function showPage(page){
-
-    $('pageInventory').classList.add('hide');
-    $('pageStock').classList.add('hide');
-    $('pageLogs').classList.add('hide');
-    $('pageSettings').classList.add('hide');
-
-    $('navInventory').className='btn bg-gray-100 text-sm';
-    $('navStock').className='btn bg-gray-100 text-sm';
-    $('navLogs').className='btn bg-gray-100 text-sm';
-    $('navSettings').className='btn bg-gray-100 text-sm';
-
-    if(page==='inventory'){
-
-        $('pageInventory').classList.remove('hide');
-        $('navInventory').className='btn bg-indigo-600 text-white text-sm';
-        loadInventory();
-
-    }
-
-    if(page==='stock'){
-
-        $('pageStock').classList.remove('hide');
-        $('navStock').className='btn bg-indigo-600 text-white text-sm';
-
-    }
-
-    if(page==='logs'){
-
-        $('pageLogs').classList.remove('hide');
-        $('navLogs').className='btn bg-indigo-600 text-white text-sm';
-        loadLogs();
-
-    }
-
-    if(page==='settings'){
-
-        $('pageSettings').classList.remove('hide');
-        $('navSettings').className='btn bg-indigo-600 text-white text-sm';
-
-    }
+    scannerProcessing = false;
 
 }
 
 
-/* ================= 备份 ================= */
+// ==================== 批量新增 ====================
 
-function exportBackup(){
+async function runImport(){
 
     if(!currentWarehouse){
+
         toast('请先选择仓库');
+
         return;
+
     }
 
-    const backup={
-        exported_at:new Date().toISOString(),
-        warehouse:{
-            id:currentWarehouse.id,
-            name:currentWarehouse.name
-        },
-        inventory:inventory,
-        logs:logs
-    };
+    const text =
+        $('importText').value.trim();
 
-    const blob=new Blob(
-        [JSON.stringify(backup,null,2)],
-        {type:'application/json'}
+    if(!text){
+
+        toast('请输入导入内容');
+
+        return;
+
+    }
+
+
+    const lines =
+        text.split(/\r?\n/)
+            .map(function(x){
+
+                return x.trim();
+
+            })
+            .filter(Boolean);
+
+
+    let success = 0;
+
+    let failed = 0;
+
+    const errors = [];
+
+
+    for(let i=0;i<lines.length;i++){
+
+        const parts =
+            lines[i]
+            .split(/[,\t，]/)
+            .map(function(x){
+
+                return x.trim();
+
+            });
+
+
+        if(parts.length < 2){
+
+            failed++;
+
+            errors.push(
+                `第 ${i+1} 行格式错误`
+            );
+
+            continue;
+
+        }
+
+
+        const name = parts[0];
+
+        const sku = parts[1];
+
+        const qty = Number(parts[2] || 0);
+
+        const alertQty = Number(parts[3] || 5);
+
+        const bin = parts[4] || '';
+
+
+        if(!name || !sku){
+
+            failed++;
+
+            errors.push(
+                `第 ${i+1} 行缺少名称或 SKU`
+            );
+
+            continue;
+
+        }
+
+
+        try{
+
+            const result = await sb.rpc(
+                'create_inventory',
+                {
+                    p_warehouse_id:currentWarehouse.id,
+                    p_name:name,
+                    p_sku:sku,
+                    p_qty:qty,
+                    p_alert:alertQty,
+                    p_bin:bin
+                }
+            );
+
+            if(result.error) throw result.error;
+
+            success++;
+
+        }catch(error){
+
+            failed++;
+
+            errors.push(
+                `第 ${i+1} 行：${getErrorMessage(error)}`
+            );
+
+        }
+
+    }
+
+
+    closeModal('importModal');
+
+    await loadInventory();
+
+    toast(
+        `批量新增完成：成功 ${success} 条，失败 ${failed} 条`
     );
 
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
 
-    a.href=url;
-    a.download='warehouse-backup-'+
-        new Date().toISOString().slice(0,10)+'.json';
+    if(errors.length){
 
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+        setTimeout(function(){
 
-    URL.revokeObjectURL(url);
+            alert(
+                '失败记录：\n\n'+
+                errors.join('\n')
+            );
 
-    toast('备份文件已生成');
+        },500);
+
+    }
 
 }
 
 
-/* ================= 弹窗 ================= */
+// ==================== 批量出入库 ====================
 
-document.querySelectorAll('.modal-bg').forEach(function(bg){
+function openBatchStock(mode){
 
-    bg.addEventListener('click',function(event){
+    batchStockMode = mode;
 
-        if(event.target===bg){
-            bg.classList.add('hide');
+    batchStockRows = [];
+
+    $('batchStockText').value = '';
+
+    $('batchStockFile').value = '';
+
+    $('batchStockPreview').innerHTML = '';
+
+    $('batchStockResult').innerHTML = '';
+
+    $('batchStockExecuteBtn').classList.add('hide');
+
+    setBatchStockMode(mode);
+
+    openModal('batchStockModal');
+
+}
+
+
+function setBatchStockMode(mode){
+
+    batchStockMode = mode;
+
+    $('batchStockTitle').textContent =
+        mode === 'in'
+        ? '📥 批量入库'
+        : '📤 批量出库';
+
+
+    if(mode === 'in'){
+
+        $('batchInBtn').className =
+            'btn bg-green-600 text-white';
+
+        $('batchOutBtn').className =
+            'btn bg-gray-100';
+
+    }else{
+
+        $('batchInBtn').className =
+            'btn bg-gray-100';
+
+        $('batchOutBtn').className =
+            'btn bg-red-600 text-white';
+
+    }
+
+}
+
+
+function normalizeHeader(value){
+
+    return String(value || '')
+        .replace(/^\uFEFF/,'')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g,'');
+
+}
+
+
+function findHeaderIndex(headers,names){
+
+    for(let i=0;i<headers.length;i++){
+
+        const h = normalizeHeader(headers[i]);
+
+        for(const name of names){
+
+            if(h === normalizeHeader(name)){
+
+                return i;
+
+            }
+
+        }
+
+    }
+
+    return -1;
+
+}
+
+
+function matrixToBatchRows(matrix){
+
+    if(!Array.isArray(matrix)){
+
+        return [];
+
+    }
+
+
+    const rows =
+        matrix
+        .map(function(row){
+
+            return Array.isArray(row)
+                ? row.map(function(x){
+
+                    return String(x ?? '').trim();
+
+                })
+                : [];
+
+        })
+        .filter(function(row){
+
+            return row.some(function(x){
+
+                return x !== '';
+
+            });
+
+        });
+
+
+    if(!rows.length){
+
+        return [];
+
+    }
+
+
+    const headers = rows[0];
+
+    const skuIndex =
+        findHeaderIndex(
+            headers,
+            [
+                'sku',
+                'SKU',
+                '条码',
+                '商品编码',
+                '货号',
+                '编码',
+                '条形码'
+            ]
+        );
+
+
+    const qtyIndex =
+        findHeaderIndex(
+            headers,
+            [
+                '数量',
+                'qty',
+                'quantity',
+                '库存数量'
+            ]
+        );
+
+
+    const noteIndex =
+        findHeaderIndex(
+            headers,
+            [
+                '备注',
+                'note',
+                'remark',
+                '说明'
+            ]
+        );
+
+
+    let start = 0;
+
+    let sIndex = skuIndex;
+
+    let qIndex = qtyIndex;
+
+    let nIndex = noteIndex;
+
+
+    if(
+        skuIndex >= 0 &&
+        qtyIndex >= 0
+    ){
+
+        start = 1;
+
+    }else{
+
+        // 没有表头时自动判断格式
+
+        const first = rows[0];
+
+        if(
+            first.length >= 3 &&
+            !isNaN(Number(first[2])) &&
+            first[1] !== ''
+        ){
+
+            // 商品名称,SKU,数量,备注
+
+            sIndex = 1;
+
+            qIndex = 2;
+
+            nIndex = 3;
+
+        }else{
+
+            // SKU,数量,备注
+
+            sIndex = 0;
+
+            qIndex = 1;
+
+            nIndex = 2;
+
+        }
+
+    }
+
+
+    const result = [];
+
+
+    for(let i=start;i<rows.length;i++){
+
+        const row = rows[i];
+
+        const sku =
+            String(row[sIndex] || '').trim();
+
+        const qty =
+            Number(row[qIndex] || 0);
+
+        const note =
+            String(row[nIndex] || '').trim();
+
+
+        if(!sku && !qty){
+
+            continue;
+
+        }
+
+
+        result.push({
+
+            line:i+1,
+
+            sku:sku,
+
+            qty:qty,
+
+            note:note
+
+        });
+
+    }
+
+
+    return result;
+
+}
+
+
+function parseBatchText(text){
+
+    const lines =
+        String(text || '')
+        .replace(/\r/g,'')
+        .split('\n')
+        .map(function(x){
+
+            return x.trim();
+
+        })
+        .filter(Boolean);
+
+
+    const matrix =
+        lines.map(function(line){
+
+            return line.split(/[,\t，]/);
+
+        });
+
+
+    return matrixToBatchRows(matrix);
+
+}
+
+
+async function handleBatchStockFile(event){
+
+    const file =
+        event.target.files?.[0];
+
+    if(!file) return;
+
+
+    try{
+
+        const name =
+            file.name.toLowerCase();
+
+        let rows = [];
+
+
+        if(
+            name.endsWith('.xlsx') ||
+            name.endsWith('.xls')
+        ){
+
+            if(typeof XLSX === 'undefined'){
+
+                throw new Error(
+                    'Excel读取程序没有加载成功'
+                );
+
+            }
+
+            const buffer =
+                await file.arrayBuffer();
+
+            const workbook =
+                XLSX.read(
+                    buffer,
+                    {
+                        type:'array'
+                    }
+                );
+
+            const sheet =
+                workbook.Sheets[
+                    workbook.SheetNames[0]
+                ];
+
+            const matrix =
+                XLSX.utils.sheet_to_json(
+                    sheet,
+                    {
+                        header:1,
+                        defval:''
+                    }
+                );
+
+            rows =
+                matrixToBatchRows(matrix);
+
+        }else{
+
+            const text =
+                await file.text();
+
+            rows =
+                parseBatchText(text);
+
+        }
+
+
+        batchStockRows = rows;
+
+        renderBatchStockPreview();
+
+        toast(
+            `读取成功：${rows.length} 条`
+        );
+
+    }catch(error){
+
+        console.error(error);
+
+        toast(
+            '文件读取失败：'+
+            getErrorMessage(error)
+        );
+
+    }
+
+}
+
+
+function prepareBatchStockFromText(){
+
+    const text =
+        $('batchStockText').value.trim();
+
+    if(!text){
+
+        toast('请先粘贴数据或上传文件');
+
+        return;
+
+    }
+
+    batchStockRows =
+        parseBatchText(text);
+
+    renderBatchStockPreview();
+
+}
+
+
+function validateBatchStockRows(){
+
+    const errors = [];
+
+    const skuMap = new Map();
+
+    inventory.forEach(function(item){
+
+        skuMap.set(
+            skuNorm(item.sku),
+            item
+        );
+
+    });
+
+
+    const outboundNeed = new Map();
+
+
+    batchStockRows.forEach(function(row,index){
+
+        const line =
+            row.line || index+1;
+
+        if(!row.sku){
+
+            errors.push(
+                `第 ${line} 行：SKU为空`
+            );
+
+            return;
+
+        }
+
+
+        if(
+            !Number.isFinite(row.qty) ||
+            row.qty <= 0
+        ){
+
+            errors.push(
+                `第 ${line} 行：数量必须大于0`
+            );
+
+            return;
+
+        }
+
+
+        const item =
+            skuMap.get(
+                skuNorm(row.sku)
+            );
+
+
+        if(!item){
+
+            errors.push(
+                `第 ${line} 行：SKU ${row.sku} 不存在`
+            );
+
+            return;
+
+        }
+
+
+        row.itemId = item.id;
+
+        row.itemName = item.name;
+
+        row.currentQty =
+            Number(item.qty || 0);
+
+
+        if(batchStockMode === 'out'){
+
+            const key =
+                skuNorm(row.sku);
+
+            const previous =
+                outboundNeed.get(key) || 0;
+
+            const total =
+                previous + row.qty;
+
+            outboundNeed.set(key,total);
+
+            if(total > row.currentQty){
+
+                errors.push(
+                    `第 ${line} 行：${row.sku} 库存不足，需要出库 ${total}，当前只有 ${row.currentQty}`
+                );
+
+            }
+
         }
 
     });
 
-});
+
+    return errors;
+
+}
 
 
-document.addEventListener('keydown',function(event){
+function renderBatchStockPreview(){
 
-    if(event.key==='Enter' &&
-       event.target &&
-       event.target.tagName==='INPUT' &&
-       event.target.id==='joinCode'){
+    $('batchStockResult').innerHTML = '';
 
-        event.preventDefault();
-        joinWarehouse();
+    $('batchStockExecuteBtn').classList.add('hide');
+
+
+    if(!batchStockRows.length){
+
+        $('batchStockPreview').innerHTML =
+            '<div class="bg-yellow-50 text-yellow-700 rounded-xl p-3">' +
+            '没有读取到有效数据' +
+            '</div>';
+
+        return;
 
     }
 
-});
+
+    const errors =
+        validateBatchStockRows();
+
+
+    let html = `
+
+        <div class="bg-gray-50 rounded-xl p-3">
+
+            <div class="font-semibold mb-3">
+                数据预览：${batchStockRows.length} 条
+            </div>
+
+    `;
+
+
+    batchStockRows.slice(0,30).forEach(function(row,index){
+
+        const item =
+            inventory.find(function(x){
+
+                return String(x.id) === String(row.itemId);
+
+            });
+
+
+        html += `
+
+            <div class="border-b border-gray-200 py-2">
+
+                <div class="flex justify-between gap-2">
+
+                    <div class="min-w-0">
+
+                        <div class="font-semibold truncate">
+                            ${escapeHtml(
+                                item
+                                ? item.name
+                                : row.itemName || '未找到'
+                            )}
+                        </div>
+
+                        <div class="text-xs text-gray-500">
+                            ${escapeHtml(row.sku)}
+                        </div>
+
+                    </div>
+
+                    <div class="font-bold ${
+                        batchStockMode === 'in'
+                        ? 'text-green-600'
+                        : 'text-red-600'
+                    }">
+
+                        ${
+                            batchStockMode === 'in'
+                            ? '+'
+                            : '-'
+                        }${row.qty}
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        `;
+
+    });
+
+
+    if(batchStockRows.length > 30){
+
+        html += `
+            <div class="text-xs text-gray-500 mt-3">
+                只显示前30条，实际共 ${batchStockRows.length} 条
+            </div>
+        `;
+
+    }
+
+
+    html += '</div>';
+
+
+    if(errors.length){
+
+        html += `
+
+            <div class="bg-red-50 text-red-700 rounded-xl p-3 mt-3">
+
+                <div class="font-bold mb-2">
+                    ⚠️ 检查失败
+                </div>
+
+                <div class="text-sm">
+                    ${errors
+                        .slice(0,20)
+                        .map(function(x){
+
+                            return '<div>'+escapeHtml(x)+'</div>';
+
+                        })
+                        .join('')
+                    }
+                </div>
+
+                ${
+                    errors.length > 20
+                    ?
+                    '<div class="text-xs mt-2">还有更多错误...</div>'
+                    :
+                    ''
+                }
+
+            </div>
+
+        `;
+
+    }else{
+
+        html += `
+
+            <div class="bg-green-50 text-green-700 rounded-xl p-3 mt-3">
+
+                <div class="font-bold">
+                    ✅ 检查通过
+                </div>
+
+                <div class="text-sm mt-1">
+                    ${batchStockMode === 'in'
+                        ? '所有 SKU 都存在，可以批量入库。'
+                        : '所有 SKU 库存充足，可以批量出库。'
+                    }
+                </div>
+
+            </div>
+
+        `;
+
+        $('batchStockExecuteBtn').classList.remove('hide');
+
+        $('batchStockExecuteBtn').textContent =
+            batchStockMode === 'in'
+            ? `🚀 确认批量入库 ${batchStockRows.length} 条`
+            : `🚀 确认批量出库 ${batchStockRows.length} 条`;
+
+    }
+
+
+    $('batchStockPreview').innerHTML = html;
+
+}
+
+
+async function executeBatchStock(){
+
+    if(!batchStockRows.length){
+
+        toast('没有批量数据');
+
+        return;
+
+    }
+
+
+    const errors =
+        validateBatchStockRows();
+
+
+    if(errors.length){
+
+        toast('数据检查没有通过');
+
+        renderBatchStockPreview();
+
+        return;
+
+    }
+
+
+    const btn =
+        $('batchStockExecuteBtn');
+
+    btn.disabled = true;
+
+    btn.textContent = '正在处理...';
+
+
+    let success = 0;
+
+    let failed = 0;
+
+    const failedRows = [];
+
+
+    for(let i=0;i<batchStockRows.length;i++){
+
+        const row =
+            batchStockRows[i];
+
+
+        try{
+
+            const result =
+                await sb.rpc(
+                    'adjust_inventory',
+                    {
+                        p_inventory_id:row.itemId,
+                        p_type:batchStockMode,
+                        p_qty:row.qty,
+                        p_note:
+                            row.note ||
+                            (
+                                batchStockMode === 'in'
+                                ? '批量入库'
+                                : '批量出库'
+                            )
+                    }
+                );
+
+
+            if(result.error){
+
+                throw result.error;
+
+            }
+
+
+            success++;
+
+        }catch(error){
+
+            failed++;
+
+            failedRows.push(
+                `第 ${row.line} 行 ${row.sku}：${getErrorMessage(error)}`
+            );
+
+        }
+
+    }
+
+
+    await loadInventory();
+
+    await loadLogs();
+
+
+    btn.classList.add('hide');
+
+    $('batchStockResult').innerHTML = `
+
+        <div class="${
+            failed
+            ? 'bg-yellow-50 text-yellow-800'
+            : 'bg-green-50 text-green-700'
+        } rounded-xl p-4">
+
+            <div class="font-bold text-lg">
+                ${
+                    batchStockMode === 'in'
+                    ? '📥 批量入库完成'
+                    : '📤 批量出库完成'
+                }
+            </div>
+
+            <div class="mt-2">
+                成功：<b>${success}</b> 条
+            </div>
+
+            <div>
+                失败：<b>${failed}</b> 条
+            </div>
+
+            ${
+                failedRows.length
+                ?
+                `
+                <div class="mt-3 text-sm">
+                    ${failedRows
+                        .slice(0,20)
+                        .map(function(x){
+
+                            return '<div>'+escapeHtml(x)+'</div>';
+
+                        })
+                        .join('')
+                    }
+                </div>
+                `
+                :
+                ''
+            }
+
+        </div>
+
+    `;
+
+
+    btn.disabled = false;
+
+    toast(
+        `批量操作完成：成功 ${success} 条，失败 ${failed} 条`
+    );
+
+}
+
+
+function downloadBatchTemplate(){
+
+    const content =
+`SKU,数量,备注
+COKE001,20,供应商送货
+WATER001,50,补货
+ABC123,10,仓库调拨`;
+
+
+    const blob =
+        new Blob(
+            [content],
+            {
+                type:'text/csv;charset=utf-8;'
+            }
+        );
+
+
+    const url =
+        URL.createObjectURL(blob);
+
+
+    const a =
+        document.createElement('a');
+
+    a.href = url;
+
+    a.download =
+        '批量出入库模板.csv';
+
+    document.body.appendChild(a);
+
+    a.click();
+
+    a.remove();
+
+    URL.revokeObjectURL(url);
+
+}
+
+
+// ==================== 日志 ====================
+
+async function loadLogs(){
+
+    if(!currentWarehouse){
+
+        logs = [];
+
+        renderLogs();
+
+        return;
+
+    }
+
+
+    try{
+
+        const result =
+            await sb
+
+            .from('stock_logs')
+
+            .select('*')
+
+            .eq(
+                'warehouse_id',
+                currentWarehouse.id
+            )
+
+            .order(
+                'created_at',
+                {
+                    ascending:false
+                }
+            )
+
+            .limit(100);
+
+
+        if(result.error) throw result.error;
+
+        logs = result.data || [];
+
+        renderLogs();
+
+        renderDashboard();
+
+    }catch(error){
+
+        console.error(error);
+
+        toast(
+            '读取日志失败：'+
+            getErrorMessage(error)
+        );
+
+    }
+
+}
+
+
+function renderLogs(){
+
+    if(!logs.length){
+
+        $('logsList').innerHTML =
+            '<div class="card p-6 text-center text-gray-500">' +
+            '暂无操作记录' +
+            '</div>';
+
+        return;
+
+    }
+
+
+    $('logsList').innerHTML =
+        logs.map(function(log){
+
+            const isIn =
+                log.type === 'in' ||
+                log.type === '入库';
+
+            const qty =
+                Number(log.qty || 0);
+
+            const date =
+                log.created_at
+                ?
+                new Date(log.created_at)
+                    .toLocaleString('zh-CN')
+                :
+                '';
+
+
+            return `
+
+                <div class="card p-4 mb-3">
+
+                    <div class="flex justify-between gap-3">
+
+                        <div>
+
+                            <div class="font-bold">
+                                ${
+                                    isIn
+                                    ? '📥 入库'
+                                    : '📤 出库'
+                                }
+                            </div>
+
+                            <div class="text-sm text-gray-500 mt-1">
+                                SKU：
+                                ${escapeHtml(
+                                    log.sku || ''
+                                )}
+                            </div>
+
+                        </div>
+
+                        <div class="${
+                            isIn
+                            ? 'qty-positive'
+                            : 'qty-negative'
+                        } text-lg">
+
+                            ${
+                                isIn
+                                ? '+'
+                                : '-'
+                            }${qty}
+
+                        </div>
+
+                    </div>
+
+                    <div class="text-xs text-gray-500 mt-3">
+                        ${escapeHtml(
+                            log.note || ''
+                        )}
+                    </div>
+
+                    <div class="text-xs text-gray-400 mt-1">
+                        ${date}
+                    </div>
+
+                </div>
+
+            `;
+
+        }).join('');
+
+}
+
+
+// ==================== 仪表盘 ====================
+
+function renderDashboard(){
+
+    const count =
+        inventory.length;
+
+    const totalQty =
+        inventory.reduce(
+            function(sum,item){
+
+                return sum +
+                    Number(item.qty || 0);
+
+            },
+            0
+        );
+
+
+    const lowCount =
+        inventory.filter(function(item){
+
+            return Number(item.qty || 0) <=
+                Number(
+                    item.alert_qty ??
+                    item.alert ??
+                    0
+                );
+
+        }).length;
+
+
+    const today =
+        new Date();
+
+    const y =
+        today.getFullYear();
+
+    const m =
+        String(today.getMonth()+1)
+        .padStart(2,'0');
+
+    const d =
+        String(today.getDate())
+        .padStart(2,'0');
+
+
+    const prefix =
+        `${y}-${m}-${d}`;
+
+
+    const todayCount =
+        logs.filter(function(log){
+
+            return String(
+                log.created_at || ''
+            ).startsWith(prefix);
+
+        }).length;
+
+
+    $('statItems').textContent =
+        count;
+
+    $('statQty').textContent =
+        totalQty;
+
+    $('statLow').textContent =
+        lowCount;
+
+    $('statToday').textContent =
+        todayCount;
+
+}
+
+
+// ==================== 导出 ====================
+
+function exportInventory(){
+
+    if(!inventory.length){
+
+        toast('没有库存数据');
+
+        return;
+
+    }
+
+
+    const header =
+        '商品名称,SKU,库存,预警数量,库位';
+
+
+    const rows =
+        inventory.map(function(item){
+
+            return [
+
+                csvEscape(item.name),
+
+                csvEscape(item.sku),
+
+                Number(item.qty || 0),
+
+                Number(
+                    item.alert_qty ??
+                    item.alert ??
+                    0
+                ),
+
+                csvEscape(item.bin || '')
+
+            ].join(',');
+
+        });
+
+
+    const csv =
+        '\uFEFF' +
+        header +
+        '\n' +
+        rows.join('\n');
+
+
+    const blob =
+        new Blob(
+            [csv],
+            {
+                type:'text/csv;charset=utf-8;'
+            }
+        );
+
+
+    const url =
+        URL.createObjectURL(blob);
+
+
+    const a =
+        document.createElement('a');
+
+    a.href = url;
+
+    a.download =
+        `库存备份_${new Date().toISOString().slice(0,10)}.csv`;
+
+    document.body.appendChild(a);
+
+    a.click();
+
+    a.remove();
+
+    URL.revokeObjectURL(url);
+
+    toast('库存备份已导出');
+
+}
+
+
+function csvEscape(value){
+
+    const text =
+        String(value ?? '');
+
+    if(
+        text.includes(',') ||
+        text.includes('"') ||
+        text.includes('\n')
+    ){
+
+        return '"' +
+            text.replace(/"/g,'""') +
+            '"';
+
+    }
+
+    return text;
+
+}
+
+
+// ==================== 页面初始化 ====================
+
+loadConfig();
 
 </script>
+
 </body>
 </html>
