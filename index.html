@@ -1,10 +1,10 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#2563eb">
-<title>智能仓库管理系统 V2.2</title>
+<title>智能仓库管理系统</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -12,1363 +12,1047 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <style>
-body{
-  background:#f5f7fb;
-  -webkit-tap-highlight-color:transparent;
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+button,input,select,textarea{font:inherit}
+button{touch-action:manipulation}
+.hidden{display:none!important}
+.card{background:white;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+.btn{border:0;border-radius:12px;padding:12px 16px;font-weight:600;cursor:pointer}
+.btn-blue{background:#2563eb;color:white}
+.btn-green{background:#16a34a;color:white}
+.btn-red{background:#dc2626;color:white}
+.btn-gray{background:#e5e7eb;color:#111827}
+.btn-yellow{background:#f59e0b;color:white}
+.btn-purple{background:#7c3aed;color:white}
+.btn-small{padding:8px 11px;border-radius:9px;font-size:13px}
+input,select,textarea{
+  width:100%;
+  border:1px solid #d1d5db;
+  border-radius:11px;
+  padding:12px;
+  outline:none;
+  background:white;
 }
-.safe{
-  padding-bottom:env(safe-area-inset-bottom);
+input:focus,select:focus,textarea:focus{
+  border-color:#2563eb;
+  box-shadow:0 0 0 3px rgba(37,99,235,.12);
 }
-input,button,select,textarea{
-  font-size:16px;
+.page{max-width:900px;margin:auto;padding-bottom:100px}
+.topbar{
+  position:sticky;
+  top:0;
+  z-index:50;
+  background:white;
+  border-bottom:1px solid #e5e7eb;
 }
-.card{
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:16px;
-  box-shadow:0 2px 10px rgba(0,0,0,.04);
+.bottom-nav{
+  position:fixed;
+  bottom:0;
+  left:0;
+  right:0;
+  z-index:60;
+  background:white;
+  border-top:1px solid #e5e7eb;
+  display:flex;
+  justify-content:center;
 }
-.modal-bg{
-  background:rgba(0,0,0,.5);
+.bottom-nav-inner{
+  width:100%;
+  max-width:900px;
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
 }
-.hide{
-  display:none!important;
+.nav-btn{
+  border:0;
+  background:white;
+  padding:9px 4px 10px;
+  font-size:12px;
+  color:#6b7280;
 }
-.nav-active{
-  color:#2563eb;
+.nav-btn.active{color:#2563eb;font-weight:700}
+.nav-icon{font-size:21px;display:block}
+.badge{
+  display:inline-block;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:11px;
   font-weight:700;
 }
+.badge-green{background:#dcfce7;color:#166534}
+.badge-red{background:#fee2e2;color:#991b1b}
+.badge-yellow{background:#fef3c7;color:#92400e}
+.badge-gray{background:#f3f4f6;color:#4b5563}
+.modal-bg{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.48);
+  z-index:100;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+}
+.modal{
+  width:100%;
+  max-width:650px;
+  max-height:92vh;
+  overflow:auto;
+  background:white;
+  border-radius:22px 22px 0 0;
+  padding:20px;
+}
+@media(min-width:700px){
+  .modal-bg{align-items:center;padding:20px}
+  .modal{border-radius:20px}
+}
+.toast{
+  position:fixed;
+  top:70px;
+  left:50%;
+  transform:translateX(-50%);
+  z-index:200;
+  max-width:90%;
+  padding:12px 18px;
+  border-radius:12px;
+  color:white;
+  box-shadow:0 4px 20px rgba(0,0,0,.2);
+  font-size:14px;
+}
+.toast-ok{background:#16a34a}
+.toast-error{background:#dc2626}
+.toast-info{background:#2563eb}
+.stat-grid{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:10px;
+}
+@media(min-width:600px){
+  .stat-grid{grid-template-columns:repeat(4,1fr)}
+}
+.stat{
+  background:white;
+  border-radius:16px;
+  padding:16px;
+  box-shadow:0 2px 10px rgba(0,0,0,.05);
+}
+.stat-number{font-size:25px;font-weight:800}
+.item-row{
+  background:white;
+  border-radius:16px;
+  padding:15px;
+  box-shadow:0 2px 10px rgba(0,0,0,.05);
+  margin-bottom:10px;
+}
+.item-actions{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:7px;
+  margin-top:12px;
+}
+@media(min-width:600px){
+  .item-actions{grid-template-columns:repeat(5,auto);justify-content:start}
+}
+.log-row{
+  background:white;
+  border-radius:14px;
+  padding:14px;
+  margin-bottom:9px;
+  box-shadow:0 2px 8px rgba(0,0,0,.04);
+}
+.spinner{
+  width:25px;height:25px;
+  border:3px solid #dbeafe;
+  border-top-color:#2563eb;
+  border-radius:50%;
+  animation:spin .8s linear infinite;
+  margin:auto;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px}
+th{background:#f9fafb;position:sticky;top:0}
+.small{font-size:12px;color:#6b7280}
 </style>
 </head>
 
-<body class="text-gray-900">
+<body>
 
-<div id="app"></div>
+<div id="toast" class="toast hidden"></div>
+
+<!-- ==================== 登录页面 ==================== -->
+<div id="authPage" class="min-h-screen flex items-center justify-center p-5">
+  <div class="w-full max-w-md">
+    <div class="text-center mb-6">
+      <div class="text-5xl mb-3">📦</div>
+      <h1 class="text-3xl font-bold">智能仓库管理</h1>
+      <p class="text-gray-500 mt-2">SKU · 库存 · 货位 · 云端共享</p>
+    </div>
+
+    <div class="card p-5">
+      <div class="flex mb-5 bg-gray-100 rounded-xl p-1">
+        <button id="loginTab" class="flex-1 py-2 rounded-lg bg-white font-bold" onclick="showAuthMode('login')">登录</button>
+        <button id="registerTab" class="flex-1 py-2 rounded-lg" onclick="showAuthMode('register')">注册</button>
+      </div>
+
+      <div id="loginForm">
+        <label class="block text-sm font-semibold mb-2">邮箱</label>
+        <input id="loginEmail" type="email" placeholder="请输入邮箱">
+
+        <label class="block text-sm font-semibold mb-2 mt-4">密码</label>
+        <input id="loginPassword" type="password" placeholder="请输入密码">
+
+        <button class="btn btn-blue w-full mt-5" onclick="login()">登录</button>
+
+        <button class="w-full text-blue-600 text-sm mt-4" onclick="showResetForm()">
+          忘记密码？
+        </button>
+      </div>
+
+      <div id="registerForm" class="hidden">
+        <label class="block text-sm font-semibold mb-2">邮箱</label>
+        <input id="registerEmail" type="email" placeholder="请输入邮箱">
+
+        <label class="block text-sm font-semibold mb-2 mt-4">密码</label>
+        <input id="registerPassword" type="password" placeholder="至少6位密码">
+
+        <button class="btn btn-blue w-full mt-5" onclick="register()">注册</button>
+
+        <p class="small mt-4 text-center">
+          注册后可能需要到邮箱点击确认链接。
+        </p>
+      </div>
+
+      <div id="resetForm" class="hidden">
+        <label class="block text-sm font-semibold mb-2">注册邮箱</label>
+        <input id="resetEmail" type="email" placeholder="请输入邮箱">
+
+        <button class="btn btn-blue w-full mt-5" onclick="sendReset()">发送重置邮件</button>
+
+        <button class="w-full text-gray-500 text-sm mt-4" onclick="showAuthMode('login')">
+          返回登录
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ==================== 主 APP ==================== -->
+<div id="appPage" class="hidden">
+
+  <div class="topbar">
+    <div class="page px-4 py-3 flex items-center justify-between">
+      <div>
+        <div class="font-bold text-lg">📦 智能仓库</div>
+        <div id="topWarehouseName" class="text-xs text-gray-500"></div>
+      </div>
+
+      <button class="btn btn-gray btn-small" onclick="openWarehouseSelector()">
+        切换仓库
+      </button>
+    </div>
+  </div>
+
+  <main class="page px-4 pt-4">
+
+    <!-- 首页 -->
+    <section id="pageHome">
+      <div class="card p-4 mb-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-gray-500 text-sm">当前仓库</div>
+            <div id="homeWarehouseName" class="text-xl font-bold mt-1">—</div>
+          </div>
+          <div class="text-4xl">🏭</div>
+        </div>
+      </div>
+
+      <div class="stat-grid mb-4">
+        <div class="stat">
+          <div class="small">商品种类</div>
+          <div id="statItems" class="stat-number mt-1">0</div>
+        </div>
+        <div class="stat">
+          <div class="small">库存总数</div>
+          <div id="statQty" class="stat-number mt-1">0</div>
+        </div>
+        <div class="stat">
+          <div class="small">低库存</div>
+          <div id="statLow" class="stat-number mt-1 text-red-600">0</div>
+        </div>
+        <div class="stat">
+          <div class="small">货位数量</div>
+          <div id="statBins" class="stat-number mt-1">0</div>
+        </div>
+      </div>
+
+      <div class="card p-4 mb-4">
+        <h2 class="font-bold text-lg mb-3">🔎 快速查找 SKU</h2>
+        <div class="flex gap-2">
+          <input id="homeSearch" placeholder="输入 SKU / 商品名称 / 货位">
+          <button class="btn btn-blue" onclick="searchFromHome()">搜索</button>
+        </div>
+      </div>
+
+      <div class="card p-4">
+        <h2 class="font-bold mb-3">快捷操作</h2>
+
+        <div class="grid grid-cols-2 gap-3">
+          <button class="btn btn-blue" onclick="openItem()">➕ 新增商品</button>
+          <button class="btn btn-green" onclick="openScanner()">📷 扫码</button>
+          <button class="btn btn-purple" onclick="openImport()">📥 批量导入</button>
+          <button class="btn btn-gray" onclick="showPage('inventory')">📦 库存列表</button>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 库存 -->
+    <section id="pageInventory" class="hidden">
+
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h1 class="text-2xl font-bold">库存</h1>
+          <div class="small">正常商品</div>
+        </div>
+
+        <button class="btn btn-blue btn-small" onclick="openItem()">
+          ➕ 新增
+        </button>
+      </div>
+
+      <div class="card p-3 mb-3">
+        <input id="inventorySearch"
+               placeholder="搜索 SKU / 商品名称 / 货位"
+               oninput="renderInventoryList()">
+      </div>
+
+      <div id="inventoryList"></div>
+
+      <button class="btn btn-gray w-full mt-3" onclick="showArchivedInventory()">
+        🗂️ 查看已下架商品
+      </button>
+    </section>
+
+
+    <!-- 日志 -->
+    <section id="pageLogs" class="hidden">
+
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h1 class="text-2xl font-bold">库存流水</h1>
+          <div class="small">入库 / 出库记录</div>
+        </div>
+
+        <button class="btn btn-gray btn-small" onclick="loadLogs()">刷新</button>
+      </div>
+
+      <div class="card p-3 mb-3">
+        <input id="logSearch"
+               placeholder="搜索 SKU / 商品 / 操作人 / 备注"
+               oninput="renderLogs()">
+      </div>
+
+      <div id="logsList"></div>
+    </section>
+
+
+    <!-- 设置 -->
+    <section id="pageSettings" class="hidden">
+
+      <h1 class="text-2xl font-bold mb-4">设置</h1>
+
+      <div class="card p-4 mb-4">
+        <h2 class="font-bold mb-3">🏭 仓库管理</h2>
+
+        <button class="btn btn-blue w-full mb-2" onclick="openWarehouseSelector()">
+          切换 / 管理仓库
+        </button>
+
+        <button class="btn btn-gray w-full" onclick="createWarehousePrompt()">
+          ➕ 创建新仓库
+        </button>
+      </div>
+
+      <div class="card p-4 mb-4">
+        <h2 class="font-bold mb-3">👤 当前账号</h2>
+        <div id="currentUserEmail" class="text-gray-600 break-all">—</div>
+      </div>
+
+      <div class="card p-4 mb-4">
+        <h2 class="font-bold mb-3">💾 数据备份</h2>
+
+        <button class="btn btn-purple w-full mb-2" onclick="exportBackup()">
+          导出库存备份
+        </button>
+
+        <button class="btn btn-gray w-full" onclick="exportLogs()">
+          导出流水
+        </button>
+      </div>
+
+      <div class="card p-4">
+        <button class="btn btn-red w-full" onclick="logout()">
+          退出登录
+        </button>
+
+        <div class="text-center text-xs text-gray-400 mt-4">
+          版本 V2.3 · Cloud Warehouse
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+
+  <!-- 底部导航 -->
+  <div class="bottom-nav">
+    <div class="bottom-nav-inner">
+
+      <button id="navHome" class="nav-btn active" onclick="showPage('home')">
+        <span class="nav-icon">🏠</span>
+        首页
+      </button>
+
+      <button id="navInventory" class="nav-btn" onclick="showPage('inventory')">
+        <span class="nav-icon">📦</span>
+        库存
+      </button>
+
+      <button id="navLogs" class="nav-btn" onclick="showPage('logs')">
+        <span class="nav-icon">📋</span>
+        流水
+      </button>
+
+      <button id="navSettings" class="nav-btn" onclick="showPage('settings')">
+        <span class="nav-icon">⚙️</span>
+        设置
+      </button>
+
+    </div>
+  </div>
+
+</div>
+
+
+<!-- ==================== 通用 Modal ==================== -->
+<div id="modalBg" class="modal-bg hidden" onclick="closeModalByBg(event)">
+  <div id="modalContent" class="modal"></div>
+</div>
+
 
 <script>
-'use strict';
-
 /* =========================================================
-   智能仓库管理系统 V2.2
-   ========================================================= */
+   基础配置
+========================================================= */
 
-const APP_VERSION = 'V2.2-20260910';
+const APP_VERSION = 'V2.3-20260910';
 
-/* =========================================================
-   Supabase
-   ========================================================= */
-
-const SUPABASE_URL =
-  'https://veqzicbdvodonkbsbyrt.supabase.co';
+const SUPABASE_URL = 'https://veqzicbdvodonkbsbyrt.supabase.co';
 
 const SUPABASE_KEY =
   'sb_publishable_njvb3co4PlkaWTAphXSW4g_IdSynRe-';
 
 const APP = {
-  sb:null,
-  user:null,
-  warehouse:null,
-  warehouses:[],
-  inventory:[],
-  logs:[],
-  role:'member',
-
-  page:'home',
-
-  authMode:'login',
-
-  stockType:'in',
-
-  realtime:null,
-
-  scanner:null,
-  scannerRunning:false,
-  scannerMode:null,
-
-  recovery:false,
-
-  booting:false,
-
-  logSearch:''
+  sb: null,
+  user: null,
+  warehouses: [],
+  warehouse: null,
+  inventory: [],
+  logs: [],
+  realtimeInventory: null,
+  realtimeLogs: null,
+  scanner: null,
+  scannerRunning: false
 };
 
-const $ = id =>
-  document.getElementById(id);
+APP.sb = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
 
-const esc = s =>
-  String(s ?? '').replace(
-    /[&<>'"]/g,
-    c=>({
-      '&':'&amp;',
-      '<':'&lt;',
-      '>':'&gt;',
-      "'":'&#39;',
-      '"':'&quot;'
-    }[c])
-  );
-
-function showError(msg){
-  alert(msg || '操作失败');
-}
-
-function showRealError(prefix,e){
-  console.error(prefix,e);
-
-  let m =
-    e?.message ||
-    e?.error_description ||
-    e?.details ||
-    '未知错误';
-
-  if(e?.hint){
-    m += '\n提示：'+e.hint;
-  }
-
-  if(e?.code){
-    m += '\n代码：'+e.code;
-  }
-
-  if(e?.status){
-    m += '\nHTTP状态：'+e.status;
-  }
-
-  showError(prefix+'\n\n'+m);
-}
 
 /* =========================================================
-   Supabase
-   ========================================================= */
+   小工具
+========================================================= */
 
-function getConfig(){
-  return {
-    url:SUPABASE_URL.trim().replace(/\/$/,''),
-    key:SUPABASE_KEY.trim()
-  };
+function $(id){
+  return document.getElementById(id);
 }
 
-function getRedirectUrl(){
-  const u =
-    new URL(window.location.href);
-
-  u.search='';
-  u.hash='';
-
-  return u.toString();
+function escapeHtml(value){
+  return String(value ?? '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#039;');
 }
 
-function isRecoveryLink(){
+function showToast(message,type='info'){
+  const el = $('toast');
 
-  const raw =
-    (location.hash||'')
-      .replace(/^#/,'');
-  
-  if(!raw)
-    return false;
+  el.className = 'toast';
 
-  try{
-
-    const p =
-      new URLSearchParams(raw);
-
-    return p.get('type')==='recovery';
-
-  }catch(e){
-
-    return false;
-
+  if(type === 'ok'){
+    el.classList.add('toast-ok');
+  }else if(type === 'error'){
+    el.classList.add('toast-error');
+  }else{
+    el.classList.add('toast-info');
   }
+
+  el.textContent = message;
+  el.classList.remove('hidden');
+
+  clearTimeout(window.toastTimer);
+
+  window.toastTimer = setTimeout(()=>{
+    el.classList.add('hidden');
+  },3000);
 }
 
-function cleanRecoveryUrl(){
-
-  try{
-
-    const u =
-      new URL(window.location.href);
-
-    u.hash='';
-    u.search='';
-
-    history.replaceState(
-      {},
-      document.title,
-      u.toString()
-    );
-
-  }catch(e){}
+function showError(message){
+  showToast(message,'error');
 }
 
-function rpcValue(data){
-
-  if(data==null)
-    return null;
-
-  if(typeof data==='string')
-    return data;
-
-  if(Array.isArray(data))
-    return rpcValue(data[0]);
-
-  if(typeof data==='object'){
-
-    return (
-      data.id ||
-      data.warehouse_id ||
-      data.warehouseId ||
-      data.result ||
-      data.value ||
-      null
-    );
-
-  }
-
-  return null;
+function showOk(message){
+  showToast(message,'ok');
 }
 
-function initSupabase(){
-
-  const c =
-    getConfig();
-
-  if(!c.url || !c.key){
-
-    renderAuth();
-
-    return false;
-  }
-
-  try{
-
-    if(
-      !window.supabase ||
-      !window.supabase.createClient
-    ){
-
-      throw new Error(
-        'Supabase JS组件没有加载成功，请检查网络连接。'
-      );
-
-    }
-
-    APP.sb =
-      window.supabase.createClient(
-        c.url,
-        c.key,
-        {
-          auth:{
-            persistSession:true,
-            autoRefreshToken:true,
-            detectSessionInUrl:true
-          }
-        }
-      );
-
-    return true;
-
-  }catch(e){
-
-    showRealError(
-      '云端初始化失败',
-      e
-    );
-
-    return false;
-  }
+function showInfo(message){
+  showToast(message,'info');
 }
 
-/* =========================================================
-   云端诊断
-   ========================================================= */
-
-async function testSupabaseConnection(){
-
-  const result =
-    $('connectionResult');
-
-  const button =
-    $('connectionButton');
-
-  if(result){
-
-    result.textContent =
-      '正在测试云端连接……';
-
-    result.className =
-      'mt-3 text-center text-sm text-blue-600 font-bold';
-  }
-
-  if(button){
-
-    button.disabled=true;
-
-    button.textContent=
-      '正在测试……';
-  }
-
-  try{
-
-    const url =
-      SUPABASE_URL.trim().replace(/\/$/,'');
-
-    const key =
-      SUPABASE_KEY.trim();
-
-    const response =
-      await fetch(
-        url+'/auth/v1/settings',
-        {
-          method:'GET',
-          headers:{
-            'apikey':key
-          },
-          cache:'no-store'
-        }
-      );
-
-    const text =
-      await response.text();
-
-    console.log(
-      'Supabase诊断:',
-      {
-        url,
-        status:response.status,
-        response:text
-      }
-    );
-
-    if(response.ok){
-
-      if(result){
-
-        result.innerHTML =
-          '✅ 云端连接正常！<br>'+
-          'HTTP '+response.status+
-          ' · API Key 有效';
-
-        result.className =
-          'mt-3 text-center text-sm text-green-600 font-bold';
-
-      }
-
-    }else{
-
-      let detail=text;
-
-      try{
-
-        const j =
-          JSON.parse(text);
-
-        detail =
-          j.message ||
-          j.error_description ||
-          j.error ||
-          text;
-
-      }catch(e){}
-
-      if(result){
-
-        result.innerHTML =
-          '❌ 云端返回错误<br>'+
-          'HTTP '+response.status+
-          '<br><span class="font-normal break-words">'+
-          esc(detail.slice(0,500))+
-          '</span>';
-
-        result.className =
-          'mt-3 text-center text-sm text-red-600 font-bold';
-
-      }
-    }
-
-  }catch(e){
-
-    console.error(
-      'Supabase连接测试失败',
-      e
-    );
-
-    if(result){
-
-      result.innerHTML =
-        '❌ 网络连接失败<br>'+
-        '<span class="font-normal">'+
-        esc(e.message || String(e))+
-        '</span>';
-
-      result.className =
-        'mt-3 text-center text-sm text-red-600 font-bold';
-    }
-
-  }
-
-  if(button){
-
-    button.disabled=false;
-
-    button.textContent=
-      '🔧 再次测试云端连接';
-  }
-}
-
-/* =========================================================
-   登录
-   ========================================================= */
-
-function renderAuth(){
-
-  $('app').innerHTML=`
-
-  <div class="min-h-screen flex items-center justify-center p-5">
-
-    <div class="card w-full max-w-md p-6">
-
-      <div class="text-center mb-6">
-
-        <div class="text-4xl mb-2">
-          📦
-        </div>
-
-        <h1 class="text-2xl font-bold">
-          智能仓库管理系统
-        </h1>
-
-        <p class="text-gray-500 mt-2">
-          云端共享 · 手机扫码 · 多人协作
-        </p>
-
-        <div class="text-xs text-gray-400 mt-2">
-          ${APP_VERSION}
-        </div>
-
-      </div>
-
-      <div
-        id="authMsg"
-        class="hidden mb-4 rounded-xl p-3 text-sm">
-      </div>
-
-      <div class="space-y-3">
-
-        <input
-          id="authEmail"
-          type="email"
-          autocomplete="email"
-          placeholder="邮箱"
-          class="w-full border rounded-xl px-4 py-3">
-
-        <input
-          id="authPwd"
-          type="password"
-          autocomplete="${
-            APP.authMode==='login'
-            ?
-            'current-password'
-            :
-            'new-password'
-          }"
-          placeholder="密码（至少6位）"
-          class="w-full border rounded-xl px-4 py-3">
-
-        <button
-          onclick="authSubmit()"
-          class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold">
-
-          ${
-            APP.authMode==='login'
-            ?
-            '登录'
-            :
-            '注册'
-          }
-
-        </button>
-
-        ${
-          APP.authMode==='login'
-          ?
-          `
-          <button
-            onclick="showResetRequest()"
-            class="w-full text-blue-600 py-2">
-
-            忘记密码？
-
-          </button>
-          `
-          :
-          ''
-        }
-
-        <button
-          onclick="toggleAuth()"
-          class="w-full border rounded-xl py-3">
-
-          ${
-            APP.authMode==='login'
-            ?
-            '没有账号？注册'
-            :
-            '已有账号？登录'
-          }
-
-        </button>
-
-        <button
-          id="connectionButton"
-          onclick="testSupabaseConnection()"
-          class="w-full border border-blue-200 text-blue-600 rounded-xl py-3 mt-2">
-
-          🔧 测试云端连接
-
-        </button>
-
-        <div
-          id="connectionResult"
-          class="mt-3 text-center text-sm text-gray-500">
-
-          尚未测试云端连接
-
-        </div>
-
-        <div class="text-center text-xs text-gray-400 pt-2">
-
-          当前版本：${APP_VERSION}
-
-        </div>
-
-      </div>
-
+function loadingHtml(){
+  return `
+    <div class="py-10 text-center">
+      <div class="spinner"></div>
+      <div class="small mt-3">正在加载...</div>
     </div>
-
-  </div>
-
   `;
 }
 
-function toggleAuth(){
+function formatDate(value){
+  if(!value) return '';
 
-  APP.authMode =
-    APP.authMode==='login'
-    ?
-    'register'
-    :
-    'login';
-
-  renderAuth();
+  try{
+    return new Date(value).toLocaleString('zh-CN',{
+      year:'numeric',
+      month:'2-digit',
+      day:'2-digit',
+      hour:'2-digit',
+      minute:'2-digit'
+    });
+  }catch(e){
+    return value;
+  }
 }
 
-function authMsg(text,ok=false){
+function safeNumber(value,defaultValue=0){
+  const n = Number(value);
 
-  const e =
-    $('authMsg');
-
-  if(!e)
-    return;
-
-  e.textContent=text;
-
-  e.className =
-    'mb-4 rounded-xl p-3 text-sm '+
-    (
-      ok
-      ?
-      'bg-green-50 text-green-700'
-      :
-      'bg-red-50 text-red-700'
-    );
-}
-
-async function authSubmit(){
-
-  if(!APP.sb){
-
-    showError(
-      '云端尚未连接'
-    );
-
-    return;
+  if(!Number.isFinite(n)){
+    return defaultValue;
   }
 
-  const email =
-    $('authEmail')?.value.trim();
+  return n;
+}
 
-  const pwd =
-    $('authPwd')?.value;
 
-  if(!email)
-    return authMsg(
-      '请输入邮箱'
-    );
+/* =========================================================
+   Modal
+========================================================= */
 
-  if(!pwd)
-    return authMsg(
-      '请输入密码'
-    );
+function openModal(html){
+  $('modalContent').innerHTML = html;
+  $('modalBg').classList.remove('hidden');
+}
 
-  if(pwd.length<6)
-    return authMsg(
-      '密码至少6位'
-    );
+function closeModal(){
+  $('modalBg').classList.add('hidden');
+  $('modalContent').innerHTML = '';
+}
+
+function closeModalByBg(event){
+  if(event.target.id === 'modalBg'){
+    closeModal();
+  }
+}
+
+
+/* =========================================================
+   Auth
+========================================================= */
+
+function showAuthMode(mode){
+
+  $('loginForm').classList.add('hidden');
+  $('registerForm').classList.add('hidden');
+  $('resetForm').classList.add('hidden');
+
+  $('loginTab').classList.remove('bg-white','font-bold');
+  $('registerTab').classList.remove('bg-white','font-bold');
+
+  if(mode === 'register'){
+    $('registerForm').classList.remove('hidden');
+    $('registerTab').classList.add('bg-white','font-bold');
+  }else{
+    $('loginForm').classList.remove('hidden');
+    $('loginTab').classList.add('bg-white','font-bold');
+  }
+}
+
+function showResetForm(){
+  $('loginForm').classList.add('hidden');
+  $('registerForm').classList.add('hidden');
+  $('resetForm').classList.remove('hidden');
+}
+
+async function register(){
+
+  const email = $('registerEmail').value.trim();
+  const password = $('registerPassword').value;
+
+  if(!email){
+    return showError('请输入邮箱');
+  }
+
+  if(!password || password.length < 6){
+    return showError('密码至少需要6位');
+  }
 
   try{
 
-    if(APP.authMode==='register'){
+    showInfo('正在注册...');
 
-      const r =
-        await APP.sb.auth.signUp({
-          email,
-          password:pwd,
-          options:{
-            emailRedirectTo:
-              getRedirectUrl()
-          }
-        });
-
-      if(r.error)
-        throw r.error;
-
-      if(r.data?.session){
-
-        authMsg(
-          '注册成功，正在进入系统……',
-          true
-        );
-
-        APP.user=
-          r.data.user;
-
-        await bootUser();
-
-      }else{
-
-        authMsg(
-          '注册成功！如果系统要求邮箱确认，请打开邮箱确认。确认后返回这里，用刚才设置的密码登录。',
-          true
-        );
+    const {data,error} = await APP.sb.auth.signUp({
+      email,
+      password,
+      options:{
+        emailRedirectTo: window.location.origin + window.location.pathname
       }
+    });
 
-      return;
+    if(error){
+      throw error;
     }
 
-    const r =
+    if(data.session){
+      showOk('注册成功');
+      await bootApp();
+    }else{
+      showOk('注册成功，请到邮箱确认后再登录');
+      showAuthMode('login');
+    }
+
+  }catch(error){
+
+    console.error(error);
+    showError(error.message || '注册失败');
+
+  }
+}
+
+async function login(){
+
+  const email = $('loginEmail').value.trim();
+  const password = $('loginPassword').value;
+
+  if(!email || !password){
+    return showError('请输入邮箱和密码');
+  }
+
+  try{
+
+    showInfo('正在登录...');
+
+    const {data,error} =
       await APP.sb.auth.signInWithPassword({
         email,
-        password:pwd
+        password
       });
 
-    if(r.error){
-
-      if(
-        r.error.code===
-        'invalid_credentials'
-      ){
-
-        throw new Error(
-          '邮箱或密码不正确。\n\n如果你确定密码正确，请点击“忘记密码？”重新设置密码。'
-        );
-
-      }
-
-      throw r.error;
-    }
-
-    APP.user=
-      r.data.user;
-
-    await bootUser();
-
-  }catch(e){
-
-    showRealError(
-      APP.authMode==='register'
-      ?
-      '注册失败'
-      :
-      '登录失败',
-      e
-    );
-  }
-}
-
-/* =========================================================
-   忘记密码
-   ========================================================= */
-
-function showResetRequest(){
-
-  $('app').innerHTML=`
-
-  <div class="min-h-screen flex items-center justify-center p-5">
-
-    <div class="card w-full max-w-md p-6">
-
-      <div class="text-center mb-5">
-
-        <div class="text-4xl">
-          🔐
-        </div>
-
-        <h1 class="text-2xl font-bold mt-2">
-          重置密码
-        </h1>
-
-        <p class="text-gray-500 mt-2">
-          输入注册邮箱，我们会发送密码重置邮件。
-        </p>
-
-      </div>
-
-      <div
-        id="resetMsg"
-        class="hidden mb-4 rounded-xl p-3 text-sm">
-      </div>
-
-      <input
-        id="resetEmail"
-        type="email"
-        autocomplete="email"
-        placeholder="注册邮箱"
-        class="w-full border rounded-xl px-4 py-3">
-
-      <button
-        onclick="sendResetEmail()"
-        class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold mt-3">
-
-        发送重置邮件
-
-      </button>
-
-      <button
-        onclick="renderAuth()"
-        class="w-full border rounded-xl py-3 mt-3">
-
-        返回登录
-
-      </button>
-
-    </div>
-
-  </div>
-
-  `;
-}
-
-function resetMsg(text,ok=false){
-
-  const e =
-    $('resetMsg');
-
-  if(!e)
-    return;
-
-  e.textContent=text;
-
-  e.className =
-    'mb-4 rounded-xl p-3 text-sm '+
-    (
-      ok
-      ?
-      'bg-green-50 text-green-700'
-      :
-      'bg-red-50 text-red-700'
-    );
-}
-
-async function sendResetEmail(){
-
-  const email =
-    $('resetEmail')?.value.trim();
-
-  if(!email)
-    return resetMsg(
-      '请输入邮箱'
-    );
-
-  try{
-
-    const r =
-      await APP.sb.auth.resetPasswordForEmail(
-        email,
-        {
-          redirectTo:getRedirectUrl()
-        }
-      );
-
-    if(r.error)
-      throw r.error;
-
-    resetMsg(
-      '重置邮件已发送。请打开邮箱并点击邮件链接。',
-      true
-    );
-
-  }catch(e){
-
-    showRealError(
-      '发送重置邮件失败',
-      e
-    );
-  }
-}
-
-/* =========================================================
-   Recovery
-   ========================================================= */
-
-function renderRecovery(){
-
-  $('app').innerHTML=`
-
-  <div class="min-h-screen flex items-center justify-center p-5">
-
-    <div class="card w-full max-w-md p-6">
-
-      <div class="text-center mb-5">
-
-        <div class="text-4xl">
-          🔑
-        </div>
-
-        <h1 class="text-2xl font-bold mt-2">
-          设置新密码
-        </h1>
-
-        <p class="text-gray-500 mt-2">
-          请设置一个新的登录密码。
-        </p>
-
-      </div>
-
-      <div
-        id="recoveryMsg"
-        class="hidden mb-4 rounded-xl p-3 text-sm">
-      </div>
-
-      <div class="space-y-3">
-
-        <input
-          id="newPwd"
-          type="password"
-          autocomplete="new-password"
-          placeholder="新密码（至少6位）"
-          class="w-full border rounded-xl px-4 py-3">
-
-        <input
-          id="newPwd2"
-          type="password"
-          autocomplete="new-password"
-          placeholder="再次输入新密码"
-          class="w-full border rounded-xl px-4 py-3">
-
-        <button
-          onclick="updateRecoveryPassword()"
-          class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold">
-
-          保存新密码
-
-        </button>
-
-      </div>
-
-    </div>
-
-  </div>
-
-  `;
-}
-
-function recoveryMsg(text,ok=false){
-
-  const e =
-    $('recoveryMsg');
-
-  if(!e)
-    return;
-
-  e.textContent=text;
-
-  e.className =
-    'mb-4 rounded-xl p-3 text-sm '+
-    (
-      ok
-      ?
-      'bg-green-50 text-green-700'
-      :
-      'bg-red-50 text-red-700'
-    );
-}
-
-async function updateRecoveryPassword(){
-
-  const p1 =
-    $('newPwd')?.value || '';
-
-  const p2 =
-    $('newPwd2')?.value || '';
-
-  if(p1.length<6)
-    return recoveryMsg(
-      '新密码至少6位'
-    );
-
-  if(p1!==p2)
-    return recoveryMsg(
-      '两次输入的密码不一致'
-    );
-
-  try{
-
-    const r =
-      await APP.sb.auth.updateUser({
-        password:p1
-      });
-
-    if(r.error)
-      throw r.error;
-
-    APP.recovery=false;
-
-    APP.user =
-      r.data?.user ||
-      APP.user;
-
-    cleanRecoveryUrl();
-
-    recoveryMsg(
-      '密码修改成功！正在进入仓库……',
-      true
-    );
-
-    setTimeout(
-      async()=>{
-        try{
-          await bootUser();
-        }catch(e){
-          showRealError(
-            '进入仓库失败',
-            e
-          );
-        }
-      },
-      800
-    );
-
-  }catch(e){
-
-    showRealError(
-      '修改密码失败',
-      e
-    );
-  }
-}
-
-/* =========================================================
-   修改密码
-   ========================================================= */
-
-function changePasswordDialog(){
-
-  modal(
-    '修改登录密码',
-    `
-    <div class="space-y-3">
-
-      <input
-        id="changePwd1"
-        type="password"
-        autocomplete="new-password"
-        placeholder="新密码（至少6位）"
-        class="w-full border rounded-xl px-4 py-3">
-
-      <input
-        id="changePwd2"
-        type="password"
-        autocomplete="new-password"
-        placeholder="再次输入新密码"
-        class="w-full border rounded-xl px-4 py-3">
-
-      <button
-        onclick="changePassword()"
-        class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold">
-
-        保存新密码
-
-      </button>
-
-    </div>
-    `
-  );
-}
-
-async function changePassword(){
-
-  const p1 =
-    $('changePwd1')?.value || '';
-
-  const p2 =
-    $('changePwd2')?.value || '';
-
-  if(p1.length<6)
-    return showError(
-      '新密码至少6位'
-    );
-
-  if(p1!==p2)
-    return showError(
-      '两次密码不一致'
-    );
-
-  try{
-
-    const r =
-      await APP.sb.auth.updateUser({
-        password:p1
-      });
-
-    if(r.error)
-      throw r.error;
-
-    closeModal();
-
-    alert(
-      '密码修改成功。\n以后请使用新密码登录。'
-    );
-
-  }catch(e){
-
-    showRealError(
-      '修改密码失败',
-      e
-    );
-  }
-}
-
-/* =========================================================
-   系统启动
-   ========================================================= */
-
-async function boot(){
-
-  if(APP.booting)
-    return;
-
-  APP.booting=true;
-
-  if(!initSupabase()){
-
-    APP.booting=false;
-
-    return;
-  }
-
-  if(isRecoveryLink())
-    APP.recovery=true;
-
-  APP.sb.auth.onAuthStateChange(
-    (event,session)=>{
-
-      console.log(
-        'Supabase Auth:',
-        event
-      );
-
-      if(event==='PASSWORD_RECOVERY'){
-
-        APP.recovery=true;
-
-        APP.user =
-          session?.user ||
-          APP.user;
-
-        setTimeout(
-          ()=>{
-            if(APP.user)
-              renderRecovery();
-          },
-          0
-        );
-
-        return;
-      }
-
-      if(session?.user){
-
-        APP.user=
-          session.user;
-
-        if(APP.recovery){
-
-          setTimeout(
-            ()=>renderRecovery(),
-            0
-          );
-
-        }else{
-
-          setTimeout(
-            ()=>{
-              bootUser().catch(
-                e=>
-                  showRealError(
-                    '读取账号数据失败',
-                    e
-                  )
-              );
-            },
-            0
-          );
-
-        }
-
-      }else if(event==='SIGNED_OUT'){
-
-        APP.user=null;
-        APP.warehouse=null;
-
-        cleanupRealtime();
-
-        APP.recovery=false;
-
-        renderAuth();
-      }
-    }
-  );
-
-  try{
-
-    const {
-      data:{session},
-      error
-    } =
-      await APP.sb.auth.getSession();
-
-    if(error)
+    if(error){
       throw error;
+    }
 
-    if(
-      APP.recovery ||
-      isRecoveryLink()
-    ){
+    APP.user = data.user;
 
-      APP.recovery=true;
+    await bootApp();
 
-      if(session?.user){
+  }catch(error){
 
-        APP.user=
-          session.user;
+    console.error(error);
+    showError(error.message || '登录失败');
 
-        renderRecovery();
+  }
+}
 
-      }else{
+async function sendReset(){
 
-        renderAuth();
+  const email = $('resetEmail').value.trim();
 
-        authMsg(
-          '密码重置链接已失效，请重新发送一封重置邮件。'
-        );
+  if(!email){
+    return showError('请输入邮箱');
+  }
+
+  try{
+
+    const {error} = await APP.sb.auth.resetPasswordForEmail(
+      email,
+      {
+        redirectTo:
+          window.location.origin +
+          window.location.pathname
       }
+    );
 
-      APP.booting=false;
+    if(error){
+      throw error;
+    }
 
+    showOk('重置邮件已发送，请检查邮箱');
+
+  }catch(error){
+
+    console.error(error);
+    showError(error.message || '发送失败');
+
+  }
+}
+
+async function logout(){
+
+  try{
+    await APP.sb.auth.signOut();
+  }catch(e){
+    console.error(e);
+  }
+
+  APP.user = null;
+  APP.warehouses = [];
+  APP.warehouse = null;
+  APP.inventory = [];
+  APP.logs = [];
+
+  $('appPage').classList.add('hidden');
+  $('authPage').classList.remove('hidden');
+
+  showAuthMode('login');
+}
+
+
+/* =========================================================
+   App 启动
+========================================================= */
+
+async function bootApp(){
+
+  try{
+
+    const {data} = await APP.sb.auth.getUser();
+
+    APP.user = data.user;
+
+    if(!APP.user){
+      $('appPage').classList.add('hidden');
+      $('authPage').classList.remove('hidden');
       return;
     }
 
-    if(session?.user){
+    $('authPage').classList.add('hidden');
+    $('appPage').classList.remove('hidden');
 
-      APP.user=
-        session.user;
+    $('currentUserEmail').textContent =
+      APP.user.email || '';
 
-      await bootUser();
+    await loadWarehouses();
 
-    }else{
+  }catch(error){
 
-      renderAuth();
+    console.error(error);
 
-    }
+    $('appPage').classList.add('hidden');
+    $('authPage').classList.remove('hidden');
 
-  }catch(e){
-
-    showRealError(
-      '系统启动失败',
-      e
-    );
-
-    renderAuth();
-
+    showError(error.message || '启动失败');
   }
-
-  APP.booting=false;
 }
 
-/* =========================================================
-   用户
-   ========================================================= */
-
-async function bootUser(){
-
-  if(!APP.user || !APP.sb)
-    return;
-
-  await loadWarehouses();
-
-  if(
-    !APP.warehouse &&
-    APP.warehouses.length
-  ){
-
-    APP.warehouse=
-      APP.warehouses[0];
-
-    APP.role=
-      APP.warehouse.role ||
-      'member';
-
-    await Promise.all([
-      loadInventory(),
-      loadLogs()
-    ]);
-
-    setupRealtime();
-  }
-
-  renderApp();
-}
 
 /* =========================================================
    仓库
-   ========================================================= */
+========================================================= */
 
 async function loadWarehouses(){
 
-  const {
-    data:m,
-    error:me
-  } =
-    await APP.sb
-      .from('warehouse_members')
-      .select('warehouse_id,role')
-      .eq(
-        'user_id',
-        APP.user.id
-      );
+  try{
 
-  if(me)
-    throw me;
+    const {data,error} =
+      await APP.sb
+        .from('warehouse_members')
+        .select(`
+          warehouse_id,
+          role,
+          warehouses (
+            id,
+            name,
+            owner_id,
+            join_code,
+            created_at
+          )
+        `)
+        .eq('user_id',APP.user.id);
 
-  const ids =
-    (m||[])
-      .map(x=>x.warehouse_id)
-      .filter(Boolean);
+    if(error){
+      throw error;
+    }
 
-  if(!ids.length){
+    APP.warehouses = (data || [])
+      .filter(x => x.warehouses)
+      .map(x => ({
+        id:x.warehouses.id,
+        name:x.warehouses.name,
+        owner_id:x.warehouses.owner_id,
+        join_code:x.warehouses.join_code,
+        created_at:x.warehouses.created_at,
+        role:x.role
+      }));
 
-    APP.warehouses=[];
-    APP.warehouse=null;
+    if(!APP.warehouses.length){
 
-    cleanupRealtime();
+      APP.warehouse = null;
 
-    return;
-  }
+      updateWarehouseHeader();
 
-  const {
-    data:w,
-    error:we
-  } =
-    await APP.sb
-      .from('warehouses')
-      .select('*')
-      .in('id',ids);
+      openNoWarehouseModal();
 
-  if(we)
-    throw we;
+      return;
+    }
 
-  APP.warehouses =
-    (w||[]).map(x=>({
+    const savedId =
+      localStorage.getItem('warehouse_id');
 
-      ...x,
+    let selected =
+      APP.warehouses.find(x => x.id === savedId);
 
-      role:
-        (m||[])
-          .find(
-            mm=>
-              mm.warehouse_id===x.id
-          )?.role ||
-        'member'
+    if(!selected){
+      selected = APP.warehouses[0];
+    }
 
-    }));
+    await selectWarehouse(selected.id);
 
-  if(APP.warehouse){
+  }catch(error){
 
-    const nw =
-      APP.warehouses.find(
-        x=>
-          x.id===
-          APP.warehouse.id
-      );
+    console.error(error);
+    showError(error.message || '加载仓库失败');
 
-    APP.warehouse=
-      nw||null;
-
-    if(!nw)
-      cleanupRealtime();
   }
 }
 
 async function selectWarehouse(id){
 
   const w =
-    APP.warehouses.find(
-      x=>x.id===id
-    );
+    APP.warehouses.find(x => x.id === id);
 
-  if(!w)
-    return;
-
-  cleanupRealtime();
-
-  APP.warehouse=w;
-
-  APP.role=
-    w.role||'member';
-
-  APP.page='home';
-
-  try{
-
-    await Promise.all([
-      loadInventory(),
-      loadLogs()
-    ]);
-
-    setupRealtime();
-
-    renderApp();
-
-  }catch(e){
-
-    showRealError(
-      '读取仓库数据失败',
-      e
-    );
+  if(!w){
+    return showError('仓库不存在');
   }
+
+  APP.warehouse = w;
+
+  localStorage.setItem(
+    'warehouse_id',
+    w.id
+  );
+
+  updateWarehouseHeader();
+
+  closeModal();
+
+  await loadInventory();
+  await loadLogs();
+  setupRealtime();
+
+  renderHome();
+  renderInventoryList();
+  renderLogs();
+}
+
+function updateWarehouseHeader(){
+
+  const name =
+    APP.warehouse?.name || '未选择仓库';
+
+  $('topWarehouseName').textContent = name;
+  $('homeWarehouseName').textContent = name;
+}
+
+function openNoWarehouseModal(){
+
+  openModal(`
+    <h2 class="text-xl font-bold mb-2">
+      还没有仓库
+    </h2>
+
+    <p class="text-gray-500 mb-5">
+      你可以创建一个新仓库，或者使用别人提供的加入码加入仓库。
+    </p>
+
+    <button class="btn btn-blue w-full mb-2"
+      onclick="closeModal();createWarehousePrompt()">
+      ➕ 创建仓库
+    </button>
+
+    <button class="btn btn-gray w-full"
+      onclick="joinWarehousePrompt()">
+      🔗 加入仓库
+    </button>
+  `);
+}
+
+function openWarehouseSelector(){
+
+  let html = `
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-bold">仓库管理</h2>
+      <button onclick="closeModal()" class="text-gray-400 text-2xl">×</button>
+    </div>
+  `;
+
+  if(APP.warehouses.length){
+
+    html += `
+      <div class="space-y-2 mb-5">
+    `;
+
+    APP.warehouses.forEach(w => {
+
+      const selected =
+        APP.warehouse?.id === w.id;
+
+      html += `
+        <div class="border rounded-xl p-3 ${
+          selected ? 'border-blue-500 bg-blue-50' : ''
+        }">
+
+          <div class="flex items-center justify-between">
+
+            <button
+              class="text-left flex-1"
+              onclick="selectWarehouse('${w.id}')">
+
+              <div class="font-bold">
+                ${escapeHtml(w.name)}
+              </div>
+
+              <div class="small mt-1">
+                权限：
+                ${escapeHtml(w.role || '')}
+              </div>
+
+            </button>
+
+            ${
+              selected
+              ? `<span class="badge badge-green">当前</span>`
+              : ''
+            }
+
+          </div>
+
+          ${
+            w.role === 'owner'
+            ? `
+              <div class="mt-3 flex gap-2">
+
+                <button
+                  class="btn btn-gray btn-small"
+                  onclick="showWarehouseCode('${w.id}')">
+                  加入码
+                </button>
+
+                <button
+                  class="btn btn-red btn-small"
+                  onclick="deleteWarehouse('${w.id}')">
+                  删除
+                </button>
+
+              </div>
+            `
+            : ''
+          }
+
+        </div>
+      `;
+
+    });
+
+    html += `</div>`;
+
+  }else{
+
+    html += `
+      <div class="text-gray-500 text-center py-5">
+        暂无仓库
+      </div>
+    `;
+  }
+
+  html += `
+    <button class="btn btn-blue w-full mb-2"
+      onclick="closeModal();createWarehousePrompt()">
+      ➕ 创建仓库
+    </button>
+
+    <button class="btn btn-gray w-full"
+      onclick="closeModal();joinWarehousePrompt()">
+      🔗 加入仓库
+    </button>
+  `;
+
+  openModal(html);
+}
+
+function createWarehousePrompt(){
+
+  openModal(`
+    <h2 class="text-xl font-bold mb-4">创建仓库</h2>
+
+    <label class="block text-sm font-semibold mb-2">
+      仓库名称
+    </label>
+
+    <input id="newWarehouseName"
+      placeholder="例如：主仓库">
+
+    <button class="btn btn-blue w-full mt-4"
+      onclick="createWarehouse()">
+      创建
+    </button>
+
+    <button class="btn btn-gray w-full mt-2"
+      onclick="closeModal()">
+      取消
+    </button>
+  `);
 }
 
 async function createWarehouse(){
 
   const name =
-    $('whName')?.value.trim();
+    $('newWarehouseName').value.trim();
 
-  if(!name)
-    return showError(
-      '请输入仓库名称'
-    );
+  if(!name){
+    return showError('请输入仓库名称');
+  }
 
   try{
 
-    const r =
+    showInfo('正在创建仓库...');
+
+    const {data,error} =
       await APP.sb.rpc(
         'create_warehouse',
         {
@@ -1376,68 +1060,62 @@ async function createWarehouse(){
         }
       );
 
-    if(r.error)
-      throw r.error;
-
-    const id =
-      rpcValue(r.data);
+    if(error){
+      throw error;
+    }
 
     await loadWarehouses();
 
-    let w =
-      id &&
-      APP.warehouses.find(
-        x=>x.id===id
-      );
-
-    if(!w){
-
-      w =
-        APP.warehouses.find(
-          x=>
-            x.name===name
-        );
-    }
-
     closeModal();
 
-    if(w){
+    showOk('仓库创建成功');
 
-      await selectWarehouse(
-        w.id
-      );
+  }catch(error){
 
-    }else{
+    console.error(error);
+    showError(error.message || '创建仓库失败');
 
-      renderApp();
-
-      alert(
-        '仓库创建成功，请重新选择仓库。'
-      );
-    }
-
-  }catch(e){
-
-    showRealError(
-      '创建仓库失败',
-      e
-    );
   }
+}
+
+function joinWarehousePrompt(){
+
+  openModal(`
+    <h2 class="text-xl font-bold mb-4">加入仓库</h2>
+
+    <label class="block text-sm font-semibold mb-2">
+      仓库加入码
+    </label>
+
+    <input id="joinCode"
+      placeholder="请输入加入码">
+
+    <button class="btn btn-blue w-full mt-4"
+      onclick="joinWarehouse()">
+      加入仓库
+    </button>
+
+    <button class="btn btn-gray w-full mt-2"
+      onclick="closeModal()">
+      取消
+    </button>
+  `);
 }
 
 async function joinWarehouse(){
 
   const code =
-    $('joinCode')?.value.trim();
+    $('joinCode').value.trim();
 
-  if(!/^\d{6}$/.test(code))
-    return showError(
-      '请输入6位数字邀请码'
-    );
+  if(!code){
+    return showError('请输入加入码');
+  }
 
   try{
 
-    const r =
+    showInfo('正在加入...');
+
+    const {data,error} =
       await APP.sb.rpc(
         'join_warehouse',
         {
@@ -1445,2936 +1123,1923 @@ async function joinWarehouse(){
         }
       );
 
-    if(r.error)
-      throw r.error;
-
-    const id =
-      rpcValue(r.data);
+    if(error){
+      throw error;
+    }
 
     await loadWarehouses();
 
-    const w =
-      id &&
-      APP.warehouses.find(
-        x=>x.id===id
-      );
-
     closeModal();
 
-    if(w){
+    showOk('加入仓库成功');
 
-      await selectWarehouse(
-        w.id
-      );
+  }catch(error){
 
-    }else{
+    console.error(error);
+    showError(error.message || '加入失败');
 
-      renderApp();
-
-      alert(
-        '加入成功，请重新选择仓库。'
-      );
-    }
-
-  }catch(e){
-
-    showRealError(
-      '加入仓库失败',
-      e
-    );
   }
 }
 
-/* =========================================================
-   删除仓库
-   ========================================================= */
+function showWarehouseCode(id){
+
+  const w =
+    APP.warehouses.find(x => x.id === id);
+
+  if(!w){
+    return;
+  }
+
+  openModal(`
+    <h2 class="text-xl font-bold mb-4">
+      仓库加入码
+    </h2>
+
+    <div class="bg-gray-100 rounded-xl p-5 text-center">
+      <div class="text-sm text-gray-500">
+        ${escapeHtml(w.name)}
+      </div>
+
+      <div class="text-3xl font-bold mt-3 tracking-widest">
+        ${escapeHtml(w.join_code || '—')}
+      </div>
+    </div>
+
+    <button class="btn btn-blue w-full mt-4"
+      onclick="closeModal()">
+      完成
+    </button>
+  `);
+}
 
 async function deleteWarehouse(id){
 
   const w =
-    APP.warehouses.find(
-      x=>x.id===id
-    );
+    APP.warehouses.find(x => x.id === id);
 
-  if(!w)
-    return;
-
-  if(
-    w.role!=='owner'
-  ){
-
-    showError(
-      '只有仓库所有者可以删除仓库。'
-    );
-
+  if(!w){
     return;
   }
 
-  const first =
+  if(w.role !== 'owner'){
+    return showError('只有仓库所有者可以删除仓库');
+  }
+
+  const ok =
     confirm(
-      '⚠️ 确定要删除这个仓库吗？\n\n'+
-      '仓库：'+w.name+
-      '\n\n删除仓库属于危险操作，请确认。'
+      `确定删除仓库「${w.name}」吗？\n\n删除后相关数据可能受到数据库关联限制。`
     );
 
-  if(!first)
-    return;
-
-  const second =
-    prompt(
-      '为了防止误删，请输入仓库名称：\n\n'+
-      w.name
-    );
-
-  if(second===null)
-    return;
-
-  if(
-    second.trim()!==w.name.trim()
-  ){
-
-    showError(
-      '仓库名称输入不正确，删除已取消。'
-    );
-
+  if(!ok){
     return;
   }
 
   try{
 
-    const r =
+    showInfo('正在删除仓库...');
+
+    const {error} =
       await APP.sb
         .from('warehouses')
         .delete()
         .eq('id',id);
 
-    if(r.error)
-      throw r.error;
+    if(error){
+      throw error;
+    }
 
-    cleanupRealtime();
-
-    if(
-      APP.warehouse?.id===id
-    ){
-
-      APP.warehouse=null;
-      APP.role='member';
-      APP.inventory=[];
-      APP.logs=[];
+    if(APP.warehouse?.id === id){
+      APP.warehouse = null;
     }
 
     await loadWarehouses();
 
-    if(APP.warehouses.length){
+    showOk('仓库已删除');
 
-      APP.warehouse=
-        APP.warehouses[0];
+  }catch(error){
 
-      APP.role=
-        APP.warehouse.role ||
-        'member';
-
-      await Promise.all([
-        loadInventory(),
-        loadLogs()
-      ]);
-
-      setupRealtime();
-
-    }else{
-
-      APP.warehouse=null;
-      APP.inventory=[];
-      APP.logs=[];
-    }
-
-    APP.page='home';
-
-    closeModal();
-
-    renderApp();
-
-    alert(
-      '仓库已成功删除。'
-    );
-
-  }catch(e){
-
-    console.error(
-      '删除仓库失败',
-      e
-    );
-
-    let msg =
-      e?.message ||
-      e?.details ||
-      e?.hint ||
-      '未知错误';
+    console.error(error);
 
     showError(
-      '删除仓库失败。\n\n'+
-      msg+
-      '\n\n如果提示存在关联数据，下一步我们再处理数据库关联删除。'
+      '删除失败：' +
+      (error.message || '可能存在关联数据')
     );
   }
 }
 
+
 /* =========================================================
-   库存
-   ========================================================= */
+   页面导航
+========================================================= */
+
+function showPage(page){
+
+  ['Home','Inventory','Logs','Settings']
+    .forEach(name=>{
+      const el = $('page' + name);
+
+      if(el){
+        el.classList.add('hidden');
+      }
+
+      const nav = $('nav' + name);
+
+      if(nav){
+        nav.classList.remove('active');
+      }
+    });
+
+  const section =
+    $('page' +
+      page.charAt(0).toUpperCase() +
+      page.slice(1));
+
+  const nav =
+    $('nav' +
+      page.charAt(0).toUpperCase() +
+      page.slice(1));
+
+  if(section){
+    section.classList.remove('hidden');
+  }
+
+  if(nav){
+    nav.classList.add('active');
+  }
+
+  if(page === 'home'){
+    renderHome();
+  }
+
+  if(page === 'inventory'){
+    renderInventoryList();
+  }
+
+  if(page === 'logs'){
+    renderLogs();
+  }
+}
+
+
+/* =========================================================
+   Inventory
+========================================================= */
 
 async function loadInventory(){
 
-  if(!APP.warehouse)
+  if(!APP.warehouse){
+    APP.inventory = [];
     return;
+  }
 
-  const {
-    data,
-    error
-  } =
-    await APP.sb
-      .from('inventory')
-      .select('*')
-      .eq(
-        'warehouse_id',
-        APP.warehouse.id
-      )
-      .order(
-        'created_at',
-        {
+  try{
+
+    const {data,error} =
+      await APP.sb
+        .from('inventory')
+        .select('*')
+        .eq(
+          'warehouse_id',
+          APP.warehouse.id
+        )
+        .order('created_at',{
           ascending:false
-        }
-      );
+        });
 
-  if(error)
-    throw error;
+    if(error){
+      throw error;
+    }
 
-  APP.inventory=
-    data||[];
-}
+    APP.inventory = data || [];
 
-async function loadLogs(){
+  }catch(error){
 
-  if(!APP.warehouse)
-    return;
+    console.error(error);
+    showError(error.message || '加载库存失败');
 
-  const {
-    data,
-    error
-  } =
-    await APP.sb
-      .from('stock_logs')
-      .select('*')
-      .eq(
-        'warehouse_id',
-        APP.warehouse.id
-      )
-      .order(
-        'created_at',
-        {
-          ascending:false
-        }
-      )
-      .limit(200);
-
-  if(error)
-    throw error;
-
-  APP.logs=
-    data||[];
-}
-
-/* =========================================================
-   实时同步
-   ========================================================= */
-
-function setupRealtime(){
-
-  cleanupRealtime();
-
-  if(!APP.warehouse)
-    return;
-
-  const wid=
-    APP.warehouse.id;
-
-  APP.realtime =
-    APP.sb
-      .channel(
-        'warehouse-'+
-        wid+
-        '-'+
-        Date.now()
-      )
-
-      .on(
-        'postgres_changes',
-        {
-          event:'*',
-          schema:'public',
-          table:'inventory',
-          filter:
-            'warehouse_id=eq.'+
-            wid
-        },
-        ()=>{
-          loadInventory()
-            .then(
-              ()=>renderApp()
-            )
-            .catch(
-              e=>
-                console.error(
-                  '库存同步失败',
-                  e
-                )
-            );
-        }
-      )
-
-      .on(
-        'postgres_changes',
-        {
-          event:'*',
-          schema:'public',
-          table:'stock_logs',
-          filter:
-            'warehouse_id=eq.'+
-            wid
-        },
-        ()=>{
-          loadLogs()
-            .then(
-              ()=>{
-                if(APP.page==='logs')
-                  renderApp();
-              }
-            )
-            .catch(
-              e=>
-                console.error(
-                  '日志同步失败',
-                  e
-                )
-            );
-        }
-      )
-
-      .subscribe();
-}
-
-function cleanupRealtime(){
-
-  if(
-    APP.realtime &&
-    APP.sb
-  ){
-
-    try{
-
-      APP.sb.removeChannel(
-        APP.realtime
-      );
-
-    }catch(e){}
-
-    APP.realtime=null;
   }
 }
 
-/* =========================================================
-   页面
-   ========================================================= */
+function activeInventory(){
 
-function roleName(r){
-
-  if(r==='owner')
-    return '所有者';
-
-  if(r==='admin')
-    return '管理员';
-
-  return '成员';
-}
-
-function isAdmin(){
-
-  return (
-    APP.role==='owner' ||
-    APP.role==='admin'
+  return APP.inventory.filter(
+    x => x.is_active !== false
   );
 }
 
-function renderApp(){
+function archivedInventory(){
 
-  if(!APP.user){
+  return APP.inventory.filter(
+    x => x.is_active === false
+  );
+}
 
-    renderAuth();
+function getItemName(item){
 
-    return;
+  return (
+    item?.name ||
+    item?.sku ||
+    '未命名商品'
+  );
+}
+
+function getAlertQty(item){
+
+  const value = item?.alert_qty;
+
+  if(value === null || value === undefined || value === ''){
+    return 10;
   }
 
-  const wh=
-    APP.warehouse;
+  const n = Number(value);
 
-  $('app').innerHTML=`
-
-  <div class="min-h-screen pb-24">
-
-    <header
-      class="bg-white border-b sticky top-0 z-20">
-
-      <div
-        class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-
-        <div class="min-w-0">
-
-          <div
-            class="font-bold text-lg truncate">
-
-            📦 ${esc(
-              wh?.name ||
-              '智能仓库'
-            )}
-
-          </div>
-
-          <div
-            class="text-xs text-gray-500 truncate">
-
-            ${esc(
-              APP.user.email || ''
-            )}
-
-            ${
-              wh
-              ?
-              ` · ${roleName(APP.role)}`
-              :
-              ''
-            }
-
-          </div>
-
-        </div>
-
-        <button
-          onclick="openWarehousePicker()"
-          class="border rounded-xl px-3 py-2 text-sm whitespace-nowrap">
-
-          ${
-            wh
-            ?
-            '切换仓库'
-            :
-            '选择仓库'
-          }
-
-        </button>
-
-      </div>
-
-    </header>
-
-    <main
-      class="max-w-5xl mx-auto p-4"
-      id="main">
-    </main>
-
-    <nav
-      class="fixed bottom-0 inset-x-0 bg-white border-t safe z-30">
-
-      <div
-        class="max-w-5xl mx-auto grid grid-cols-5 text-xs">
-
-        <button
-          onclick="go('home')"
-          class="py-3 ${
-            APP.page==='home'
-            ?
-            'nav-active'
-            :
-            ''
-          }">
-
-          🏠<br>首页
-
-        </button>
-
-        <button
-          onclick="go('inventory')"
-          class="py-3 ${
-            APP.page==='inventory'
-            ?
-            'nav-active'
-            :
-            ''
-          }">
-
-          📋<br>库存
-
-        </button>
-
-        <button
-          onclick="openStock('in')"
-          class="py-3 text-green-600 font-bold">
-
-          ⬆️<br>入库
-
-        </button>
-
-        <button
-          onclick="openStock('out')"
-          class="py-3 text-orange-600 font-bold">
-
-          ⬇️<br>出库
-
-        </button>
-
-        <button
-          onclick="go('settings')"
-          class="py-3 ${
-            APP.page==='settings'
-            ?
-            'nav-active'
-            :
-            ''
-          }">
-
-          ⚙️<br>设置
-
-        </button>
-
-      </div>
-
-    </nav>
-
-  </div>
-
-  `;
-
-  renderPage();
+  return Number.isFinite(n) ? n : 10;
 }
 
-function go(p){
+function isLowStock(item){
 
-  APP.page=p;
+  const qty =
+    safeNumber(item?.qty,0);
 
-  renderApp();
+  const alert =
+    getAlertQty(item);
+
+  return qty <= alert;
 }
 
-function renderPage(){
+function renderHome(){
 
-  const m =
-    $('main');
+  const items = activeInventory();
 
-  if(!APP.warehouse){
-
-    m.innerHTML=
-      emptyWarehouse();
-
-    return;
-  }
-
-  if(APP.page==='home')
-    m.innerHTML=
-      homeHtml();
-
-  else if(APP.page==='inventory')
-    m.innerHTML=
-      inventoryHtml();
-
-  else if(APP.page==='logs')
-    m.innerHTML=
-      logsHtml();
-
-  else
-    m.innerHTML=
-      settingsHtml();
-
-  if(APP.page==='inventory'){
-
-    setTimeout(
-      renderInventoryList,
-      0
-    );
-  }
-}
-
-/* =========================================================
-   首页
-   ========================================================= */
-
-function emptyWarehouse(){
-
-  return `
-
-  <div
-    class="card p-6 text-center mt-5">
-
-    <div class="text-5xl mb-3">
-      🏭
-    </div>
-
-    <h2 class="text-xl font-bold">
-      还没有选择仓库
-    </h2>
-
-    <p class="text-gray-500 my-3">
-      创建新仓库或输入邀请码加入已有仓库。
-    </p>
-
-    <div class="grid grid-cols-2 gap-3">
-
-      <button
-        onclick="createWarehouseDialog()"
-        class="bg-blue-600 text-white rounded-xl py-3">
-
-        创建仓库
-
-      </button>
-
-      <button
-        onclick="joinWarehouseDialog()"
-        class="border rounded-xl py-3">
-
-        加入仓库
-
-      </button>
-
-    </div>
-
-  </div>
-
-  `;
-}
-
-function homeHtml(){
-
-  const total =
-    APP.inventory.reduce(
-      (a,x)=>
-        a+(Number(x.qty)||0),
+  const totalQty =
+    items.reduce(
+      (sum,x)=>sum + safeNumber(x.qty,0),
       0
     );
 
   const low =
-    APP.inventory.filter(
-      x=>
-        Number(x.qty)<=
-        Number(x.alert_qty||0)
-    );
+    items.filter(isLowStock).length;
 
-  return `
+  const bins =
+    new Set(
+      items
+        .map(x => String(x.bin || '').trim())
+        .filter(Boolean)
+    ).size;
 
-  <div class="grid grid-cols-2 gap-3">
+  $('statItems').textContent =
+    items.length;
 
-    <div class="card p-4">
+  $('statQty').textContent =
+    totalQty;
 
-      <div class="text-gray-500 text-sm">
-        SKU种类
-      </div>
+  $('statLow').textContent =
+    low;
 
-      <div class="text-3xl font-bold">
-        ${APP.inventory.length}
-      </div>
+  $('statBins').textContent =
+    bins;
 
-    </div>
-
-    <div class="card p-4">
-
-      <div class="text-gray-500 text-sm">
-        库存总数
-      </div>
-
-      <div class="text-3xl font-bold">
-        ${total}
-      </div>
-
-    </div>
-
-    <div class="card p-4">
-
-      <div class="text-gray-500 text-sm">
-        低库存
-      </div>
-
-      <div class="text-3xl font-bold text-red-600">
-        ${low.length}
-      </div>
-
-    </div>
-
-    <div class="card p-4">
-
-      <div class="text-gray-500 text-sm">
-        操作记录
-      </div>
-
-      <div class="text-3xl font-bold">
-        ${APP.logs.length}
-      </div>
-
-    </div>
-
-  </div>
-
-  <div class="grid grid-cols-2 gap-3 mt-4">
-
-    <button
-      onclick="openStock('in')"
-      class="card p-5 text-left">
-
-      <div class="text-3xl">
-        ⬆️
-      </div>
-
-      <b>快速入库</b>
-
-      <div class="text-sm text-gray-500">
-        支持扫码
-      </div>
-
-    </button>
-
-    <button
-      onclick="openStock('out')"
-      class="card p-5 text-left">
-
-      <div class="text-3xl">
-        ⬇️
-      </div>
-
-      <b>快速出库</b>
-
-      <div class="text-sm text-gray-500">
-        支持扫码
-      </div>
-
-    </button>
-
-    <button
-      onclick="openScanner('find')"
-      class="card p-5 text-left">
-
-      <div class="text-3xl">
-        🔎
-      </div>
-
-      <b>扫码找货</b>
-
-      <div class="text-sm text-gray-500">
-        查SKU和货位
-      </div>
-
-    </button>
-
-    <button
-      onclick="openScanner('stock-in')"
-      class="card p-5 text-left">
-
-      <div class="text-3xl">
-        📷
-      </div>
-
-      <b>扫码入库</b>
-
-      <div class="text-sm text-gray-500">
-        扫描后填写数量
-      </div>
-
-    </button>
-
-  </div>
-
-  <div class="card mt-4 p-4">
-
-    <div class="flex justify-between items-center">
-
-      <b>低库存提醒</b>
-
-      <button
-        onclick="go('inventory')"
-        class="text-blue-600 text-sm">
-
-        查看全部
-
-      </button>
-
-    </div>
-
-    ${
-      low.length
-      ?
-      low.slice(0,10).map(
-        x=>`
-
-        <div
-          class="flex justify-between py-3 border-b last:border-0">
-
-          <div>
-
-            <b>
-              ${esc(x.name)}
-            </b>
-
-            <div class="text-xs text-gray-500">
-
-              SKU ${esc(x.sku)}
-              ·
-              货位 ${esc(x.bin||'未设置')}
-
-            </div>
-
-          </div>
-
-          <span class="text-red-600 font-bold">
-            ${x.qty}
-          </span>
-
-        </div>
-
-        `
-      ).join('')
-      :
-      `
-      <div class="text-gray-500 py-4">
-        暂无低库存商品
-      </div>
-      `
-    }
-
-  </div>
-
-  `;
+  updateWarehouseHeader();
 }
 
-/* =========================================================
-   库存
-   ========================================================= */
+function searchFromHome(){
 
-function inventoryHtml(){
+  const value =
+    $('homeSearch').value.trim();
 
-  return `
+  showPage('inventory');
 
-  <div class="flex gap-2 mb-3">
-
-    <button
-      onclick="openItem()"
-      class="flex-1 bg-blue-600 text-white rounded-xl py-3 font-bold">
-
-      ＋新增商品
-
-    </button>
-
-    <button
-      onclick="openImport('items')"
-      class="flex-1 border rounded-xl py-3 font-bold">
-
-      📥 批量导入
-
-    </button>
-
-  </div>
-
-  <div class="card p-3 mb-3">
-
-    <input
-      id="invSearch"
-      oninput="renderInventoryList()"
-      placeholder="搜索名称 / SKU / 货位 / SKU后3位"
-      class="w-full border rounded-xl px-4 py-3">
-
-  </div>
-
-  <div id="inventoryList"></div>
-
-  `;
+  $('inventorySearch').value =
+    value;
+  
+  renderInventoryList();
 }
 
 function renderInventoryList(){
 
-  const box =
+  const container =
     $('inventoryList');
 
-  if(!box)
+  if(!container){
     return;
+  }
 
-  const q =
-    ($('invSearch')?.value||'')
+  const items =
+    activeInventory();
+
+  const search =
+    ($('inventorySearch')?.value || '')
       .trim()
       .toLowerCase();
 
-  const arr =
-    APP.inventory.filter(x=>
-
-      !q ||
-
-      String(x.name||'')
-        .toLowerCase()
-        .includes(q) ||
-
-      String(x.sku||'')
-        .toLowerCase()
-        .includes(q) ||
-
-      String(x.bin||'')
-        .toLowerCase()
-        .includes(q) ||
-
-      String(x.sku||'')
-        .slice(-3)
-        .toLowerCase()===q
-
-    );
-
-  box.innerHTML =
-
-    arr.length
-
-    ?
-
-    arr.map(x=>{
-
-      const low =
-        Number(x.qty)<=
-        Number(x.alert_qty||0);
-
-      return `
-
-      <div class="card p-4 mb-3">
-
-        <div class="flex justify-between gap-3">
-
-          <div class="min-w-0">
-
-            <b class="text-lg">
-              ${esc(x.name)}
-            </b>
-
-            <div class="text-sm text-gray-500 mt-1">
-              SKU：${esc(x.sku)}
-            </div>
-
-            <div class="text-sm text-gray-500">
-
-              货位：
-              <b>
-                ${esc(x.bin||'未设置')}
-              </b>
-
-            </div>
-
-          </div>
-
-          <div class="text-right">
-
-            <div
-              class="text-2xl font-bold ${
-                low
-                ?
-                'text-red-600'
-                :
-                ''
-              }">
-
-              ${x.qty}
-
-            </div>
-
-            <div
-              class="text-xs ${
-                low
-                ?
-                'text-red-600'
-                :
-                'text-gray-500'
-              }">
-
-              ${low?'低库存':'库存'}
-
-            </div>
-
-          </div>
-
-        </div>
-
-        <div class="grid grid-cols-3 gap-2 mt-3">
-
-          <button
-            onclick="openStock('in',${JSON.stringify(String(x.sku))})"
-            class="bg-green-50 text-green-700 rounded-lg py-2">
-
-            入库
-
-          </button>
-
-          <button
-            onclick="openStock('out',${JSON.stringify(String(x.sku))})"
-            class="bg-orange-50 text-orange-700 rounded-lg py-2">
-
-            出库
-
-          </button>
-
-          <button
-            onclick="openItem('${x.id}')"
-            class="border rounded-lg py-2">
-
-            编辑
-
-          </button>
-
-        </div>
-
-      </div>
-
-      `;
-
-    }).join('')
-
-    :
-
-    `
-
-    <div class="card p-6 text-center text-gray-500">
-      没有找到商品
-    </div>
-
-    `;
-}
-
-/* =========================================================
-   操作记录
-   ========================================================= */
-
-function logsHtml(){
-
-  const q =
-    APP.logSearch
-      .trim()
-      .toLowerCase();
-
-  const logs =
-    APP.logs.filter(l=>
-
-      !q ||
-
-      String(l.sku||'')
-        .toLowerCase()
-        .includes(q) ||
-
-      String(l.note||'')
-        .toLowerCase()
-        .includes(q) ||
-
-      String(l.type||'')
-        .toLowerCase()
-        .includes(q)
-
-    );
-
-  return `
-
-  <div class="card p-4">
-
-    <div class="flex justify-between items-center gap-2">
-
-      <b>
-        操作记录
-      </b>
-
-      <button
-        onclick="exportBackup()"
-        class="text-blue-600 text-sm">
-
-        备份
-
-      </button>
-
-    </div>
-
-    <input
-      id="logSearch"
-      value="${esc(APP.logSearch)}"
-      oninput="APP.logSearch=this.value;renderLogsOnly()"
-      placeholder="搜索 SKU / 备注"
-      class="w-full border rounded-xl px-4 py-3 mt-3">
-
-    <div
-      id="logsList"
-      class="mt-2">
-
-      ${logsListHtml(logs)}
-
-    </div>
-
-  </div>
-
-  `;
-}
-
-function logsListHtml(logs){
-
-  if(!logs.length){
-
-    return `
-
-    <div class="py-6 text-gray-500 text-center">
-
-      ${
-        APP.logs.length
-        ?
-        '没有找到匹配的记录'
-        :
-        '暂无记录'
+  const filtered =
+    items.filter(x => {
+
+      if(!search){
+        return true;
       }
 
-    </div>
-
-    `;
-  }
-
-  return logs.map(
-    l=>`
-
-    <div
-      class="py-3 border-b last:border-0">
-
-      <div class="flex justify-between gap-2">
-
-        <b>
-          ${
-            l.type==='in'
-            ?
-            '⬆️ 入库'
-            :
-            '⬇️ 出库'
-          }
-
-          ${Number(l.qty)||0}
-
-        </b>
-
-        <span class="text-xs text-gray-500">
-          ${fmt(l.created_at)}
-        </span>
-
-      </div>
-
-      <div class="text-sm text-gray-600 mt-1">
-
-        SKU：${esc(l.sku||'')}
-
-      </div>
-
-      <div class="text-sm text-gray-600">
-
-        ${
-          l.note
-          ?
-          '备注：'+esc(l.note)
-          :
-          '备注：无'
-        }
-
-      </div>
-
-      <div class="grid grid-cols-2 gap-2 mt-2">
-
-        <button
-          onclick="editStockLog('${l.id}')"
-          class="border rounded-lg py-2 text-blue-600">
-
-          ✏️ 编辑备注
-
-        </button>
-
-        <button
-          onclick="deleteStockLog('${l.id}')"
-          class="border rounded-lg py-2 text-red-600">
-
-          🗑️ 删除记录
-
-        </button>
-
-      </div>
-
-    </div>
-
-    `
-  ).join('');
-}
-
-function renderLogsOnly(){
-
-  const box =
-    $('logsList');
-
-  if(!box)
-    return;
-
-  const q =
-    APP.logSearch
-      .trim()
+      const text = [
+        x.sku,
+        x.name,
+        x.bin
+      ]
+      .filter(Boolean)
+      .join(' ')
       .toLowerCase();
 
-  const logs =
-    APP.logs.filter(l=>
+      return text.includes(search);
+    });
 
-      !q ||
+  if(!filtered.length){
 
-      String(l.sku||'')
-        .toLowerCase()
-        .includes(q) ||
+    container.innerHTML = `
+      <div class="card p-8 text-center">
+        <div class="text-4xl mb-3">📦</div>
+        <div class="font-bold">
+          ${search ? '没有找到商品' : '还没有商品'}
+        </div>
 
-      String(l.note||'')
-        .toLowerCase()
-        .includes(q) ||
-
-      String(l.type||'')
-        .toLowerCase()
-        .includes(q)
-
-    );
-
-  box.innerHTML=
-    logsListHtml(logs);
-}
-
-/* =========================================================
-   编辑操作记录备注
-   ========================================================= */
-
-function editStockLog(id){
-
-  const log =
-    APP.logs.find(
-      x=>x.id===id
-    );
-
-  if(!log){
-
-    showError(
-      '找不到这条操作记录'
-    );
+        <div class="small mt-2">
+          ${
+            search
+            ? '换一个 SKU 或关键词试试'
+            : '可以点击右上角新增商品'
+          }
+        </div>
+      </div>
+    `;
 
     return;
   }
 
-  modal(
-    '编辑操作备注',
-    `
-    <div class="space-y-3">
+  container.innerHTML =
+    filtered.map(x => {
 
-      <div class="bg-gray-50 rounded-xl p-3 text-sm">
+      const qty =
+        safeNumber(x.qty,0);
 
-        <div>
-          <b>
-            ${
-              log.type==='in'
-              ?
-              '入库'
-              :
-              '出库'
-            }
-          </b>
+      const alert =
+        getAlertQty(x);
 
-          ${Number(log.qty)||0}
-        </div>
+      const low =
+        qty <= alert;
 
-        <div class="text-gray-500 mt-1">
+      return `
+        <div class="item-row">
 
-          SKU：${esc(log.sku||'')}
+          <div class="flex items-start justify-between gap-3">
 
-        </div>
+            <div class="min-w-0 flex-1">
 
-      </div>
+              <div class="font-bold text-lg break-all">
+                ${escapeHtml(getItemName(x))}
+              </div>
 
-      <textarea
-        id="editLogNote"
-        rows="4"
-        placeholder="请输入备注"
-        class="w-full border rounded-xl px-4 py-3">${esc(log.note||'')}</textarea>
+              <div class="text-sm text-gray-500 mt-1 break-all">
+                SKU：
+                <span class="font-semibold text-gray-700">
+                  ${escapeHtml(x.sku || '—')}
+                </span>
+              </div>
 
-      <button
-        onclick="saveStockLogNote('${id}')"
-        class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold">
+              <div class="text-sm text-gray-500 mt-1">
+                货位：
+                <span class="font-semibold text-gray-700">
+                  ${escapeHtml(x.bin || '未设置')}
+                </span>
+              </div>
 
-        保存备注
+            </div>
 
-      </button>
+            <div class="text-right shrink-0">
 
-    </div>
-    `
-  );
-}
+              <div class="text-2xl font-bold ${
+                low ? 'text-red-600' : 'text-green-600'
+              }">
+                ${qty}
+              </div>
 
-async function saveStockLogNote(id){
-
-  const note =
-    $('editLogNote')?.value.trim() ||
-    '';
-
-  try{
-
-    const r =
-      await APP.sb.rpc(
-        'update_stock_log_note',
-        {
-          p_log_id:id,
-          p_note:note
-        }
-      );
-
-    if(r.error)
-      throw r.error;
-
-    await loadLogs();
-
-    closeModal();
-
-    renderApp();
-
-    alert(
-      '备注修改成功。'
-    );
-
-  }catch(e){
-
-    showRealError(
-      '修改操作备注失败',
-      e
-    );
-  }
-}
-
-/* =========================================================
-   删除操作记录
-   ========================================================= */
-
-async function deleteStockLog(id){
-
-  const log =
-    APP.logs.find(
-      x=>x.id===id
-    );
-
-  if(!log){
-
-    showError(
-      '找不到这条操作记录'
-    );
-
-    return;
-  }
-
-  const ok =
-    confirm(
-      '确定删除这条操作记录吗？\n\n'+
-      'SKU：'+
-      (log.sku||'')+
-      '\n'+
-      (log.type==='in'?'入库':'出库')+
-      '：'+
-      (Number(log.qty)||0)+
-      '\n\n注意：删除记录不会改变当前库存数量。'
-    );
-
-  if(!ok)
-    return;
-
-  try{
-
-    const r =
-      await APP.sb.rpc(
-        'delete_stock_log',
-        {
-          p_log_id:id
-        }
-      );
-
-    if(r.error)
-      throw r.error;
-
-    await loadLogs();
-
-    renderApp();
-
-    alert(
-      '操作记录已删除。'
-    );
-
-  }catch(e){
-
-    showRealError(
-      '删除操作记录失败',
-      e
-    );
-  }
-}
-
-/* =========================================================
-   设置
-   ========================================================= */
-
-function settingsHtml(){
-
-  return `
-
-  <div class="space-y-3">
-
-    <div class="card p-4">
-
-      <b>
-        账号
-      </b>
-
-      <div class="text-sm text-gray-500 mt-2">
-
-        ${esc(APP.user.email||'')}
-        ·
-        ${roleName(APP.role)}
-
-      </div>
-
-    </div>
-
-    <div class="card p-4">
-
-      <b>
-        当前仓库
-      </b>
-
-      <div class="mt-2">
-
-        ${esc(APP.warehouse.name)}
-
-      </div>
-
-      <div class="text-sm text-gray-500 mt-1">
-
-        邀请码：
-        <b>
-          ${esc(
-            APP.warehouse.join_code||
-            '未显示'
-          )}
-        </b>
-
-      </div>
-
-    </div>
-
-    <button
-      onclick="changePasswordDialog()"
-      class="w-full card p-4 text-left">
-
-      🔐 修改登录密码
-
-    </button>
-
-    ${
-      isAdmin()
-      ?
-      `
-
-      <div class="card p-4">
-
-        <b>
-          仓库管理
-        </b>
-
-        <div class="grid grid-cols-2 gap-2 mt-3">
-
-          <button
-            onclick="createWarehouseDialog()"
-            class="border rounded-xl py-3">
-
-            创建仓库
-
-          </button>
-
-          <button
-            onclick="joinWarehouseDialog()"
-            class="border rounded-xl py-3">
-
-            加入仓库
-
-          </button>
-
-        </div>
-
-      </div>
-
-      `
-      :
-      ''
-    }
-
-    <button
-      onclick="go('logs')"
-      class="w-full card p-4 text-left">
-
-      📜 操作日志
-
-    </button>
-
-    <button
-      onclick="exportBackup()"
-      class="w-full card p-4 text-left">
-
-      💾 导出云端备份
-
-    </button>
-
-    <button
-      onclick="logout()"
-      class="w-full bg-red-600 text-white rounded-xl py-3 font-bold">
-
-      退出登录
-
-    </button>
-
-  </div>
-
-  `;
-}
-
-/* =========================================================
-   弹窗
-   ========================================================= */
-
-function fmt(v){
-
-  try{
-
-    return new Date(v)
-      .toLocaleString('zh-CN');
-
-  }catch(e){
-
-    return v||'';
-  }
-}
-
-function modal(title,body){
-
-  closeModal();
-
-  const d =
-    document.createElement('div');
-
-  d.id='modal';
-
-  d.className =
-    'fixed inset-0 z-50 modal-bg flex items-end sm:items-center justify-center p-3';
-
-  d.innerHTML=`
-
-    <div
-      class="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-auto p-5">
-
-      <div
-        class="flex justify-between items-center mb-4">
-
-        <h2 class="text-xl font-bold">
-          ${title}
-        </h2>
-
-        <button
-          onclick="closeModal()"
-          class="text-2xl">
-
-          ×
-
-        </button>
-
-      </div>
-
-      ${body}
-
-    </div>
-
-  `;
-
-  document.body.appendChild(d);
-}
-
-function closeModal(){
-
-  document
-    .getElementById('modal')
-    ?.remove();
-}
-
-function createWarehouseDialog(){
-
-  modal(
-    '创建仓库',
-    `
-
-    <input
-      id="whName"
-      class="w-full border rounded-xl px-4 py-3"
-      placeholder="仓库名称">
-
-    <button
-      onclick="createWarehouse()"
-      class="w-full bg-blue-600 text-white rounded-xl py-3 mt-3 font-bold">
-
-      创建
-
-    </button>
-
-    `
-  );
-}
-
-function joinWarehouseDialog(){
-
-  modal(
-    '加入仓库',
-    `
-
-    <input
-      id="joinCode"
-      maxlength="6"
-      inputmode="numeric"
-      class="w-full border rounded-xl px-4 py-3"
-      placeholder="输入6位邀请码">
-
-    <button
-      onclick="joinWarehouse()"
-      class="w-full bg-blue-600 text-white rounded-xl py-3 mt-3 font-bold">
-
-      加入
-
-    </button>
-
-    `
-  );
-}
-
-/* =========================================================
-   仓库选择
-   ========================================================= */
-
-function openWarehousePicker(){
-
-  const html=`
-
-    <div class="space-y-3">
-
-      ${
-        APP.warehouses.map(
-          w=>`
-
-          <div class="border rounded-xl p-4">
-
-            <div class="flex justify-between gap-3">
-
-              <button
-                onclick="selectWarehouse('${w.id}');closeModal()"
-                class="text-left flex-1 min-w-0">
-
-                <b>
-                  ${esc(w.name)}
-                </b>
-
-                <div class="text-sm text-gray-500 mt-1">
-
-                  ${roleName(w.role)}
-                  ·
-                  邀请码
-                  ${esc(w.join_code||'')}
-
-                </div>
-
-              </button>
+              <div class="small">
+                库存
+              </div>
 
               ${
-                w.role==='owner'
-                ?
-                `
-                <button
-                  onclick="deleteWarehouse('${w.id}')"
-                  class="text-red-600 border border-red-200 rounded-lg px-3 py-2 text-sm whitespace-nowrap">
-
-                  🗑️ 删除
-
-                </button>
-                `
-                :
-                ''
+                low
+                ? `<span class="badge badge-red mt-1">低库存</span>`
+                : `<span class="badge badge-green mt-1">正常</span>`
               }
 
             </div>
 
           </div>
 
-          `
-        ).join('')
 
-        ||
+          <div class="text-xs text-gray-400 mt-3">
+            低库存提醒：${alert}
+          </div>
 
-        `
 
-        <div class="text-gray-500 text-center py-3">
-          暂无仓库
+          <div class="item-actions">
+
+            <button
+              class="btn btn-green btn-small"
+              onclick="stockAction('${x.id}','in')">
+              📥 入库
+            </button>
+
+            <button
+              class="btn btn-yellow btn-small"
+              onclick="stockAction('${x.id}','out')">
+              📤 出库
+            </button>
+
+            <button
+              class="btn btn-gray btn-small"
+              onclick="openItem('${x.id}')">
+              ✏️ 编辑
+            </button>
+
+            <button
+              class="btn btn-gray btn-small"
+              onclick="archiveInventory('${x.id}')">
+              📦 下架
+            </button>
+
+            <button
+              class="btn btn-red btn-small"
+              onclick="deleteInventory('${x.id}')">
+              🗑️ 删除
+            </button>
+
+          </div>
+
         </div>
-
-        `
-      }
-
-      <div class="grid grid-cols-2 gap-2">
-
-        <button
-          onclick="closeModal();createWarehouseDialog()"
-          class="bg-blue-600 text-white rounded-xl py-3">
-
-          创建
-
-        </button>
-
-        <button
-          onclick="closeModal();joinWarehouseDialog()"
-          class="border rounded-xl py-3">
-
-          加入
-
-        </button>
-
-      </div>
-
-    </div>
-
-  `;
-
-  modal(
-    '选择仓库',
-    html
-  );
+      `;
+    }).join('');
 }
 
+
 /* =========================================================
-   商品
-   ========================================================= */
+   新增 / 编辑商品
+========================================================= */
 
-function openItem(id=null,sku=''){
+function openItem(id){
 
-  const x =
+  const item =
     id
-    ?
-    APP.inventory.find(
-      a=>a.id===id
-    )
-    :
-    null;
+    ? APP.inventory.find(x => x.id === id)
+    : null;
 
-  modal(
-    x
-    ?
-    '编辑商品'
-    :
-    '新增商品',
+  if(id && !item){
+    return showError('商品不存在');
+  }
 
-    `
+  const name =
+    item?.name || '';
 
-    <div class="space-y-3">
+  const sku =
+    item?.sku || '';
 
-      <input
-        id="itemName"
-        value="${esc(x?.name||'')}"
-        placeholder="商品名称"
-        class="w-full border rounded-xl px-4 py-3">
+  const qty =
+    item
+    ? safeNumber(item.qty,0)
+    : 0;
 
-      <div class="flex gap-2">
+  const alert =
+    item
+    ? getAlertQty(item)
+    : 10;
 
-        <input
-          id="itemSku"
-          value="${esc(x?.sku||sku)}"
-          placeholder="SKU / 条码"
-          class="flex-1 border rounded-xl px-4 py-3">
+  const bin =
+    item?.bin || '';
 
-        <button
-          onclick="openScanner('fill-sku')"
-          class="border rounded-xl px-4">
+  openModal(`
 
-          📷
+    <div class="flex items-center justify-between mb-4">
 
-        </button>
-
-      </div>
-
-      <input
-        id="itemAlert"
-        type="number"
-        min="0"
-        step="1"
-        value="${Number(x?.alert_qty||0)}"
-        placeholder="低库存提醒数量"
-        class="w-full border rounded-xl px-4 py-3">
-
-      <input
-        id="itemBin"
-        value="${esc(x?.bin||'')}"
-        placeholder="货位，例如 A-01-02"
-        class="w-full border rounded-xl px-4 py-3">
-
-      ${
-        x
-        ?
-        ''
-        :
-        `
-
-        <input
-          id="itemQty"
-          type="number"
-          min="0"
-          step="1"
-          value="0"
-          placeholder="初始库存数量"
-          class="w-full border rounded-xl px-4 py-3">
-
-        `
-      }
+      <h2 class="text-xl font-bold">
+        ${item ? '编辑商品' : '新增商品'}
+      </h2>
 
       <button
-        onclick="saveItem('${id||''}')"
-        class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold">
-
-        保存
-
+        onclick="closeModal()"
+        class="text-gray-400 text-2xl">
+        ×
       </button>
 
     </div>
 
-    `
-  );
-}
 
-function intVal(v){
+    <label class="block text-sm font-semibold mb-2">
+      SKU <span class="text-red-500">*</span>
+    </label>
 
-  const n =
-    Number(v);
+    <input
+      id="itemSku"
+      value="${escapeHtml(sku)}"
+      placeholder="例如：ABC123">
 
-  return Number.isInteger(n)&&n>=0
-    ?
-    n
-    :
-    null;
+
+    <label class="block text-sm font-semibold mb-2 mt-4">
+      商品名称
+      <span class="text-gray-400 font-normal">
+        （可不填）
+      </span>
+    </label>
+
+    <input
+      id="itemName"
+      value="${escapeHtml(name)}"
+      placeholder="不填写时自动使用 SKU">
+
+
+    <label class="block text-sm font-semibold mb-2 mt-4">
+      货位 / 货架
+    </label>
+
+    <input
+      id="itemBin"
+      value="${escapeHtml(bin)}"
+      placeholder="例如：A-01-03">
+
+
+    <label class="block text-sm font-semibold mb-2 mt-4">
+      库存数量
+    </label>
+
+    <input
+      id="itemQty"
+      type="number"
+      min="0"
+      value="${qty}"
+      ${item ? '' : ''}>
+
+
+    <label class="block text-sm font-semibold mb-2 mt-4">
+      低库存提醒
+    </label>
+
+    <input
+      id="itemAlert"
+      type="number"
+      min="0"
+      value="${alert}">
+
+
+    <button
+      class="btn btn-blue w-full mt-5"
+      onclick="saveItem('${id || ''}')">
+
+      ${item ? '保存修改' : '创建商品'}
+
+    </button>
+
+
+    <button
+      class="btn btn-gray w-full mt-2"
+      onclick="closeModal()">
+
+      取消
+
+    </button>
+
+  `);
 }
 
 async function saveItem(id){
 
-  const name =
-    $('itemName')?.value.trim();
-
   const sku =
-    $('itemSku')?.value.trim();
+    $('itemSku').value.trim();
 
-  const alertQty =
-    intVal(
-      $('itemAlert')?.value
-    );
+  const name =
+    $('itemName').value.trim();
 
   const bin =
-    $('itemBin')?.value.trim();
+    $('itemBin').value.trim();
 
-  if(!name||!sku)
-    return showError(
-      '商品名称和SKU不能为空'
-    );
-
-  if(alertQty===null)
-    return showError(
-      '低库存数量必须是非负整数'
-    );
-
-  if(!id){
-
-    const qty =
-      intVal(
-        $('itemQty')?.value
-      );
-
-    if(qty===null)
-      return showError(
-        '初始库存必须是非负整数'
-      );
-
-    if(
-      APP.inventory.some(
-        x=>
-          String(x.sku)
-            .trim()
-            .toLowerCase()
-          ===
-          sku.toLowerCase()
+  const qty =
+    Math.max(
+      0,
+      safeNumber(
+        $('itemQty').value,
+        0
       )
-    ){
+    );
 
-      return showError(
-        '当前仓库已经存在这个SKU'
-      );
-    }
+  const alert =
+    Math.max(
+      0,
+      safeNumber(
+        $('itemAlert').value,
+        10
+      )
+    );
 
-    try{
+  if(!sku){
+    return showError('SKU不能为空');
+  }
 
-      const r =
-        await APP.sb.rpc(
-          'create_inventory',
-          {
-            p_warehouse_id:
-              APP.warehouse.id,
-            p_name:name,
-            p_sku:sku,
-            p_qty:qty,
-            p_alert:alertQty,
-            p_bin:bin
-          }
-        );
+  const finalName =
+    name || sku;
 
-      if(r.error)
-        throw r.error;
+  try{
 
-      await loadInventory();
+    showInfo('正在保存...');
 
-      closeModal();
+    if(id){
 
-      renderApp();
-
-    }catch(e){
-
-      showRealError(
-        '新增商品失败',
-        e
-      );
-    }
-
-  }else{
-
-    const dup =
-      APP.inventory.find(
-        x=>
-          x.id!==id &&
-          String(x.sku)
-            .trim()
-            .toLowerCase()
-          ===
-          sku.toLowerCase()
-      );
-
-    if(dup)
-      return showError(
-        '当前仓库已经存在这个SKU'
-      );
-
-    try{
-
-      const r =
+      const {error} =
         await APP.sb.rpc(
           'update_inventory_info',
           {
             p_inventory_id:id,
-            p_name:name,
+            p_name:finalName,
             p_sku:sku,
-            p_alert:alertQty,
+            p_alert:alert,
             p_bin:bin
           }
         );
 
-      if(r.error)
-        throw r.error;
+      if(error){
+        throw error;
+      }
+
+      /*
+       * 编辑商品时不直接修改库存数量。
+       * 库存数量应该通过入库 / 出库调整，
+       * 这样流水才完整。
+       */
+
+      closeModal();
 
       await loadInventory();
 
-      closeModal();
+      renderInventoryList();
+      renderHome();
 
-      renderApp();
-
-    }catch(e){
-
-      showRealError(
-        '保存商品失败',
-        e
-      );
-    }
-  }
-}
-
-/* =========================================================
-   入库 / 出库
-   ========================================================= */
-
-function openStock(
-  type='in',
-  sku=''
-){
-
-  APP.stockType=type;
-
-  modal(
-    type==='in'
-    ?
-    '入库'
-    :
-    '出库',
-
-    `
-
-    <div class="space-y-3">
-
-      <div class="flex gap-2">
-
-        <input
-          id="stockSku"
-          value="${esc(sku)}"
-          placeholder="SKU / 条码"
-          class="flex-1 border rounded-xl px-4 py-3">
-
-        <button
-          onclick="openScanner('${type==='in'?'stock-in':'stock-out'}')"
-          class="border rounded-xl px-4">
-
-          📷
-
-        </button>
-
-      </div>
-
-      <input
-        id="stockQty"
-        type="number"
-        min="1"
-        step="1"
-        value="1"
-        placeholder="数量"
-        class="w-full border rounded-xl px-4 py-3">
-
-      <input
-        id="stockNote"
-        placeholder="备注（可选）"
-        class="w-full border rounded-xl px-4 py-3">
-
-      <button
-        onclick="saveStock()"
-        class="w-full ${
-          type==='in'
-          ?
-          'bg-green-600'
-          :
-          'bg-orange-600'
-        } text-white rounded-xl py-3 font-bold">
-
-        确认${type==='in'?'入库':'出库'}
-
-      </button>
-
-      <button
-        onclick="openImport('stock')"
-        class="w-full border rounded-xl py-3">
-
-        📁 批量${type==='in'?'入库':'出库'}
-
-      </button>
-
-    </div>
-
-    `
-  );
-}
-
-async function saveStock(){
-
-  const sku =
-    $('stockSku')?.value.trim();
-
-  const qty =
-    intVal(
-      $('stockQty')?.value
-    );
-
-  const note =
-    $('stockNote')?.value.trim() ||
-    '';
-
-  if(!sku)
-    return showError(
-      '请输入或扫描SKU'
-    );
-
-  if(!qty||qty<1)
-    return showError(
-      '数量必须是大于0的整数'
-    );
-
-  const item =
-    APP.inventory.find(
-      x=>
-        String(x.sku)
-          .trim()
-          .toLowerCase()
-        ===
-        sku.toLowerCase()
-    );
-
-  if(!item){
-
-    if(APP.stockType==='in'){
-
-      closeModal();
-
-      openItem(
-        null,
-        sku
-      );
-
-      alert(
-        '这个条码还没有商品资料。\n已经把扫描到的SKU填入新增商品。'
-      );
+      showOk('商品修改成功');
 
     }else{
 
-      showError(
-        '出库失败：找不到这个SKU'
-      );
+      const {data,error} =
+        await APP.sb.rpc(
+          'create_inventory',
+          {
+            p_warehouse_id:APP.warehouse.id,
+            p_name:finalName,
+            p_sku:sku,
+            p_qty:qty,
+            p_alert:alert,
+            p_bin:bin
+          }
+        );
+
+      if(error){
+        throw error;
+      }
+
+      closeModal();
+
+      await loadInventory();
+
+      renderInventoryList();
+      renderHome();
+
+      showOk('商品创建成功');
+
     }
 
-    return;
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      error.message ||
+      '保存商品失败'
+    );
+
+  }
+}
+
+
+/* =========================================================
+   入库 / 出库
+========================================================= */
+
+function stockAction(id,type){
+
+  const item =
+    APP.inventory.find(x => x.id === id);
+
+  if(!item){
+    return showError('商品不存在');
   }
 
-  if(
-    APP.stockType==='out' &&
-    Number(item.qty)<qty
-  ){
+  const isIn =
+    type === 'in';
 
+  openModal(`
+
+    <h2 class="text-xl font-bold mb-2">
+      ${isIn ? '📥 入库' : '📤 出库'}
+    </h2>
+
+    <div class="bg-gray-50 rounded-xl p-3 mb-4">
+
+      <div class="font-bold">
+        ${escapeHtml(getItemName(item))}
+      </div>
+
+      <div class="small mt-1">
+        SKU：${escapeHtml(item.sku || '')}
+      </div>
+
+      <div class="small mt-1">
+        当前库存：
+        <strong>
+          ${safeNumber(item.qty,0)}
+        </strong>
+      </div>
+
+    </div>
+
+
+    <label class="block text-sm font-semibold mb-2">
+      数量
+    </label>
+
+    <input
+      id="stockQty"
+      type="number"
+      min="1"
+      step="1"
+      placeholder="请输入数量">
+
+
+    <label class="block text-sm font-semibold mb-2 mt-4">
+      备注
+    </label>
+
+    <textarea
+      id="stockNote"
+      rows="3"
+      placeholder="例如：采购到货、客户订单、盘点调整等"></textarea>
+
+
+    <button
+      class="btn ${
+        isIn ? 'btn-green' : 'btn-yellow'
+      } w-full mt-4"
+      onclick="saveStockAction('${id}','${type}')">
+
+      ${isIn ? '确认入库' : '确认出库'}
+
+    </button>
+
+
+    <button
+      class="btn btn-gray w-full mt-2"
+      onclick="closeModal()">
+
+      取消
+
+    </button>
+
+  `);
+}
+
+async function saveStockAction(id,type){
+
+  const qty =
+    Math.floor(
+      safeNumber(
+        $('stockQty').value,
+        0
+      )
+    );
+
+  const note =
+    $('stockNote').value.trim();
+
+  if(qty <= 0){
+    return showError('数量必须大于0');
+  }
+
+  const item =
+    APP.inventory.find(x => x.id === id);
+
+  if(!item){
+    return showError('商品不存在');
+  }
+
+  const current =
+    safeNumber(item.qty,0);
+
+  if(type === 'out' && qty > current){
     return showError(
-      `库存不足。当前库存：${item.qty}`
+      `库存不足，目前只有 ${current}`
     );
   }
 
   try{
 
-    const r =
+    showInfo('正在更新库存...');
+
+    const {data,error} =
       await APP.sb.rpc(
         'adjust_inventory',
         {
-          p_inventory_id:item.id,
-          p_type:APP.stockType,
+          p_inventory_id:id,
+          p_type:type,
           p_qty:qty,
           p_note:note
         }
       );
 
-    if(r.error)
-      throw r.error;
-
-    await Promise.all([
-      loadInventory(),
-      loadLogs()
-    ]);
+    if(error){
+      throw error;
+    }
 
     closeModal();
 
-    renderApp();
+    await loadInventory();
+    await loadLogs();
 
-  }catch(e){
+    renderInventoryList();
+    renderLogs();
+    renderHome();
 
-    showRealError(
-      '库存调整失败',
-      e
+    showOk(
+      type === 'in'
+      ? '入库成功'
+      : '出库成功'
+    );
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      error.message ||
+      '库存更新失败'
+    );
+
+  }
+}
+
+
+/* =========================================================
+   下架 / 恢复
+========================================================= */
+
+async function archiveInventory(id){
+
+  const item =
+    APP.inventory.find(x => x.id === id);
+
+  if(!item){
+    return showError('商品不存在');
+  }
+
+  const ok =
+    confirm(
+      `确定把「${getItemName(item)}」下架吗？\n\n下架后不会出现在正常库存列表，但数据不会被删除。`
+    );
+
+  if(!ok){
+    return;
+  }
+
+  try{
+
+    showInfo('正在下架...');
+
+    const {error} =
+      await APP.sb.rpc(
+        'archive_inventory',
+        {
+          p_inventory_id:id
+        }
+      );
+
+    if(error){
+      throw error;
+    }
+
+    await loadInventory();
+
+    renderInventoryList();
+    renderHome();
+
+    showOk('商品已下架');
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      error.message ||
+      '下架失败'
+    );
+
+  }
+}
+
+async function restoreInventory(id){
+
+  const item =
+    APP.inventory.find(x => x.id === id);
+
+  if(!item){
+    return showError('商品不存在');
+  }
+
+  try{
+
+    showInfo('正在恢复...');
+
+    const {error} =
+      await APP.sb.rpc(
+        'restore_inventory',
+        {
+          p_inventory_id:id
+        }
+      );
+
+    if(error){
+      throw error;
+    }
+
+    await loadInventory();
+
+    renderInventoryList();
+    renderHome();
+
+    showOk('商品已恢复');
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      error.message ||
+      '恢复失败'
+    );
+
+  }
+}
+
+function showArchivedInventory(){
+
+  const items =
+    archivedInventory();
+
+  let html = `
+
+    <div class="flex items-center justify-between mb-4">
+
+      <h2 class="text-xl font-bold">
+        🗂️ 已下架商品
+      </h2>
+
+      <button
+        onclick="closeModal()"
+        class="text-gray-400 text-2xl">
+        ×
+      </button>
+
+    </div>
+
+  `;
+
+  if(!items.length){
+
+    html += `
+      <div class="text-center py-8 text-gray-500">
+        <div class="text-4xl mb-3">📦</div>
+        暂时没有下架商品
+      </div>
+    `;
+
+  }else{
+
+    html += `<div>`;
+
+    items.forEach(x => {
+
+      html += `
+        <div class="border rounded-xl p-3 mb-2">
+
+          <div class="font-bold">
+            ${escapeHtml(getItemName(x))}
+          </div>
+
+          <div class="small mt-1">
+            SKU：${escapeHtml(x.sku || '')}
+          </div>
+
+          <div class="small mt-1">
+            货位：${escapeHtml(x.bin || '未设置')}
+          </div>
+
+          <div class="flex gap-2 mt-3">
+
+            <button
+              class="btn btn-green btn-small"
+              onclick="restoreInventory('${x.id}');closeModal()">
+              ♻️ 恢复
+            </button>
+
+            <button
+              class="btn btn-red btn-small"
+              onclick="deleteInventory('${x.id}')">
+              🗑️ 永久删除
+            </button>
+
+          </div>
+
+        </div>
+      `;
+
+    });
+
+    html += `</div>`;
+  }
+
+  openModal(html);
+}
+
+async function deleteInventory(id){
+
+  const item =
+    APP.inventory.find(x => x.id === id);
+
+  if(!item){
+    return showError('商品不存在');
+  }
+
+  const ok =
+    confirm(
+      `确定永久删除「${getItemName(item)}」吗？\n\n此操作不可恢复。\n\n如果只是暂时不用，建议选择“下架”。`
+    );
+
+  if(!ok){
+    return;
+  }
+
+  try{
+
+    showInfo('正在删除...');
+
+    const {error} =
+      await APP.sb
+        .from('inventory')
+        .delete()
+        .eq('id',id)
+        .eq(
+          'warehouse_id',
+          APP.warehouse.id
+        );
+
+    if(error){
+      throw error;
+    }
+
+    closeModal();
+
+    await loadInventory();
+
+    renderInventoryList();
+    renderHome();
+
+    showOk('商品已删除');
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      '删除失败：' +
+      (error.message ||
+       '数据库可能存在库存流水关联。建议使用“下架”。')
+    );
+
+  }
+}
+
+
+/* =========================================================
+   Logs
+========================================================= */
+
+async function loadLogs(){
+
+  if(!APP.warehouse){
+    APP.logs = [];
+    return;
+  }
+
+  try{
+
+    const {data,error} =
+      await APP.sb
+        .from('stock_logs')
+        .select('*')
+        .eq(
+          'warehouse_id',
+          APP.warehouse.id
+        )
+        .order(
+          'created_at',
+          {ascending:false}
+        );
+
+    if(error){
+      throw error;
+    }
+
+    APP.logs = data || [];
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      error.message ||
+      '加载流水失败'
     );
   }
 }
 
-/* =========================================================
-   批量导入
-   ========================================================= */
+function getLogType(log){
 
-function openImport(kind){
+  const type =
+    String(
+      log.type ||
+      log.action ||
+      ''
+    ).toLowerCase();
 
-  const title =
-    kind==='items'
-    ?
-    '批量导入商品'
-    :
-    `批量${APP.stockType==='in'?'入库':'出库'}`;
+  if(
+    type.includes('in') ||
+    type.includes('入')
+  ){
+    return {
+      label:'入库',
+      cls:'badge-green'
+    };
+  }
 
-  modal(
-    title,
-    `
+  if(
+    type.includes('out') ||
+    type.includes('出')
+  ){
+    return {
+      label:'出库',
+      cls:'badge-yellow'
+    };
+  }
 
-    <div class="text-sm text-gray-600 mb-3">
+  return {
+    label:log.type || log.action || '操作',
+    cls:'badge-gray'
+  };
+}
 
-      <b>支持：</b>
-      CSV / TXT / TSV / XLSX / XLS
+function findInventoryForLog(log){
 
-      <br><br>
+  if(log.inventory_id){
+    return APP.inventory.find(
+      x => x.id === log.inventory_id
+    );
+  }
 
-      第一行必须是表头。
+  if(log.sku){
+    return APP.inventory.find(
+      x => x.sku === log.sku
+    );
+  }
 
-      <br>
+  return null;
+}
 
-      SKU如果有前导0，请在Excel中设置为“文本”。
+function renderLogs(){
+
+  const container =
+    $('logsList');
+
+  if(!container){
+    return;
+  }
+
+  const search =
+    ($('logSearch')?.value || '')
+      .trim()
+      .toLowerCase();
+
+  const filtered =
+    APP.logs.filter(log => {
+
+      if(!search){
+        return true;
+      }
+
+      const item =
+        findInventoryForLog(log);
+
+      const text = [
+        log.sku,
+        log.note,
+        log.type,
+        log.action,
+        log.user_email,
+        log.operator_email,
+        item?.name
+      ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+      return text.includes(search);
+    });
+
+  if(!filtered.length){
+
+    container.innerHTML = `
+      <div class="card p-8 text-center">
+        <div class="text-4xl mb-3">📋</div>
+        <div class="font-bold">
+          暂无流水
+        </div>
+      </div>
+    `;
+
+    return;
+  }
+
+  container.innerHTML =
+    filtered.map(log => {
+
+      const item =
+        findInventoryForLog(log);
+
+      const type =
+        getLogType(log);
+
+      const qty =
+        safeNumber(
+          log.qty ??
+          log.quantity ??
+          log.change_qty,
+          0
+        );
+
+      const note =
+        log.note || '';
+
+      const operator =
+        log.user_email ||
+        log.operator_email ||
+        log.email ||
+        '—';
+
+      return `
+        <div class="log-row">
+
+          <div class="flex justify-between gap-3">
+
+            <div class="min-w-0">
+
+              <div class="flex items-center gap-2">
+
+                <span class="badge ${type.cls}">
+                  ${escapeHtml(type.label)}
+                </span>
+
+                <span class="font-bold">
+                  ${qty}
+                </span>
+
+              </div>
+
+              <div class="font-semibold mt-2 break-all">
+                ${escapeHtml(
+                  item?.name ||
+                  log.name ||
+                  log.sku ||
+                  '未知商品'
+                )}
+              </div>
+
+              <div class="small mt-1 break-all">
+                SKU：
+                ${escapeHtml(
+                  item?.sku ||
+                  log.sku ||
+                  '—'
+                )}
+              </div>
+
+              ${
+                note
+                ? `
+                  <div class="text-sm text-gray-600 mt-2">
+                    📝 ${escapeHtml(note)}
+                  </div>
+                `
+                : ''
+              }
+
+              <div class="small mt-2">
+                ${formatDate(log.created_at)}
+              </div>
+
+              <div class="small mt-1 break-all">
+                操作人：${escapeHtml(operator)}
+              </div>
+
+            </div>
+
+          </div>
+
+          <div class="flex gap-2 mt-3">
+
+            <button
+              class="btn btn-gray btn-small"
+              onclick="editStockLog('${log.id}')">
+              ✏️ 编辑备注
+            </button>
+
+            <button
+              class="btn btn-red btn-small"
+              onclick="deleteStockLog('${log.id}')">
+              🗑️ 删除记录
+            </button>
+
+          </div>
+
+        </div>
+      `;
+
+    }).join('');
+}
+
+function editStockLog(id){
+
+  const log =
+    APP.logs.find(x => x.id === id);
+
+  if(!log){
+    return showError('流水记录不存在');
+  }
+
+  openModal(`
+
+    <h2 class="text-xl font-bold mb-4">
+      编辑流水备注
+    </h2>
+
+    <div class="bg-gray-50 rounded-xl p-3 mb-4">
+
+      <div class="font-semibold">
+        ${escapeHtml(
+          log.sku ||
+          log.name ||
+          '库存流水'
+        )}
+      </div>
+
+      <div class="small mt-1">
+        ${formatDate(log.created_at)}
+      </div>
 
     </div>
+
+    <textarea
+      id="editLogNote"
+      rows="4"
+      placeholder="输入备注">${escapeHtml(
+        log.note || ''
+      )}</textarea>
+
+    <button
+      class="btn btn-blue w-full mt-4"
+      onclick="saveStockLogNote('${id}')">
+      保存备注
+    </button>
+
+    <button
+      class="btn btn-gray w-full mt-2"
+      onclick="closeModal()">
+      取消
+    </button>
+
+  `);
+}
+
+async function saveStockLogNote(id){
+
+  const note =
+    $('editLogNote').value.trim();
+
+  try{
+
+    showInfo('正在保存...');
+
+    const {error} =
+      await APP.sb
+        .from('stock_logs')
+        .update({
+          note:note
+        })
+        .eq('id',id)
+        .eq(
+          'warehouse_id',
+          APP.warehouse.id
+        );
+
+    if(error){
+      throw error;
+    }
+
+    closeModal();
+
+    await loadLogs();
+
+    renderLogs();
+
+    showOk('备注已更新');
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      '修改失败：' +
+      (error.message || '请检查数据库权限')
+    );
+
+  }
+}
+
+async function deleteStockLog(id){
+
+  const log =
+    APP.logs.find(x => x.id === id);
+
+  if(!log){
+    return showError('流水记录不存在');
+  }
+
+  const ok =
+    confirm(
+      '确定删除这条库存流水吗？\n\n注意：删除流水不会自动恢复库存数量。'
+    );
+
+  if(!ok){
+    return;
+  }
+
+  try{
+
+    showInfo('正在删除...');
+
+    const {error} =
+      await APP.sb
+        .from('stock_logs')
+        .delete()
+        .eq('id',id)
+        .eq(
+          'warehouse_id',
+          APP.warehouse.id
+        );
+
+    if(error){
+      throw error;
+    }
+
+    await loadLogs();
+
+    renderLogs();
+
+    showOk('流水记录已删除');
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      '删除失败：' +
+      (error.message || '请检查数据库权限')
+    );
+
+  }
+}
+
+
+/* =========================================================
+   扫码
+========================================================= */
+
+function openScanner(){
+
+  openModal(`
+
+    <div class="flex items-center justify-between mb-4">
+
+      <h2 class="text-xl font-bold">
+        📷 扫描 SKU / 条码
+      </h2>
+
+      <button
+        onclick="stopScanner();closeModal()"
+        class="text-gray-400 text-2xl">
+        ×
+      </button>
+
+    </div>
+
+    <div
+      id="reader"
+      style="width:100%;">
+    </div>
+
+    <div class="text-center text-sm text-gray-500 mt-3">
+      将条码放进扫描框内
+    </div>
+
+    <button
+      class="btn btn-gray w-full mt-4"
+      onclick="stopScanner();closeModal()">
+      关闭
+    </button>
+
+  `);
+
+  setTimeout(startScanner,300);
+}
+
+async function startScanner(){
+
+  if(!window.Html5Qrcode){
+    return showError('扫码组件加载失败');
+  }
+
+  try{
+
+    APP.scanner =
+      new Html5Qrcode('reader');
+
+    await APP.scanner.start(
+      {
+        facingMode:'environment'
+      },
+      {
+        fps:10,
+        qrbox:{
+          width:250,
+          height:180
+        }
+      },
+      decodedText => {
+
+        stopScanner();
+
+        closeModal();
+
+        $('inventorySearch').value =
+          decodedText;
+
+        showPage('inventory');
+
+        renderInventoryList();
+
+        showOk(
+          '扫描成功：' +
+          decodedText
+        );
+      },
+      errorMessage => {
+        // 扫描过程中大量错误属于正常情况
+      }
+    );
+
+    APP.scannerRunning = true;
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      '无法打开摄像头，请检查浏览器摄像头权限'
+    );
+
+  }
+}
+
+async function stopScanner(){
+
+  if(
+    APP.scanner &&
+    APP.scannerRunning
+  ){
+
+    try{
+      await APP.scanner.stop();
+    }catch(e){
+      console.error(e);
+    }
+  }
+
+  APP.scannerRunning = false;
+
+  APP.scanner = null;
+}
+
+
+/* =========================================================
+   批量导入
+========================================================= */
+
+function openImport(){
+
+  openModal(`
+
+    <h2 class="text-xl font-bold mb-2">
+      📥 批量导入商品
+    </h2>
+
+    <p class="small mb-4">
+      支持 Excel、CSV。
+      SKU 必须有，商品名称可以没有。
+      名称为空时会自动使用 SKU。
+    </p>
+
+
+    <div class="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-4 text-sm">
+
+      <div class="font-bold mb-2">
+        推荐表格格式
+      </div>
+
+      <div class="font-mono text-xs">
+        SKU　商品名称　数量　低库存　货位
+      </div>
+
+      <div class="mt-2">
+        例如：
+      </div>
+
+      <div class="font-mono text-xs mt-1">
+        ABC123　蓝色衣服　10　10　A-01-01
+      </div>
+
+      <div class="font-mono text-xs mt-1">
+        XYZ999　　　　　5　　　B-02-03
+      </div>
+
+      <div class="mt-2 text-gray-600">
+        第二行没有商品名称也可以。
+      </div>
+
+    </div>
+
 
     <input
       id="importFile"
       type="file"
-      accept=".csv,.txt,.tsv,.xlsx,.xls,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      onchange="showSelectedFile()"
-      class="w-full border rounded-xl p-3">
+      accept=".xlsx,.xls,.csv,.txt"
+      class="mb-4">
 
-    <div
-      id="selectedFile"
-      class="text-sm text-gray-500 mt-2">
-
-      尚未选择文件
-
-    </div>
 
     <button
-      onclick="runImport('${kind}')"
-      class="w-full bg-blue-600 text-white rounded-xl py-3 mt-3 font-bold">
-
+      class="btn btn-purple w-full"
+      onclick="runImport('items')">
       开始导入
-
     </button>
 
-    <div class="mt-4 text-xs text-gray-500">
 
-      <b>商品表头示例：</b>
+    <button
+      class="btn btn-gray w-full mt-2"
+      onclick="closeModal()">
+      取消
+    </button>
 
-      <br>
-
-      名称, SKU, 低库存, 初始数量, 货位
-
-      <br><br>
-
-      <b>库存表头示例：</b>
-
-      <br>
-
-      SKU, 数量, 备注
-
-      <br><br>
-
-      iPhone请从“文件”App选择Excel或CSV。
-
+    <div
+      id="importResult"
+      class="mt-4 text-sm">
     </div>
 
-    `
-  );
+  `);
 }
 
-function showSelectedFile(){
+function normalizeHeader(value){
 
-  const f =
-    $('importFile')
-      ?.files
-      ?. [0];
-
-  const e =
-    $('selectedFile');
-
-  if(!e)
-    return;
-
-  if(!f){
-
-    e.textContent=
-      '尚未选择文件';
-
-    return;
-  }
-
-  e.textContent =
-    `已选择：${f.name} · `+
-    `${(f.size/1024).toFixed(1)} KB`;
-}
-
-function parseDelimited(
-  text,
-  delimiter=','
-){
-
-  const rows=[];
-
-  let row=[];
-  let cell='';
-  let quote=false;
-
-  for(
-    let i=0;
-    i<text.length;
-    i++
-  ){
-
-    const c =
-      text[i];
-
-    const n =
-      text[i+1];
-
-    if(c==='"'){
-
-      if(
-        quote &&
-        n==='"'
-      ){
-
-        cell+='"';
-
-        i++;
-
-      }else{
-
-        quote=!quote;
-
-      }
-
-    }else if(
-      c===delimiter &&
-      !quote
-    ){
-
-      row.push(cell);
-
-      cell='';
-
-    }else if(
-      (c==='\n'||c==='\r') &&
-      !quote
-    ){
-
-      if(
-        c==='\r' &&
-        n==='\n'
-      ){
-
-        i++;
-      }
-
-      row.push(cell);
-
-      cell='';
-
-      if(
-        row.some(
-          v=>
-            String(v).trim()!==''
-        )
-      ){
-
-        rows.push(row);
-      }
-
-      row=[];
-
-    }else{
-
-      cell+=c;
-    }
-  }
-
-  if(
-    cell!=='' ||
-    row.length
-  ){
-
-    row.push(cell);
-
-    if(
-      row.some(
-        v=>
-          String(v).trim()!==''
-      )
-    ){
-
-      rows.push(row);
-    }
-  }
-
-  return rows;
-}
-
-async function readRows(file){
-
-  const name =
-    (file.name||'')
-      .toLowerCase();
-
-  if(
-    name.endsWith('.xlsx') ||
-    name.endsWith('.xls')
-  ){
-
-    if(!window.XLSX){
-
-      throw new Error(
-        'Excel解析组件加载失败，请检查网络连接。'
-      );
-    }
-
-    const buf =
-      await file.arrayBuffer();
-
-    const wb =
-      XLSX.read(
-        buf,
-        {
-          type:'array',
-          cellDates:false
-        }
-      );
-
-    if(!wb.SheetNames.length){
-
-      throw new Error(
-        'Excel没有工作表。'
-      );
-    }
-
-    const ws =
-      wb.Sheets[
-        wb.SheetNames[0]
-      ];
-
-    return XLSX.utils.sheet_to_json(
-      ws,
-      {
-        header:1,
-        defval:'',
-        raw:false
-      }
-    );
-  }
-
-  let text =
-    await file.text();
-
-  if(!text.trim()){
-
-    throw new Error(
-      '文件内容为空。'
-    );
-  }
-
-  text =
-    text.replace(
-      /^\uFEFF/,
-      ''
-    );
-
-  const first =
-    text.split(/\r?\n/)[0]||'';
-
-  let delim=',';
-
-  if(first.includes('\t'))
-    delim='\t';
-
-  else if(first.includes(';'))
-    delim=';';
-
-  return parseDelimited(
-    text,
-    delim
-  );
-}
-
-function normalizeHeader(v){
-
-  return String(v??'')
-    .replace(/^\uFEFF/,'')
+  return String(value ?? '')
     .trim()
     .toLowerCase()
     .replace(/\s+/g,'');
 }
 
-function headerMap(row){
+function findHeader(headers,names){
 
-  const m={};
+  for(const name of names){
 
-  row.forEach(
-    (v,i)=>{
+    const target =
+      normalizeHeader(name);
 
-      const k =
-        normalizeHeader(v);
+    const index =
+      headers.findIndex(
+        h => normalizeHeader(h) === target
+      );
 
-      if(k)
-        m[k]=i;
-    }
-  );
-
-  return m;
-}
-
-function pick(
-  row,
-  h,
-  names
-){
-
-  for(
-    const n of names
-  ){
-
-    const key =
-      normalizeHeader(n);
-
-    const i =
-      h[key];
-
-    if(i!==undefined){
-
-      return String(
-        row[i]??''
-      ).trim();
+    if(index >= 0){
+      return index;
     }
   }
 
-  return '';
+  return -1;
 }
 
-function importNumber(v){
-
-  const s =
-    String(v??'')
-      .trim()
-      .replace(/,/g,'');
-
-  if(s==='')
-    return 0;
-
-  if(!/^\d+$/.test(s))
-    return null;
-
-  const n =
-    Number(s);
+function importNumber(value){
 
   if(
-    !Number.isSafeInteger(n) ||
-    n<0
-  )
-    return null;
+    value === null ||
+    value === undefined ||
+    String(value).trim() === ''
+  ){
+    return 0;
+  }
 
-  return n;
-}
-
-function findHeader(h,names){
-
-  return names.some(
-    n=>
-      h[
-        normalizeHeader(n)
-      ]!==undefined
-  );
-}
-
-async function runImport(kind){
-
-  const f =
-    $('importFile')
-      ?.files
-      ?. [0];
-
-  if(!f)
-    return showError(
-      '请选择文件'
+  const n =
+    Number(
+      String(value)
+        .replace(/,/g,'')
+        .trim()
     );
+
+  return Number.isFinite(n)
+    ? n
+    : 0;
+}
+
+async function runImport(type){
+
+  if(type !== 'items'){
+    return;
+  }
+
+  const file =
+    $('importFile')?.files?.[0];
+
+  if(!file){
+    return showError('请先选择文件');
+  }
+
+  if(!APP.warehouse){
+    return showError('请先选择仓库');
+  }
 
   try{
 
-    const rows =
-      await readRows(f);
+    showInfo('正在读取文件...');
 
-    if(rows.length<2){
+    const buffer =
+      await file.arrayBuffer();
 
-      throw new Error(
-        '文件没有有效数据。'
-      );
-    }
+    let workbook;
 
-    const h =
-      headerMap(rows[0]);
+    if(
+      file.name.toLowerCase().endsWith('.txt') ||
+      file.name.toLowerCase().endsWith('.csv')
+    ){
 
-    /* -----------------------------------------------------
-       商品导入
-       ----------------------------------------------------- */
+      const text =
+        new TextDecoder('utf-8')
+          .decode(buffer);
 
-    if(kind==='items'){
-
-      if(
-        !findHeader(
-          h,
-          ['名称','商品名称','name']
-        )
-      ){
-
-        throw new Error(
-          '没有找到“名称”表头。'
-        );
-      }
-
-      if(
-        !findHeader(
-          h,
-          ['sku','条码','barcode']
-        )
-      ){
-
-        throw new Error(
-          '没有找到“SKU”表头。'
-        );
-      }
-
-      const existing =
-        new Set(
-          APP.inventory.map(
-            x=>
-              String(x.sku||'')
-                .trim()
-                .toLowerCase()
-          )
-        );
-
-      const fileSkus =
-        new Set();
-
-      const prepared=[];
-      const errors=[];
-
-      for(
-        let i=1;
-        i<rows.length;
-        i++
-      ){
-
-        const line =
-          i+1;
-
-        const r =
-          rows[i];
-
-        const name =
-          pick(
-            r,
-            h,
-            [
-              '名称',
-              '商品名称',
-              'name'
-            ]
-          );
-
-        const sku =
-          pick(
-            r,
-            h,
-            [
-              'sku',
-              '条码',
-              'barcode'
-            ]
-          );
-
-        const alertS =
-          pick(
-            r,
-            h,
-            [
-              '低库存',
-              '预警',
-              'alert',
-              'alert_qty'
-            ]
-          );
-
-        const qtyS =
-          pick(
-            r,
-            h,
-            [
-              '初始数量',
-              '初始库存',
-              '库存',
-              '数量',
-              'qty'
-            ]
-          );
-
-        const bin =
-          pick(
-            r,
-            h,
-            [
-              '货位',
-              '库位',
-              'bin'
-            ]
-          );
-
-        if(!name){
-
-          errors.push(
-            `第${line}行：商品名称为空`
-          );
-
-          continue;
-        }
-
-        if(!sku){
-
-          errors.push(
-            `第${line}行：SKU为空`
-          );
-
-          continue;
-        }
-
-        const skuKey =
-          sku
-            .trim()
-            .toLowerCase();
-
-        if(existing.has(skuKey)){
-
-          errors.push(
-            `第${line}行：SKU已存在：${sku}`
-          );
-
-          continue;
-        }
-
-        if(fileSkus.has(skuKey)){
-
-          errors.push(
-            `第${line}行：文件内SKU重复：${sku}`
-          );
-
-          continue;
-        }
-
-        const alertQty =
-          importNumber(
-            alertS
-          );
-
-        const qty =
-          importNumber(
-            qtyS
-          );
-
-        if(alertQty===null){
-
-          errors.push(
-            `第${line}行：低库存数量不是有效整数`
-          );
-
-          continue;
-        }
-
-        if(qty===null){
-
-          errors.push(
-            `第${line}行：初始库存不是有效整数`
-          );
-
-          continue;
-        }
-
-        fileSkus.add(
-          skuKey
-        );
-
-        prepared.push({
-          line,
-          name,
-          sku,
-          alertQty,
-          qty,
-          bin
+      workbook =
+        XLSX.read(text,{
+          type:'string'
         });
-      }
 
-      if(
-        !prepared.length
-      ){
+    }else{
 
-        closeModal();
+      workbook =
+        XLSX.read(buffer,{
+          type:'array'
+        });
+    }
 
-        alert(
-          '没有可以导入的数据。\n\n'+
-          errors.join('\n')
-        );
+    const sheetName =
+      workbook.SheetNames[0];
 
-        return;
-      }
+    const sheet =
+      workbook.Sheets[sheetName];
 
-      const okRows=[];
-      const failedRows=[
-        ...errors
-      ];
-
-      for(
-        const item of prepared
-      ){
-
-        try{
-
-          const r =
-            await APP.sb.rpc(
-              'create_inventory',
-              {
-                p_warehouse_id:
-                  APP.warehouse.id,
-
-                p_name:
-                  item.name,
-
-                p_sku:
-                  item.sku,
-
-                p_qty:
-                  item.qty,
-
-                p_alert:
-                  item.alertQty,
-
-                p_bin:
-                  item.bin
-              }
-            );
-
-          if(r.error)
-            throw r.error;
-
-          okRows.push(
-            item.line
-          );
-
-          existing.add(
-            item.sku
-              .trim()
-              .toLowerCase()
-          );
-
-        }catch(e){
-
-          failedRows.push(
-            `第${item.line}行：${
-              e?.message ||
-              e?.details ||
-              '数据库保存失败'
-            }`
-          );
+    const rows =
+      XLSX.utils.sheet_to_json(
+        sheet,
+        {
+          header:1,
+          defval:''
         }
-      }
+      );
 
-      await loadInventory();
-
-      closeModal();
-
-      renderApp();
-
-      let message =
-        '📥 商品导入完成\n\n'+
-        `成功：${okRows.length} 条\n`+
-        `失败：${failedRows.length} 条`;
-
-      if(failedRows.length){
-
-        message +=
-          '\n\n失败详情：\n'+
-          failedRows.join('\n');
-      }
-
-      alert(message);
-
-      return;
+    if(!rows.length){
+      throw new Error('文件没有数据');
     }
 
-    /* -----------------------------------------------------
-       入库 / 出库导入
-       ----------------------------------------------------- */
+    const headers =
+      rows[0];
 
-    if(
-      !findHeader(
-        h,
-        ['sku','条码','barcode']
-      )
-    ){
+    const skuIndex =
+      findHeader(
+        headers,
+        [
+          'SKU',
+          'sku',
+          '货号',
+          '商品SKU',
+          '商品编码',
+          '编码'
+        ]
+      );
 
+    if(skuIndex < 0){
       throw new Error(
-        '没有找到“SKU”表头。'
+        '没有找到 SKU 表头。请确保第一行有“SKU”。'
       );
     }
 
-    if(
-      !findHeader(
-        h,
-        ['数量','qty','数量变动']
-      )
-    ){
-
-      throw new Error(
-        '没有找到“数量”表头。'
+    const nameIndex =
+      findHeader(
+        headers,
+        [
+          '名称',
+          '商品名称',
+          'name',
+          '商品名'
+        ]
       );
-    }
 
-    const prepared=[];
-    const errors=[];
+    const qtyIndex =
+      findHeader(
+        headers,
+        [
+          '数量',
+          '库存',
+          'qty',
+          'quantity'
+        ]
+      );
 
-    for(
-      let i=1;
-      i<rows.length;
-      i++
-    ){
+    const alertIndex =
+      findHeader(
+        headers,
+        [
+          '低库存',
+          '提醒数量',
+          '预警数量',
+          'alert',
+          'alert_qty'
+        ]
+      );
 
-      const line =
-        i+1;
+    const binIndex =
+      findHeader(
+        headers,
+        [
+          '货位',
+          '货架',
+          '库位',
+          'bin',
+          'location'
+        ]
+      );
 
-      const r =
+    let success = 0;
+    let skipped = 0;
+
+    const errors = [];
+
+    for(let i=1;i<rows.length;i++){
+
+      const row =
         rows[i];
 
+      const line =
+        i + 1;
+
       const sku =
-        pick(
-          r,
-          h,
-          [
-            'sku',
-            '条码',
-            'barcode'
-          ]
-        );
-
-      const qtyS =
-        pick(
-          r,
-          h,
-          [
-            '数量',
-            'qty',
-            '数量变动'
-          ]
-        );
-
-      const note =
-        pick(
-          r,
-          h,
-          [
-            '备注',
-            'note'
-          ]
-        );
+        String(
+          row[skuIndex] ?? ''
+        ).trim();
 
       if(!sku){
+
+        skipped++;
 
         errors.push(
           `第${line}行：SKU为空`
@@ -4383,487 +3048,481 @@ async function runImport(kind){
         continue;
       }
 
+      let name =
+        nameIndex >= 0
+        ? String(
+            row[nameIndex] ?? ''
+          ).trim()
+        : '';
+
+      if(!name){
+        name = sku;
+      }
+
       const qty =
-        importNumber(
-          qtyS
-        );
+        qtyIndex >= 0
+        ? importNumber(row[qtyIndex])
+        : 0;
 
-      if(
-        qty===null ||
-        qty<1
-      ){
+      const alert =
+        alertIndex >= 0 &&
+        String(row[alertIndex] ?? '').trim() !== ''
+        ? importNumber(row[alertIndex])
+        : 10;
 
-        errors.push(
-          `第${line}行：数量必须是大于0的整数`
-        );
-
-        continue;
-      }
-
-      const item =
-        APP.inventory.find(
-          x=>
-            String(x.sku)
-              .trim()
-              .toLowerCase()
-            ===
-            sku
-              .trim()
-              .toLowerCase()
-        );
-
-      if(!item){
-
-        errors.push(
-          `第${line}行：找不到SKU：${sku}`
-        );
-
-        continue;
-      }
-
-      if(
-        APP.stockType==='out' &&
-        Number(item.qty)<qty
-      ){
-
-        errors.push(
-          `第${line}行：库存不足，当前${item.qty}，需要出库${qty}`
-        );
-
-        continue;
-      }
-
-      prepared.push({
-        line,
-        item,
-        qty,
-        note
-      });
-    }
-
-    if(!prepared.length){
-
-      closeModal();
-
-      alert(
-        `没有可以执行的${APP.stockType==='in'?'入库':'出库'}数据。\n\n`+
-        errors.join('\n')
-      );
-
-      return;
-    }
-
-    const okRows=[];
-    const failedRows=[
-      ...errors
-    ];
-
-    for(
-      const item of prepared
-    ){
+      const bin =
+        binIndex >= 0
+        ? String(
+            row[binIndex] ?? ''
+          ).trim()
+        : '';
 
       try{
 
-        const r =
+        const {error} =
           await APP.sb.rpc(
-            'adjust_inventory',
+            'create_inventory',
             {
-              p_inventory_id:
-                item.item.id,
-
-              p_type:
-                APP.stockType,
-
-              p_qty:
-                item.qty,
-
-              p_note:
-                item.note
+              p_warehouse_id:APP.warehouse.id,
+              p_name:name,
+              p_sku:sku,
+              p_qty:Math.max(0,qty),
+              p_alert:Math.max(0,alert),
+              p_bin:bin
             }
           );
 
-        if(r.error)
-          throw r.error;
+        if(error){
+          throw error;
+        }
 
-        okRows.push(
-          item.line
-        );
+        success++;
 
-      }catch(e){
+      }catch(error){
 
-        failedRows.push(
-          `第${item.line}行：${
-            e?.message ||
-            e?.details ||
-            '数据库保存失败'
-          }`
+        const message =
+          String(
+            error?.message ||
+            '导入失败'
+          );
+
+        /*
+         * 如果 SKU 已存在，记录为失败。
+         */
+        errors.push(
+          `第${line}行：${message}`
         );
       }
     }
 
-    await Promise.all([
-      loadInventory(),
-      loadLogs()
-    ]);
+    await loadInventory();
 
-    closeModal();
+    renderInventoryList();
+    renderHome();
 
-    renderApp();
+    let html = `
+      <div class="bg-green-50 rounded-xl p-3">
+        <div class="font-bold text-green-700">
+          导入完成
+        </div>
 
-    let message =
-      `📦 批量${
-        APP.stockType==='in'
-        ?
-        '入库'
-        :
-        '出库'
-      }完成\n\n`+
-      `成功：${okRows.length} 条\n`+
-      `失败：${failedRows.length} 条`;
+        <div class="mt-2">
+          成功：${success}
+        </div>
 
-    if(failedRows.length){
+        <div>
+          跳过：${skipped}
+        </div>
 
-      message +=
-        '\n\n失败详情：\n'+
-        failedRows.join('\n');
+        <div>
+          错误：${errors.length}
+        </div>
+      </div>
+    `;
+
+    if(errors.length){
+
+      html += `
+        <div class="bg-red-50 rounded-xl p-3 mt-3">
+
+          <div class="font-bold text-red-700 mb-2">
+            部分记录没有导入
+          </div>
+
+          <div class="max-h-52 overflow-auto text-xs">
+            ${errors
+              .slice(0,100)
+              .map(x =>
+                `<div class="mb-1">
+                  ${escapeHtml(x)}
+                </div>`
+              )
+              .join('')
+            }
+          </div>
+
+        </div>
+      `;
     }
 
-    alert(message);
+    $('importResult').innerHTML =
+      html;
 
-  }catch(e){
+    showOk(
+      `导入完成，成功 ${success} 条`
+    );
 
-    showRealError(
-      '批量导入失败',
-      e
+  }catch(error){
+
+    console.error(error);
+
+    $('importResult').innerHTML = `
+      <div class="bg-red-50 rounded-xl p-3 text-red-700">
+        ${escapeHtml(
+          error.message ||
+          '导入失败'
+        )}
+      </div>
+    `;
+
+    showError(
+      error.message ||
+      '导入失败'
     );
   }
 }
+
 
 /* =========================================================
-   扫码
-   ========================================================= */
+   导出备份
+========================================================= */
 
-async function openScanner(mode){
+function downloadBlob(blob,filename){
 
-  closeModal();
-
-  APP.scannerMode=mode;
-
-  modal(
-    '扫码',
-    `
-
-    <div id="reader" class="w-full"></div>
-
-    <div
-      class="text-center text-sm text-gray-500 mt-3">
-
-      请把条码/二维码放入框内。
-
-      <br>
-
-      扫码成功后会自动处理。
-
-    </div>
-
-    <button
-      onclick="closeScanner()"
-      class="w-full border rounded-xl py-3 mt-3">
-
-      关闭相机
-
-    </button>
-
-    `
-  );
-
-  try{
-
-    if(!window.Html5Qrcode){
-
-      throw new Error(
-        '扫码组件加载失败，请检查网络。'
-      );
-    }
-
-    APP.scanner =
-      new Html5Qrcode(
-        'reader'
-      );
-
-    const cams =
-      await Html5Qrcode.getCameras();
-
-    if(!cams?.length){
-
-      throw new Error(
-        '没有检测到摄像头，请允许浏览器使用相机。'
-      );
-    }
-
-    const back =
-      cams.find(
-        c=>
-          /back|rear|environment|后置/i
-            .test(c.label)
-      )
-      ||
-      cams[cams.length-1];
-
-    await APP.scanner.start(
-      back.id,
-      {
-        fps:10,
-        qrbox:{
-          width:260,
-          height:160
-        }
-      },
-      decoded=>
-        handleScan(decoded),
-      ()=>{}
-    );
-
-    APP.scannerRunning=true;
-
-  }catch(e){
-
-    closeScanner();
-
-    showRealError(
-      '启动扫码失败',
-      e
-    );
-  }
-}
-
-async function handleScan(decoded){
-
-  if(!APP.scannerRunning)
-    return;
-
-  const code =
-    String(decoded||'').trim();
-
-  if(!code)
-    return;
-
-  const mode =
-    APP.scannerMode;
-
-  await closeScanner();
-
-  if(mode==='fill-sku'){
-
-    openItem(
-      null,
-      code
-    );
-
-    return;
-  }
-
-  if(mode==='find'){
-
-    const item =
-      APP.inventory.find(
-        x=>
-          String(x.sku)
-            .trim()
-            .toLowerCase()
-          ===
-          code.toLowerCase()
-      );
-
-    if(!item){
-
-      alert(
-        '未找到这个SKU：'+code
-      );
-
-      return;
-    }
-
-    APP.page='inventory';
-
-    renderApp();
-
-    setTimeout(
-      ()=>{
-        const inp =
-          $('invSearch');
-
-        if(inp){
-
-          inp.value=code;
-
-          renderInventoryList();
-        }
-      },
-      50
-    );
-
-    alert(
-      `找到商品：${item.name}\n`+
-      `SKU：${item.sku}\n`+
-      `货位：${item.bin||'未设置'}\n`+
-      `库存：${item.qty}`
-    );
-
-    return;
-  }
-
-  if(mode==='stock-in'){
-
-    openStock(
-      'in',
-      code
-    );
-
-    return;
-  }
-
-  if(mode==='stock-out'){
-
-    openStock(
-      'out',
-      code
-    );
-
-    return;
-  }
-}
-
-async function closeScanner(){
-
-  if(APP.scanner){
-
-    try{
-
-      if(APP.scannerRunning){
-
-        await APP.scanner.stop();
-      }
-
-    }catch(e){}
-
-    try{
-
-      await APP.scanner.clear();
-
-    }catch(e){}
-
-    APP.scanner=null;
-  }
-
-  APP.scannerRunning=false;
-
-  APP.scannerMode=null;
-
-  closeModal();
-}
-
-/* =========================================================
-   备份
-   ========================================================= */
-
-function exportBackup(){
-
-  if(!APP.warehouse)
-    return;
-
-  const data={
-
-    exported_at:
-      new Date().toISOString(),
-
-    warehouse:
-      APP.warehouse,
-
-    inventory:
-      APP.inventory,
-
-    stock_logs:
-      APP.logs
-
-  };
-
-  const blob =
-    new Blob(
-      [
-        JSON.stringify(
-          data,
-          null,
-          2
-        )
-      ],
-      {
-        type:'application/json'
-      }
-    );
+  const url =
+    URL.createObjectURL(blob);
 
   const a =
     document.createElement('a');
 
-  a.href =
-    URL.createObjectURL(
-      blob
-    );
+  a.href = url;
+  a.download = filename;
 
-  a.download =
-    'warehouse-backup-'+
-    new Date()
-      .toISOString()
-      .slice(0,10)+
-    '.json';
+  document.body.appendChild(a);
 
   a.click();
 
-  setTimeout(
-    ()=>{
-      URL.revokeObjectURL(
-        a.href
-      );
-    },
-    1000
-  );
+  a.remove();
+
+  setTimeout(()=>{
+    URL.revokeObjectURL(url);
+  },1000);
 }
 
+function exportBackup(){
+
+  if(!APP.inventory.length){
+    return showError('没有库存数据');
+  }
+
+  const data =
+    activeInventory().map(x => ({
+      SKU:x.sku || '',
+      商品名称:getItemName(x),
+      库存:safeNumber(x.qty,0),
+      低库存提醒:getAlertQty(x),
+      货位:x.bin || '',
+      状态:x.is_active === false
+        ? '下架'
+        : '正常'
+    }));
+
+  const ws =
+    XLSX.utils.json_to_sheet(data);
+
+  const wb =
+    XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    wb,
+    ws,
+    '库存'
+  );
+
+  const output =
+    XLSX.write(
+      wb,
+      {
+        bookType:'xlsx',
+        type:'array'
+      }
+    );
+
+  downloadBlob(
+    new Blob(
+      [output],
+      {
+        type:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      }
+    ),
+    `仓库库存备份_${new Date().toISOString().slice(0,10)}.xlsx`
+  );
+
+  showOk('库存备份已生成');
+}
+
+function exportLogs(){
+
+  if(!APP.logs.length){
+    return showError('没有流水数据');
+  }
+
+  const data =
+    APP.logs.map(log => {
+
+      const item =
+        findInventoryForLog(log);
+
+      const type =
+        getLogType(log);
+
+      return {
+        时间:formatDate(log.created_at),
+        类型:type.label,
+        SKU:item?.sku || log.sku || '',
+        商品名称:item?.name || log.name || '',
+        数量:
+          safeNumber(
+            log.qty ??
+            log.quantity ??
+            log.change_qty,
+            0
+          ),
+        备注:log.note || '',
+        操作人:
+          log.user_email ||
+          log.operator_email ||
+          log.email ||
+          ''
+      };
+    });
+
+  const ws =
+    XLSX.utils.json_to_sheet(data);
+
+  const wb =
+    XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    wb,
+    ws,
+    '库存流水'
+  );
+
+  const output =
+    XLSX.write(
+      wb,
+      {
+        bookType:'xlsx',
+        type:'array'
+      }
+    );
+
+  downloadBlob(
+    new Blob(
+      [output],
+      {
+        type:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      }
+    ),
+    `库存流水_${new Date().toISOString().slice(0,10)}.xlsx`
+  );
+
+  showOk('流水导出成功');
+}
+
+
 /* =========================================================
-   退出
-   ========================================================= */
+   Realtime
+========================================================= */
 
-async function logout(){
+function setupRealtime(){
 
-  cleanupRealtime();
+  if(!APP.warehouse){
+    return;
+  }
+
+  if(APP.realtimeInventory){
+
+    try{
+      APP.sb.removeChannel(
+        APP.realtimeInventory
+      );
+    }catch(e){}
+
+    APP.realtimeInventory = null;
+  }
+
+  if(APP.realtimeLogs){
+
+    try{
+      APP.sb.removeChannel(
+        APP.realtimeLogs
+      );
+    }catch(e){}
+
+    APP.realtimeLogs = null;
+  }
+
+
+  APP.realtimeInventory =
+    APP.sb
+      .channel(
+        'inventory-' +
+        APP.warehouse.id
+      )
+      .on(
+        'postgres_changes',
+        {
+          event:'*',
+          schema:'public',
+          table:'inventory',
+          filter:
+            `warehouse_id=eq.${APP.warehouse.id}`
+        },
+        async () => {
+
+          await loadInventory();
+
+          renderHome();
+          renderInventoryList();
+
+        }
+      )
+      .subscribe();
+
+
+  APP.realtimeLogs =
+    APP.sb
+      .channel(
+        'logs-' +
+        APP.warehouse.id
+      )
+      .on(
+        'postgres_changes',
+        {
+          event:'*',
+          schema:'public',
+          table:'stock_logs',
+          filter:
+            `warehouse_id=eq.${APP.warehouse.id}`
+        },
+        async () => {
+
+          await loadLogs();
+
+          renderLogs();
+
+        }
+      )
+      .subscribe();
+}
+
+
+/* =========================================================
+   Auth 状态
+========================================================= */
+
+APP.sb.auth.onAuthStateChange(
+  async (event,session)=>{
+
+    console.log(
+      'Auth event:',
+      event
+    );
+
+    if(session?.user){
+
+      APP.user =
+        session.user;
+
+      /*
+       * RECOVERY 时也允许进入 App。
+       * 这样邮箱确认 / 密码恢复链接
+       * 不会因为前端判断而卡死。
+       */
+
+      if(
+        event === 'SIGNED_IN' ||
+        event === 'INITIAL_SESSION' ||
+        event === 'PASSWORD_RECOVERY'
+      ){
+
+        setTimeout(
+          ()=>{
+            bootApp();
+          },
+          100
+        );
+      }
+
+    }else{
+
+      APP.user = null;
+
+      if(event === 'SIGNED_OUT'){
+
+        $('appPage').classList.add('hidden');
+        $('authPage').classList.remove('hidden');
+
+      }
+    }
+  }
+);
+
+
+/* =========================================================
+   页面初始化
+========================================================= */
+
+(async function init(){
+
+  console.log(
+    'Smart Warehouse',
+    APP_VERSION
+  );
 
   try{
 
-    await APP.sb.auth.signOut();
+    const {data} =
+      await APP.sb.auth.getSession();
 
-  }catch(e){
+    if(data.session){
 
-    showRealError(
-      '退出失败',
-      e
-    );
+      APP.user =
+        data.session.user;
+
+      await bootApp();
+
+    }else{
+
+      $('authPage').classList.remove('hidden');
+      $('appPage').classList.add('hidden');
+
+    }
+
+  }catch(error){
+
+    console.error(error);
+
+    $('authPage').classList.remove('hidden');
+    $('appPage').classList.add('hidden');
+
   }
-}
 
-/* =========================================================
-   页面离开
-   ========================================================= */
-
-window.addEventListener(
-  'beforeunload',
-  cleanupRealtime
-);
-
-window.addEventListener(
-  'load',
-  ()=>boot()
-);
-
+})();
 </script>
 
 </body>
