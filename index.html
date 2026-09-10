@@ -1,16 +1,15 @@
 <!doctype html>
+
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#2563eb">
-<title>智能仓库管理系统 V2.1</title>
-
+<title>智能仓库管理系统 V2.1 诊断版</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-
 <style>
 body{
   background:#f5f7fb;
@@ -40,26 +39,22 @@ input,button,select,textarea{
 }
 </style>
 </head>
-
 <body class="text-gray-900">
-
 <div id="app"></div>
-
 <script>
 'use strict';
-
 /* =========================================================
    智能仓库管理系统 V2.1
+   诊断版
    ========================================================= */
-
-/* 你的 Supabase 云端配置 */
+const APP_VERSION = 'V2.1-DIAG-20260909';
+/* =========================================================
+   Supabase 云端配置
+   ========================================================= */
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
-
 const SUPABASE_KEY =
   'sb_publishable_njvb3co4PlkaWTAphXSW4g_IdSynRe';
-
-
 const APP = {
   sb:null,
   user:null,
@@ -71,21 +66,14 @@ const APP = {
   page:'home',
   authMode:'login',
   stockType:'in',
-
   realtime:null,
-
   scanner:null,
   scannerRunning:false,
   scannerMode:null,
-
   recovery:false,
   booting:false
 };
-
-
 const $ = id => document.getElementById(id);
-
-
 const esc = s =>
   String(s ?? '').replace(/[&<>'"]/g,c=>({
     '&':'&amp;',
@@ -94,115 +82,71 @@ const esc = s =>
     "'":'&#39;',
     '"':'&quot;'
   }[c]));
-
-
 function showError(msg){
   alert(msg || '操作失败');
 }
-
-
 function showRealError(prefix,e){
-
   console.error(prefix,e);
-
   let m =
     e?.message ||
     e?.error_description ||
     e?.details ||
     '未知错误';
-
   if(e?.hint){
     m += '\n提示：'+e.hint;
   }
-
   if(e?.code){
     m += '\n代码：'+e.code;
   }
-
+  if(e?.status){
+    m += '\nHTTP状态：'+e.status;
+  }
   showError(prefix+'\n'+m);
 }
-
-
 /* =========================================================
    Supabase
    ========================================================= */
-
 function getConfig(){
-
   return {
     url:SUPABASE_URL.trim().replace(/\/$/,''),
     key:SUPABASE_KEY.trim()
   };
-
 }
-
-
-/*
-  邮件确认、密码重置都返回当前 GitHub Pages 页面。
-*/
 function getRedirectUrl(){
-
   const u = new URL(window.location.href);
-
   u.search='';
   u.hash='';
-
   return u.toString();
 }
-
-
 function isRecoveryLink(){
-
   const raw=(location.hash||'').replace(/^#/,'');
-
   if(!raw)return false;
-
   try{
-
     const p=new URLSearchParams(raw);
-
     return p.get('type')==='recovery';
-
   }catch(e){
-
     return false;
-
   }
 }
-
-
 function cleanRecoveryUrl(){
-
   try{
-
     const u=new URL(window.location.href);
-
     u.hash='';
     u.search='';
-
     history.replaceState(
       {},
       document.title,
       u.toString()
     );
-
   }catch(e){}
-
 }
-
-
 function rpcValue(data){
-
   if(data==null)return null;
-
   if(typeof data==='string')
     return data;
-
   if(Array.isArray(data))
     return rpcValue(data[0]);
-
   if(typeof data==='object'){
-
     return (
       data.id ||
       data.warehouse_id ||
@@ -211,26 +155,24 @@ function rpcValue(data){
       data.value ||
       null
     );
-
   }
-
   return null;
 }
-
-
 function initSupabase(){
-
   const c=getConfig();
-
   if(!c.url || !c.key){
-
     renderAuth();
-
     return false;
   }
-
   try{
-
+    if(
+      !window.supabase ||
+      !window.supabase.createClient
+    ){
+      throw new Error(
+        'Supabase JS组件没有加载成功，请检查网络连接。'
+      );
+    }
     APP.sb =
       window.supabase.createClient(
         c.url,
@@ -243,150 +185,160 @@ function initSupabase(){
           }
         }
       );
-
     return true;
-
   }catch(e){
-
     showRealError(
       '云端初始化失败',
       e
     );
-
     return false;
   }
 }
-
-
 /* =========================================================
-   登录
+   云端连接诊断
    ========================================================= */
 async function testSupabaseConnection(){
-
-  const result = document.getElementById('connectionResult');
-
+  const result =
+    document.getElementById(
+      'connectionResult'
+    );
+  const button =
+    document.getElementById(
+      'connectionButton'
+    );
   if(result){
-    result.textContent = '正在测试云端连接……';
+    result.textContent =
+      '正在测试云端连接……';
     result.className =
-      'mt-3 text-center text-sm text-blue-600';
+      'mt-3 text-center text-sm text-blue-600 font-bold';
   }
-
+  if(button){
+    button.disabled=true;
+    button.textContent=
+      '正在测试……';
+  }
   try{
-
-    const response = await fetch(
-      SUPABASE_URL + '/auth/v1/settings',
-      {
-        method:'GET',
-        headers:{
-          'apikey':SUPABASE_KEY
+    const url =
+      SUPABASE_URL.trim().replace(/\/$/,'');
+    const key =
+      SUPABASE_KEY.trim();
+    const response =
+      await fetch(
+        url + '/auth/v1/settings',
+        {
+          method:'GET',
+          headers:{
+            'apikey':key,
+            'Authorization':
+              'Bearer '+key
+          },
+          cache:'no-store'
         }
+      );
+    const text =
+      await response.text();
+    console.log(
+      'Supabase诊断:',
+      {
+        url:url,
+        status:response.status,
+        response:text
       }
     );
-
-    const text = await response.text();
-
-    console.log(
-      'Supabase测试:',
-      response.status,
-      text
-    );
-
     if(response.ok){
-
       if(result){
-        result.textContent =
-          '✅ 云端连接正常！API Key 有效';
+        result.innerHTML =
+          '✅ 云端连接正常！<br>' +
+          'HTTP '+response.status+
+          ' · API Key 有效';
         result.className =
           'mt-3 text-center text-sm text-green-600 font-bold';
       }
-
-      return;
+    }else{
+      let detail=text;
+      try{
+        const j=JSON.parse(text);
+        detail =
+          j.message ||
+          j.error_description ||
+          j.error ||
+          text;
+      }catch(e){}
+      if(result){
+        result.innerHTML =
+          '❌ 云端返回错误<br>' +
+          'HTTP '+response.status+
+          '<br><span class="font-normal break-words">'+
+          esc(detail.slice(0,500))+
+          '</span>';
+        result.className =
+          'mt-3 text-center text-sm text-red-600 font-bold';
+      }
     }
-
-    if(result){
-      result.textContent =
-        '❌ 云端返回错误：HTTP ' +
-        response.status +
-        ' · ' +
-        text.slice(0,200);
-
-      result.className =
-        'mt-3 text-center text-sm text-red-600 font-bold';
-    }
-
   }catch(e){
-
-    console.error(e);
-
+    console.error(
+      'Supabase连接测试失败',
+      e
+    );
     if(result){
-      result.textContent =
-        '❌ 网络连接失败：' +
-        (e.message || e);
-
+      result.innerHTML =
+        '❌ 网络连接失败<br>' +
+        '<span class="font-normal">'+
+        esc(e.message || String(e))+
+        '</span>';
       result.className =
         'mt-3 text-center text-sm text-red-600 font-bold';
     }
-
+  }
+  if(button){
+    button.disabled=false;
+    button.textContent=
+      '🔧 再次测试云端连接';
   }
 }
+/* =========================================================
+   登录
+   ========================================================= */
 function renderAuth(){
-
   $('app').innerHTML=`
-
   <div class="min-h-screen flex items-center justify-center p-5">
-
     <div class="card w-full max-w-md p-6">
-
       <div class="text-center mb-6">
-
         <div class="text-4xl mb-2">
           📦
         </div>
-
         <h1 class="text-2xl font-bold">
           智能仓库管理系统
         </h1>
-
         <p class="text-gray-500 mt-2">
           云端共享 · 手机扫码 · 多人协作
         </p>
-
+        <div class="text-xs text-gray-400 mt-2">
+          ${APP_VERSION}
+        </div>
       </div>
-
-
       <div
         id="authMsg"
         class="hidden mb-4 rounded-xl p-3 text-sm">
       </div>
-
-
       <div class="space-y-3">
-
         <input
           id="authEmail"
           type="email"
           autocomplete="email"
           placeholder="邮箱"
           class="w-full border rounded-xl px-4 py-3">
-
-
         <input
           id="authPwd"
           type="password"
           autocomplete="${APP.authMode==='login'?'current-password':'new-password'}"
           placeholder="密码（至少6位）"
           class="w-full border rounded-xl px-4 py-3">
-
-
         <button
           onclick="authSubmit()"
           class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold">
-
           ${APP.authMode==='login'?'登录':'注册'}
-
         </button>
-
-
         ${
           APP.authMode==='login'
           ?
@@ -394,20 +346,15 @@ function renderAuth(){
           <button
             onclick="showResetRequest()"
             class="w-full text-blue-600 py-2">
-
             忘记密码？
-
           </button>
           `
           :
           ''
         }
-
-
         <button
           onclick="toggleAuth()"
           class="w-full border rounded-xl py-3">
-
           ${
             APP.authMode==='login'
             ?
@@ -415,47 +362,40 @@ function renderAuth(){
             :
             '已有账号？登录'
           }
-
         </button>
-
-
-        <div class="text-center text-xs text-gray-400 pt-2">
-
-          云端已连接
-
+        <!-- 云端连接测试 -->
+        <button
+          id="connectionButton"
+          onclick="testSupabaseConnection()"
+          class="w-full border border-blue-200 text-blue-600 rounded-xl py-3 mt-2">
+          🔧 测试云端连接
+        </button>
+        <div
+          id="connectionResult"
+          class="mt-3 text-center text-sm text-gray-500">
+          尚未测试云端连接
         </div>
-
+        <div class="text-center text-xs text-gray-400 pt-2">
+          当前版本：${APP_VERSION}
+        </div>
       </div>
-
     </div>
-
   </div>
-
   `;
 }
-
-
 function toggleAuth(){
-
   APP.authMode =
     APP.authMode==='login'
     ?
     'register'
     :
     'login';
-
   renderAuth();
 }
-
-
 function authMsg(text,ok=false){
-
   const e=$('authMsg');
-
   if(!e)return;
-
   e.textContent=text;
-
   e.className =
     'mb-4 rounded-xl p-3 text-sm '+
     (
@@ -466,120 +406,69 @@ function authMsg(text,ok=false){
       'bg-red-50 text-red-700'
     );
 }
-
-
 async function authSubmit(){
-
   if(!APP.sb){
-
     showError('云端尚未连接');
-
     return;
   }
-
-
-  const email=$('authEmail')?.value.trim();
-
-  const pwd=$('authPwd')?.value;
-
-
+  const email=
+    $('authEmail')?.value.trim();
+  const pwd=
+    $('authPwd')?.value;
   if(!email)
     return authMsg('请输入邮箱');
-
-
   if(!pwd)
     return authMsg('请输入密码');
-
-
   if(pwd.length<6)
     return authMsg('密码至少6位');
-
-
   try{
-
-    /* 注册 */
-
     if(APP.authMode==='register'){
-
       const r =
         await APP.sb.auth.signUp({
-
           email,
-
           password:pwd,
-
           options:{
-            emailRedirectTo:getRedirectUrl()
+            emailRedirectTo:
+              getRedirectUrl()
           }
-
         });
-
-
       if(r.error)
         throw r.error;
-
-
       if(r.data?.session){
-
         authMsg(
           '注册成功，正在进入系统……',
           true
         );
-
         APP.user=r.data.user;
-
         await bootUser();
-
       }else{
-
         authMsg(
           '注册成功！如果系统要求邮箱确认，请打开邮箱确认。确认后返回这里，用刚才设置的密码登录。',
           true
         );
-
       }
-
-
       return;
     }
-
-
-    /* 登录 */
-
     const r =
       await APP.sb.auth.signInWithPassword({
-
         email,
-
         password:pwd
-
       });
-
-
     if(r.error){
-
-      if(r.error.code==='invalid_credentials'){
-
+      if(
+        r.error.code===
+        'invalid_credentials'
+      ){
         throw new Error(
           '邮箱或密码不正确。\n\n' +
-          '你的账号已经存在并且邮箱已经确认。\n' +
-          '如果忘记密码，请点击“忘记密码？”重新设置密码。'
+          '如果你确定密码正确，请点击“忘记密码？”重新设置密码。'
         );
-
       }
-
       throw r.error;
-
     }
-
-
     APP.user=r.data.user;
-
     await bootUser();
-
-
   }catch(e){
-
     showRealError(
       APP.authMode==='register'
       ?
@@ -588,87 +477,54 @@ async function authSubmit(){
       '登录失败',
       e
     );
-
   }
 }
-
-
 /* =========================================================
    忘记密码
    ========================================================= */
-
 function showResetRequest(){
-
   $('app').innerHTML=`
-
   <div class="min-h-screen flex items-center justify-center p-5">
-
     <div class="card w-full max-w-md p-6">
-
       <div class="text-center mb-5">
-
         <div class="text-4xl">
           🔐
         </div>
-
         <h1 class="text-2xl font-bold mt-2">
           重置密码
         </h1>
-
         <p class="text-gray-500 mt-2">
           输入注册邮箱，我们会发送密码重置邮件。
         </p>
-
       </div>
-
-
       <div
         id="resetMsg"
         class="hidden mb-4 rounded-xl p-3 text-sm">
       </div>
-
-
       <input
         id="resetEmail"
         type="email"
         autocomplete="email"
         placeholder="注册邮箱"
         class="w-full border rounded-xl px-4 py-3">
-
-
       <button
         onclick="sendResetEmail()"
         class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold mt-3">
-
         发送重置邮件
-
       </button>
-
-
       <button
         onclick="renderAuth()"
         class="w-full border rounded-xl py-3 mt-3">
-
         返回登录
-
       </button>
-
     </div>
-
   </div>
-
   `;
 }
-
-
 function resetMsg(text,ok=false){
-
   const e=$('resetMsg');
-
   if(!e)return;
-
   e.textContent=text;
-
   e.className =
     'mb-4 rounded-xl p-3 text-sm '+
     (
@@ -679,18 +535,12 @@ function resetMsg(text,ok=false){
       'bg-red-50 text-red-700'
     );
 }
-
-
 async function sendResetEmail(){
-
-  const email=$('resetEmail')?.value.trim();
-
+  const email=
+    $('resetEmail')?.value.trim();
   if(!email)
     return resetMsg('请输入邮箱');
-
-
   try{
-
     const r =
       await APP.sb.auth.resetPasswordForEmail(
         email,
@@ -698,108 +548,68 @@ async function sendResetEmail(){
           redirectTo:getRedirectUrl()
         }
       );
-
-
     if(r.error)
       throw r.error;
-
-
     resetMsg(
-      '重置邮件已发送。请打开邮箱并点击邮件链接。打开后会显示“设置新密码”。',
+      '重置邮件已发送。请打开邮箱并点击邮件链接。',
       true
     );
-
-
   }catch(e){
-
     showRealError(
       '发送重置邮件失败',
       e
     );
-
   }
 }
-
-
 /* =========================================================
    设置新密码
    ========================================================= */
-
 function renderRecovery(){
-
   $('app').innerHTML=`
-
   <div class="min-h-screen flex items-center justify-center p-5">
-
     <div class="card w-full max-w-md p-6">
-
       <div class="text-center mb-5">
-
         <div class="text-4xl">
           🔑
         </div>
-
         <h1 class="text-2xl font-bold mt-2">
           设置新密码
         </h1>
-
         <p class="text-gray-500 mt-2">
           请设置一个新的登录密码。
         </p>
-
       </div>
-
-
       <div
         id="recoveryMsg"
         class="hidden mb-4 rounded-xl p-3 text-sm">
       </div>
-
-
       <div class="space-y-3">
-
         <input
           id="newPwd"
           type="password"
           autocomplete="new-password"
           placeholder="新密码（至少6位）"
           class="w-full border rounded-xl px-4 py-3">
-
-
         <input
           id="newPwd2"
           type="password"
           autocomplete="new-password"
           placeholder="再次输入新密码"
           class="w-full border rounded-xl px-4 py-3">
-
-
         <button
           onclick="updateRecoveryPassword()"
           class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold">
-
           保存新密码
-
         </button>
-
       </div>
-
     </div>
-
   </div>
-
   `;
 }
-
-
 function recoveryMsg(text,ok=false){
-
   const e=$('recoveryMsg');
-
   if(!e)return;
-
   e.textContent=text;
-
   e.className =
     'mb-4 rounded-xl p-3 text-sm '+
     (
@@ -810,50 +620,36 @@ function recoveryMsg(text,ok=false){
       'bg-red-50 text-red-700'
     );
 }
-
-
 async function updateRecoveryPassword(){
-
-  const p1=$('newPwd')?.value || '';
-
-  const p2=$('newPwd2')?.value || '';
-
-
+  const p1=
+    $('newPwd')?.value || '';
+  const p2=
+    $('newPwd2')?.value || '';
   if(p1.length<6)
-    return recoveryMsg('新密码至少6位');
-
-
+    return recoveryMsg(
+      '新密码至少6位'
+    );
   if(p1!==p2)
-    return recoveryMsg('两次输入的密码不一致');
-
-
+    return recoveryMsg(
+      '两次输入的密码不一致'
+    );
   try{
-
     const r =
       await APP.sb.auth.updateUser({
         password:p1
       });
-
-
     if(r.error)
       throw r.error;
-
-
     APP.recovery=false;
-
-    APP.user=r.data?.user || APP.user;
-
+    APP.user=
+      r.data?.user ||
+      APP.user;
     cleanRecoveryUrl();
-
-
     recoveryMsg(
       '密码修改成功！正在进入仓库……',
       true
     );
-
-
     setTimeout(async()=>{
-
       try{
         await bootUser();
       }catch(e){
@@ -862,183 +658,113 @@ async function updateRecoveryPassword(){
           e
         );
       }
-
     },800);
-
-
   }catch(e){
-
     showRealError(
       '修改密码失败',
       e
     );
-
   }
 }
-
-
 /* =========================================================
    登录后修改密码
    ========================================================= */
-
 function changePasswordDialog(){
-
   modal(
     '修改登录密码',
-
     `
     <div class="space-y-3">
-
       <input
         id="changePwd1"
         type="password"
         autocomplete="new-password"
         placeholder="新密码（至少6位）"
         class="w-full border rounded-xl px-4 py-3">
-
-
       <input
         id="changePwd2"
         type="password"
         autocomplete="new-password"
         placeholder="再次输入新密码"
         class="w-full border rounded-xl px-4 py-3">
-
-
       <button
         onclick="changePassword()"
         class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold">
-
         保存新密码
-
       </button>
-
     </div>
     `
   );
 }
-
-
 async function changePassword(){
-
-  const p1=$('changePwd1')?.value || '';
-
-  const p2=$('changePwd2')?.value || '';
-
-
+  const p1=
+    $('changePwd1')?.value || '';
+  const p2=
+    $('changePwd2')?.value || '';
   if(p1.length<6)
-    return showError('新密码至少6位');
-
-
+    return showError(
+      '新密码至少6位'
+    );
   if(p1!==p2)
-    return showError('两次密码不一致');
-
-
+    return showError(
+      '两次密码不一致'
+    );
   try{
-
     const r =
       await APP.sb.auth.updateUser({
         password:p1
       });
-
-
     if(r.error)
       throw r.error;
-
-
     closeModal();
-
     alert(
       '密码修改成功。\n以后请使用新密码登录。'
     );
-
-
   }catch(e){
-
     showRealError(
       '修改密码失败',
       e
     );
-
   }
 }
-
-
 /* =========================================================
    系统启动
    ========================================================= */
-
 async function boot(){
-
   if(APP.booting)
     return;
-
   APP.booting=true;
-
-
   if(!initSupabase()){
-
     APP.booting=false;
-
     return;
   }
-
-
   if(isRecoveryLink()){
-
     APP.recovery=true;
-
   }
-
-
   APP.sb.auth.onAuthStateChange(
     (event,session)=>{
-
       console.log(
         'Supabase Auth:',
         event
       );
-
-
-      /* 密码恢复 */
-
       if(event==='PASSWORD_RECOVERY'){
-
         APP.recovery=true;
-
         APP.user =
           session?.user ||
           APP.user;
-
-
         setTimeout(()=>{
-
           if(APP.user)
             renderRecovery();
-
         },0);
-
-
         return;
       }
-
-
-      /* 有登录 session */
-
       if(session?.user){
-
         APP.user=session.user;
-
-
         if(APP.recovery){
-
           setTimeout(
             ()=>renderRecovery(),
             0
           );
-
         }else{
-
           setTimeout(
             ()=>{
               bootUser().catch(
@@ -1050,144 +776,84 @@ async function boot(){
             },
             0
           );
-
         }
-
-
       }else if(event==='SIGNED_OUT'){
-
         APP.user=null;
-
         APP.warehouse=null;
-
         cleanupRealtime();
-
         APP.recovery=false;
-
         renderAuth();
-
       }
-
     }
   );
-
-
   try{
-
     const {
       data:{session},
       error
     } =
       await APP.sb.auth.getSession();
-
-
     if(error)
       throw error;
-
-
-    /* 密码恢复页面 */
-
-    if(APP.recovery || isRecoveryLink()){
-
+    if(
+      APP.recovery ||
+      isRecoveryLink()
+    ){
       APP.recovery=true;
-
-
       if(session?.user){
-
         APP.user=session.user;
-
         renderRecovery();
-
       }else{
-
         renderAuth();
-
         authMsg(
           '密码重置链接已失效，请重新发送一封重置邮件。'
         );
-
       }
-
-
       APP.booting=false;
-
       return;
     }
-
-
-    /* 正常登录 */
-
     if(session?.user){
-
       APP.user=session.user;
-
       await bootUser();
-
     }else{
-
       renderAuth();
-
     }
-
-
   }catch(e){
-
     showRealError(
       '系统启动失败',
       e
     );
-
     renderAuth();
-
   }
-
-
   APP.booting=false;
 }
-
-
 /* =========================================================
    用户
    ========================================================= */
-
 async function bootUser(){
-
   if(!APP.user || !APP.sb)
     return;
-
-
   await loadWarehouses();
-
-
-  if(!APP.warehouse && APP.warehouses.length){
-
-    APP.warehouse=APP.warehouses[0];
-
+  if(
+    !APP.warehouse &&
+    APP.warehouses.length
+  ){
+    APP.warehouse=
+      APP.warehouses[0];
     APP.role=
       APP.warehouse.role ||
       'member';
-
-
     await Promise.all([
       loadInventory(),
       loadLogs()
     ]);
-
-
     setupRealtime();
   }
-
-
   renderApp();
 }
-
-
 /* =========================================================
    仓库
    ========================================================= */
-
 async function loadWarehouses(){
-
   const {
     data:m,
     error:me
@@ -1195,29 +861,21 @@ async function loadWarehouses(){
     await APP.sb
       .from('warehouse_members')
       .select('warehouse_id,role')
-      .eq('user_id',APP.user.id);
-
-
+      .eq(
+        'user_id',
+        APP.user.id
+      );
   if(me)
     throw me;
-
-
   const ids =
     (m||[])
       .map(x=>x.warehouse_id)
       .filter(Boolean);
-
-
   if(!ids.length){
-
     APP.warehouses=[];
-
     APP.warehouse=null;
-
     return;
   }
-
-
   const {
     data:w,
     error:we
@@ -1226,102 +884,64 @@ async function loadWarehouses(){
       .from('warehouses')
       .select('*')
       .in('id',ids);
-
-
   if(we)
     throw we;
-
-
   APP.warehouses =
     (w||[]).map(x=>({
-
       ...x,
-
       role:
         (m||[])
           .find(
-            mm=>mm.warehouse_id===x.id
+            mm=>
+              mm.warehouse_id===x.id
           )?.role ||
         'member'
-
     }));
-
-
   if(APP.warehouse){
-
     const nw =
       APP.warehouses.find(
-        x=>x.id===APP.warehouse.id
+        x=>
+          x.id===
+          APP.warehouse.id
       );
-
-
     APP.warehouse=nw||null;
-
-
     if(!nw)
       cleanupRealtime();
-
   }
 }
-
-
 async function selectWarehouse(id){
-
   const w =
     APP.warehouses.find(
       x=>x.id===id
     );
-
-
   if(!w)
     return;
-
-
   cleanupRealtime();
-
-
   APP.warehouse=w;
-
   APP.role=w.role||'member';
-
   APP.page='home';
-
-
   try{
-
     await Promise.all([
       loadInventory(),
       loadLogs()
     ]);
-
-
     setupRealtime();
-
     renderApp();
-
-
   }catch(e){
-
     showRealError(
       '读取仓库数据失败',
       e
     );
-
   }
 }
-
-
 async function createWarehouse(){
-
-  const name=$('whName')?.value.trim();
-
-
+  const name=
+    $('whName')?.value.trim();
   if(!name)
-    return showError('请输入仓库名称');
-
-
+    return showError(
+      '请输入仓库名称'
+    );
   try{
-
     const r =
       await APP.sb.rpc(
         'create_warehouse',
@@ -1329,76 +949,46 @@ async function createWarehouse(){
           p_name:name
         }
       );
-
-
     if(r.error)
       throw r.error;
-
-
-    const id=rpcValue(r.data);
-
-
+    const id=
+      rpcValue(r.data);
     await loadWarehouses();
-
-
     let w =
       id &&
       APP.warehouses.find(
         x=>x.id===id
       );
-
-
     if(!w){
-
       w =
         APP.warehouses.find(
           x=>x.name===name
         );
-
     }
-
-
     closeModal();
-
-
     if(w){
-
       await selectWarehouse(w.id);
-
     }else{
-
       renderApp();
-
       alert(
         '仓库创建成功，请重新选择仓库。'
       );
-
     }
-
   }catch(e){
-
     showRealError(
       '创建仓库失败',
       e
     );
-
   }
 }
-
-
 async function joinWarehouse(){
-
-  const code=$('joinCode')?.value.trim();
-
-
+  const code=
+    $('joinCode')?.value.trim();
   if(!/^\d{6}$/.test(code))
     return showError(
       '请输入6位数字邀请码'
     );
-
-
   try{
-
     const r =
       await APP.sb.rpc(
         'join_warehouse',
@@ -1406,63 +996,38 @@ async function joinWarehouse(){
           p_join_code:code
         }
       );
-
-
     if(r.error)
       throw r.error;
-
-
-    const id=rpcValue(r.data);
-
-
+    const id=
+      rpcValue(r.data);
     await loadWarehouses();
-
-
     const w =
       id &&
       APP.warehouses.find(
         x=>x.id===id
       );
-
-
     closeModal();
-
-
     if(w){
-
       await selectWarehouse(w.id);
-
     }else{
-
       renderApp();
-
       alert(
         '加入成功，请重新选择仓库。'
       );
-
     }
-
   }catch(e){
-
     showRealError(
       '加入仓库失败',
       e
     );
-
   }
 }
-
-
 /* =========================================================
    库存
    ========================================================= */
-
 async function loadInventory(){
-
   if(!APP.warehouse)
     return;
-
-
   const {
     data,
     error
@@ -1480,22 +1045,13 @@ async function loadInventory(){
           ascending:false
         }
       );
-
-
   if(error)
     throw error;
-
-
   APP.inventory=data||[];
 }
-
-
 async function loadLogs(){
-
   if(!APP.warehouse)
     return;
-
-
   const {
     data,
     error
@@ -1514,32 +1070,19 @@ async function loadLogs(){
         }
       )
       .limit(200);
-
-
   if(error)
     throw error;
-
-
   APP.logs=data||[];
 }
-
-
 /* =========================================================
    实时同步
    ========================================================= */
-
 function setupRealtime(){
-
   cleanupRealtime();
-
-
   if(!APP.warehouse)
     return;
-
-
-  const wid=APP.warehouse.id;
-
-
+  const wid=
+    APP.warehouse.id;
   APP.realtime =
     APP.sb
       .channel(
@@ -1548,7 +1091,6 @@ function setupRealtime(){
         '-'+
         Date.now()
       )
-
       .on(
         'postgres_changes',
         {
@@ -1560,7 +1102,6 @@ function setupRealtime(){
             wid
         },
         ()=>{
-
           loadInventory()
             .then(
               ()=>renderApp()
@@ -1571,10 +1112,8 @@ function setupRealtime(){
                 e
               )
             );
-
         }
       )
-
       .on(
         'postgres_changes',
         {
@@ -1586,7 +1125,6 @@ function setupRealtime(){
             wid
         },
         ()=>{
-
           loadLogs()
             .then(
               ()=>renderApp()
@@ -1597,100 +1135,65 @@ function setupRealtime(){
                 e
               )
             );
-
         }
       )
-
       .subscribe();
-
 }
-
-
 function cleanupRealtime(){
-
-  if(APP.realtime && APP.sb){
-
+  if(
+    APP.realtime &&
+    APP.sb
+  ){
     try{
-
       APP.sb.removeChannel(
         APP.realtime
       );
-
     }catch(e){}
-
     APP.realtime=null;
   }
 }
-
-
 /* =========================================================
    页面
    ========================================================= */
-
 function roleName(r){
-
   if(r==='owner')
     return '所有者';
-
   if(r==='admin')
     return '管理员';
-
   return '成员';
 }
-
-
 function isAdmin(){
-
   return (
     APP.role==='owner' ||
     APP.role==='admin'
   );
-
 }
-
-
 function renderApp(){
-
   if(!APP.user){
-
     renderAuth();
-
     return;
   }
-
-
-  const wh=APP.warehouse;
-
-
+  const wh=
+    APP.warehouse;
   $('app').innerHTML=`
-
   <div class="min-h-screen pb-24">
-
     <header
       class="bg-white border-b sticky top-0 z-20">
-
       <div
         class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-
         <div class="min-w-0">
-
           <div
             class="font-bold text-lg truncate">
-
             📦 ${esc(
               wh?.name ||
               '智能仓库'
             )}
-
           </div>
-
           <div
             class="text-xs text-gray-500 truncate">
-
             ${esc(
               APP.user.email || ''
             )}
-
             ${
               wh
               ?
@@ -1698,16 +1201,11 @@ function renderApp(){
               :
               ''
             }
-
           </div>
-
         </div>
-
-
         <button
           onclick="openWarehousePicker()"
           class="border rounded-xl px-3 py-2 text-sm whitespace-nowrap">
-
           ${
             wh
             ?
@@ -1715,26 +1213,17 @@ function renderApp(){
             :
             '选择仓库'
           }
-
         </button>
-
       </div>
-
     </header>
-
-
     <main
       class="max-w-5xl mx-auto p-4"
       id="main">
     </main>
-
-
     <nav
       class="fixed bottom-0 inset-x-0 bg-white border-t safe z-30">
-
       <div
         class="max-w-5xl mx-auto grid grid-cols-5 text-xs">
-
         <button
           onclick="go('home')"
           class="py-3 ${
@@ -1744,12 +1233,8 @@ function renderApp(){
             :
             ''
           }">
-
           🏠<br>首页
-
         </button>
-
-
         <button
           onclick="go('inventory')"
           class="py-3 ${
@@ -1759,30 +1244,18 @@ function renderApp(){
             :
             ''
           }">
-
           📋<br>库存
-
         </button>
-
-
         <button
           onclick="openStock('in')"
           class="py-3 text-green-600 font-bold">
-
           ⬆️<br>入库
-
         </button>
-
-
         <button
           onclick="openStock('out')"
           class="py-3 text-orange-600 font-bold">
-
           ⬇️<br>出库
-
         </button>
-
-
         <button
           onclick="go('settings')"
           class="py-3 ${
@@ -1792,459 +1265,283 @@ function renderApp(){
             :
             ''
           }">
-
           ⚙️<br>设置
-
         </button>
-
       </div>
-
     </nav>
-
   </div>
-
   `;
-
-
   renderPage();
 }
-
-
 function go(p){
-
   APP.page=p;
-
   renderApp();
 }
-
-
 function renderPage(){
-
   const m=$('main');
-
-
   if(!APP.warehouse){
-
     m.innerHTML=
       emptyWarehouse();
-
     return;
   }
-
-
   if(APP.page==='home')
     m.innerHTML=homeHtml();
-
   else if(APP.page==='inventory')
     m.innerHTML=inventoryHtml();
-
   else if(APP.page==='logs')
     m.innerHTML=logsHtml();
-
   else
     m.innerHTML=settingsHtml();
-
-
   if(APP.page==='inventory'){
-
     setTimeout(
       renderInventoryList,
       0
     );
-
   }
 }
-
-
 /* =========================================================
    首页
    ========================================================= */
-
 function emptyWarehouse(){
-
   return `
-
   <div
     class="card p-6 text-center mt-5">
-
     <div class="text-5xl mb-3">
       🏭
     </div>
-
     <h2 class="text-xl font-bold">
       还没有选择仓库
     </h2>
-
     <p class="text-gray-500 my-3">
       创建新仓库或输入邀请码加入已有仓库。
     </p>
-
-
     <div class="grid grid-cols-2 gap-3">
-
       <button
         onclick="createWarehouseDialog()"
         class="bg-blue-600 text-white rounded-xl py-3">
-
         创建仓库
-
       </button>
-
-
       <button
         onclick="joinWarehouseDialog()"
         class="border rounded-xl py-3">
-
         加入仓库
-
       </button>
-
     </div>
-
   </div>
-
   `;
 }
-
-
 function homeHtml(){
-
   const total =
     APP.inventory.reduce(
       (a,x)=>
         a+(Number(x.qty)||0),
       0
     );
-
-
   const low =
     APP.inventory.filter(
       x=>
         Number(x.qty)<=
         Number(x.alert_qty||0)
     );
-
-
   return `
-
   <div class="grid grid-cols-2 gap-3">
-
     <div class="card p-4">
-
       <div class="text-gray-500 text-sm">
         SKU种类
       </div>
-
       <div class="text-3xl font-bold">
         ${APP.inventory.length}
       </div>
-
     </div>
-
-
     <div class="card p-4">
-
       <div class="text-gray-500 text-sm">
         库存总数
       </div>
-
       <div class="text-3xl font-bold">
         ${total}
       </div>
-
     </div>
-
-
     <div class="card p-4">
-
       <div class="text-gray-500 text-sm">
         低库存
       </div>
-
       <div class="text-3xl font-bold text-red-600">
         ${low.length}
       </div>
-
     </div>
-
-
     <div class="card p-4">
-
       <div class="text-gray-500 text-sm">
         操作记录
       </div>
-
       <div class="text-3xl font-bold">
         ${APP.logs.length}
       </div>
-
     </div>
-
   </div>
-
-
   <div class="grid grid-cols-2 gap-3 mt-4">
-
     <button
       onclick="openStock('in')"
       class="card p-5 text-left">
-
       <div class="text-3xl">
         ⬆️
       </div>
-
       <b>快速入库</b>
-
       <div class="text-sm text-gray-500">
         支持扫码
       </div>
-
     </button>
-
-
     <button
       onclick="openStock('out')"
       class="card p-5 text-left">
-
       <div class="text-3xl">
         ⬇️
       </div>
-
       <b>快速出库</b>
-
       <div class="text-sm text-gray-500">
         支持扫码
       </div>
-
     </button>
-
-
     <button
       onclick="openScanner('find')"
       class="card p-5 text-left">
-
       <div class="text-3xl">
         🔎
       </div>
-
       <b>扫码找货</b>
-
       <div class="text-sm text-gray-500">
         查SKU和货位
       </div>
-
     </button>
-
-
     <button
       onclick="openScanner('stock-in')"
       class="card p-5 text-left">
-
       <div class="text-3xl">
         📷
       </div>
-
       <b>扫码入库</b>
-
       <div class="text-sm text-gray-500">
         扫描后填写数量
       </div>
-
     </button>
-
   </div>
-
-
   <div class="card mt-4 p-4">
-
     <div class="flex justify-between items-center">
-
       <b>低库存提醒</b>
-
       <button
         onclick="go('inventory')"
         class="text-blue-600 text-sm">
-
         查看全部
-
       </button>
-
     </div>
-
-
     ${
       low.length
       ?
       low.slice(0,10).map(
         x=>`
-
         <div
           class="flex justify-between py-3 border-b last:border-0">
-
           <div>
-
             <b>
               ${esc(x.name)}
             </b>
-
             <div class="text-xs text-gray-500">
-
               SKU ${esc(x.sku)}
               ·
               货位 ${esc(x.bin||'未设置')}
-
             </div>
-
           </div>
-
           <span class="text-red-600 font-bold">
-
             ${x.qty}
-
           </span>
-
         </div>
-
         `
       ).join('')
-
       :
-
       `
       <div class="text-gray-500 py-4">
         暂无低库存商品
       </div>
       `
     }
-
   </div>
-
   `;
 }
-
-
 /* =========================================================
    库存
    ========================================================= */
-
 function inventoryHtml(){
-
   return `
-
   <div class="flex gap-2 mb-3">
-
     <button
       onclick="openItem()"
       class="flex-1 bg-blue-600 text-white rounded-xl py-3 font-bold">
-
       ＋新增商品
-
     </button>
-
-
     <button
       onclick="openImport('items')"
       class="flex-1 border rounded-xl py-3 font-bold">
-
       批量导入
-
     </button>
-
   </div>
-
-
   <div class="card p-3 mb-3">
-
     <input
       id="invSearch"
       oninput="renderInventoryList()"
       placeholder="搜索名称 / SKU / 货位 / SKU后3位"
       class="w-full border rounded-xl px-4 py-3">
-
   </div>
-
-
   <div id="inventoryList"></div>
-
   `;
 }
-
-
 function renderInventoryList(){
-
-  const box=$('inventoryList');
-
+  const box=
+    $('inventoryList');
   if(!box)return;
-
-
   const q =
     ($('invSearch')?.value||'')
       .trim()
       .toLowerCase();
-
-
   const arr =
     APP.inventory.filter(x=>
-
       !q ||
-
       String(x.name||'')
         .toLowerCase()
         .includes(q) ||
-
       String(x.sku||'')
         .toLowerCase()
         .includes(q) ||
-
       String(x.bin||'')
         .toLowerCase()
         .includes(q) ||
-
       String(x.sku||'')
         .slice(-3)
         .toLowerCase()===q
-
     );
-
-
   box.innerHTML =
     arr.length
     ?
     arr.map(x=>{
-
       const low =
         Number(x.qty)<=
         Number(x.alert_qty||0);
-
-
       return `
-
       <div class="card p-4 mb-3">
-
         <div class="flex justify-between gap-3">
-
           <div class="min-w-0">
-
             <b class="text-lg">
               ${esc(x.name)}
             </b>
-
             <div class="text-sm text-gray-500 mt-1">
               SKU：${esc(x.sku)}
             </div>
-
             <div class="text-sm text-gray-500">
               货位：
               <b>
                 ${esc(x.bin||'未设置')}
               </b>
             </div>
-
           </div>
-
-
           <div class="text-right">
-
             <div
               class="text-2xl font-bold ${
                 low
@@ -2253,11 +1550,8 @@ function renderInventoryList(){
                 :
                 ''
               }">
-
               ${x.qty}
-
             </div>
-
             <div
               class="text-xs ${
                 low
@@ -2266,116 +1560,68 @@ function renderInventoryList(){
                 :
                 'text-gray-500'
               }">
-
               ${low?'低库存':'库存'}
-
             </div>
-
           </div>
-
         </div>
-
-
         <div class="grid grid-cols-3 gap-2 mt-3">
-
           <button
             onclick="openStock('in','${esc(x.sku)}')"
             class="bg-green-50 text-green-700 rounded-lg py-2">
-
             入库
-
           </button>
-
-
           <button
             onclick="openStock('out','${esc(x.sku)}')"
             class="bg-orange-50 text-orange-700 rounded-lg py-2">
-
             出库
-
           </button>
-
-
           <button
             onclick="openItem('${x.id}')"
             class="border rounded-lg py-2">
-
             编辑
-
           </button>
-
         </div>
-
       </div>
-
       `;
-
     }).join('')
-
     :
-
     `
     <div class="card p-6 text-center text-gray-500">
       没有找到商品
     </div>
     `;
 }
-
-
 /* =========================================================
    日志
    ========================================================= */
-
 function logsHtml(){
-
   return `
-
   <div class="card p-4">
-
     <div class="flex justify-between">
-
       <b>操作记录</b>
-
       <button
         onclick="exportBackup()"
         class="text-blue-600 text-sm">
-
         备份
-
       </button>
-
     </div>
-
-
     ${
       APP.logs.length
       ?
-
       APP.logs.map(
         l=>`
-
         <div class="py-3 border-b last:border-0">
-
           <div class="flex justify-between">
-
             <b>
               ${l.type==='in'?'入库':'出库'}
               ${l.qty}
             </b>
-
             <span class="text-xs text-gray-500">
-
               ${fmt(l.created_at)}
-
             </span>
-
           </div>
-
-
           <div class="text-sm text-gray-600">
-
             SKU：${esc(l.sku||'')}
-
             ${
               l.note
               ?
@@ -2383,373 +1629,221 @@ function logsHtml(){
               :
               ''
             }
-
           </div>
-
         </div>
-
         `
       ).join('')
-
       :
-
       `
       <div class="py-6 text-gray-500 text-center">
         暂无记录
       </div>
       `
     }
-
   </div>
-
   `;
 }
-
-
 /* =========================================================
    设置
    ========================================================= */
-
 function settingsHtml(){
-
   return `
-
   <div class="space-y-3">
-
     <div class="card p-4">
-
       <b>账号</b>
-
       <div class="text-sm text-gray-500 mt-2">
-
         ${esc(APP.user.email||'')}
-
         ·
-
         ${roleName(APP.role)}
-
       </div>
-
     </div>
-
-
     <div class="card p-4">
-
       <b>当前仓库</b>
-
       <div class="mt-2">
-
         ${esc(APP.warehouse.name)}
-
       </div>
-
       <div class="text-sm text-gray-500 mt-1">
-
         邀请码：
-
         <b>
           ${esc(
             APP.warehouse.join_code||
             '未显示'
           )}
         </b>
-
       </div>
-
     </div>
-
-
     <button
       onclick="changePasswordDialog()"
       class="w-full card p-4 text-left">
-
       🔐 修改登录密码
-
     </button>
-
-
     ${
       isAdmin()
       ?
       `
-
       <div class="card p-4">
-
         <b>仓库管理</b>
-
         <div class="grid grid-cols-2 gap-2 mt-3">
-
           <button
             onclick="createWarehouseDialog()"
             class="border rounded-xl py-3">
-
             创建仓库
-
           </button>
-
-
           <button
             onclick="joinWarehouseDialog()"
             class="border rounded-xl py-3">
-
             加入仓库
-
           </button>
-
         </div>
-
       </div>
-
       `
       :
       ''
     }
-
-
     <button
       onclick="go('logs')"
       class="w-full card p-4 text-left">
-
       📜 操作日志
-
     </button>
-
-
     <button
       onclick="exportBackup()"
       class="w-full card p-4 text-left">
-
       💾 导出云端备份
-
     </button>
-
-
     <button
       onclick="logout()"
       class="w-full bg-red-600 text-white rounded-xl py-3 font-bold">
-
       退出登录
-
     </button>
-
   </div>
-
   `;
 }
-
-
 /* =========================================================
    弹窗
    ========================================================= */
-
 function fmt(v){
-
   try{
-
     return new Date(v)
       .toLocaleString('zh-CN');
-
   }catch(e){
-
     return v||'';
-
   }
 }
-
-
 function modal(title,body){
-
   closeModal();
-
-
   const d=
     document.createElement('div');
-
-
   d.id='modal';
-
   d.className=
     'fixed inset-0 z-50 modal-bg flex items-end sm:items-center justify-center p-3';
-
-
   d.innerHTML=`
-
     <div
       class="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-auto p-5">
-
       <div class="flex justify-between items-center mb-4">
-
         <h2 class="text-xl font-bold">
           ${title}
         </h2>
-
         <button
           onclick="closeModal()"
           class="text-2xl">
-
           ×
-
         </button>
-
       </div>
-
       ${body}
-
     </div>
-
   `;
-
-
   document.body.appendChild(d);
 }
-
-
 function closeModal(){
-
   document
     .getElementById('modal')
     ?.remove();
-
 }
-
-
 function createWarehouseDialog(){
-
   modal(
     '创建仓库',
-
     `
-
     <input
       id="whName"
       class="w-full border rounded-xl px-4 py-3"
       placeholder="仓库名称">
-
-
     <button
       onclick="createWarehouse()"
       class="w-full bg-blue-600 text-white rounded-xl py-3 mt-3 font-bold">
-
       创建
-
     </button>
-
     `
   );
 }
-
-
 function joinWarehouseDialog(){
-
   modal(
     '加入仓库',
-
     `
-
     <input
       id="joinCode"
       maxlength="6"
       inputmode="numeric"
       class="w-full border rounded-xl px-4 py-3"
       placeholder="输入6位邀请码">
-
-
     <button
       onclick="joinWarehouse()"
       class="w-full bg-blue-600 text-white rounded-xl py-3 mt-3 font-bold">
-
       加入
-
     </button>
-
     `
   );
 }
-
-
 function openWarehousePicker(){
-
   const html=`
-
     <div class="space-y-3">
-
       ${
         APP.warehouses.map(
           w=>`
-
           <button
             onclick="selectWarehouse('${w.id}');closeModal()"
             class="w-full border rounded-xl p-4 text-left">
-
             <b>
               ${esc(w.name)}
             </b>
-
             <div class="text-sm text-gray-500">
-
               ${roleName(w.role)}
-
               ·
-
               邀请码
               ${esc(w.join_code||'')}
-
             </div>
-
           </button>
-
           `
         ).join('')
-
         ||
-
         `
         <div class="text-gray-500">
           暂无仓库
         </div>
         `
       }
-
-
       <div class="grid grid-cols-2 gap-2">
-
         <button
           onclick="closeModal();createWarehouseDialog()"
           class="bg-blue-600 text-white rounded-xl py-3">
-
           创建
-
         </button>
-
-
         <button
           onclick="closeModal();joinWarehouseDialog()"
           class="border rounded-xl py-3">
-
           加入
-
         </button>
-
       </div>
-
     </div>
-
   `;
-
-
   modal(
     '选择仓库',
     html
   );
 }
-
-
 /* =========================================================
    商品
    ========================================================= */
-
 function openItem(id=null,sku=''){
-
   const x =
     id
     ?
@@ -2758,47 +1852,31 @@ function openItem(id=null,sku=''){
     )
     :
     null;
-
-
   modal(
-
     x
     ?
     '编辑商品'
     :
     '新增商品',
-
     `
-
     <div class="space-y-3">
-
       <input
         id="itemName"
         value="${esc(x?.name||'')}"
         placeholder="商品名称"
         class="w-full border rounded-xl px-4 py-3">
-
-
       <div class="flex gap-2">
-
         <input
           id="itemSku"
           value="${esc(x?.sku||sku)}"
           placeholder="SKU / 条码"
           class="flex-1 border rounded-xl px-4 py-3">
-
-
         <button
           onclick="openScanner('fill-sku')"
           class="border rounded-xl px-4">
-
           📷
-
         </button>
-
       </div>
-
-
       <input
         id="itemAlert"
         type="number"
@@ -2807,22 +1885,17 @@ function openItem(id=null,sku=''){
         value="${Number(x?.alert_qty||0)}"
         placeholder="低库存提醒数量"
         class="w-full border rounded-xl px-4 py-3">
-
-
       <input
         id="itemBin"
         value="${esc(x?.bin||'')}"
         placeholder="货位，例如 A-01-02"
         class="w-full border rounded-xl px-4 py-3">
-
-
       ${
         x
         ?
         ''
         :
         `
-
         <input
           id="itemQty"
           type="number"
@@ -2831,79 +1904,53 @@ function openItem(id=null,sku=''){
           value="0"
           placeholder="初始库存数量"
           class="w-full border rounded-xl px-4 py-3">
-
         `
       }
-
-
       <button
         onclick="saveItem('${id||''}')"
         class="w-full bg-blue-600 text-white rounded-xl py-3 font-bold">
-
         保存
-
       </button>
-
     </div>
-
     `
   );
 }
-
-
 function intVal(v){
-
   const n=Number(v);
-
   return Number.isInteger(n)&&n>=0
     ?
     n
     :
     null;
-
 }
-
-
 async function saveItem(id){
-
-  const name=$('itemName')?.value.trim();
-
-  const sku=$('itemSku')?.value.trim();
-
+  const name=
+    $('itemName')?.value.trim();
+  const sku=
+    $('itemSku')?.value.trim();
   const alertQty=
     intVal(
       $('itemAlert')?.value
     );
-
-  const bin=$('itemBin')?.value.trim();
-
-
+  const bin=
+    $('itemBin')?.value.trim();
   if(!name||!sku)
     return showError(
       '商品名称和SKU不能为空'
     );
-
-
   if(alertQty===null)
     return showError(
       '低库存数量必须是非负整数'
     );
-
-
   if(!id){
-
     const qty=
       intVal(
         $('itemQty')?.value
       );
-
-
     if(qty===null)
       return showError(
         '初始库存必须是非负整数'
       );
-
-
     if(
       APP.inventory.some(
         x=>
@@ -2914,60 +1961,36 @@ async function saveItem(id){
           sku.toLowerCase()
       )
     ){
-
       return showError(
         '当前仓库已经存在这个SKU'
       );
-
     }
-
-
     try{
-
       const r=
         await APP.sb.rpc(
           'create_inventory',
           {
             p_warehouse_id:
               APP.warehouse.id,
-
             p_name:name,
-
             p_sku:sku,
-
             p_qty:qty,
-
             p_alert:alertQty,
-
             p_bin:bin
           }
         );
-
-
       if(r.error)
         throw r.error;
-
-
       await loadInventory();
-
       closeModal();
-
       renderApp();
-
-
     }catch(e){
-
       showRealError(
         '新增商品失败',
         e
       );
-
     }
-
-
   }else{
-
-
     const dup=
       APP.inventory.find(
         x=>
@@ -2978,16 +2001,11 @@ async function saveItem(id){
           ===
           sku.toLowerCase()
       );
-
-
     if(dup)
       return showError(
         '当前仓库已经存在这个SKU'
       );
-
-
     try{
-
       const r=
         await APP.sb.rpc(
           'update_inventory_info',
@@ -2999,76 +2017,47 @@ async function saveItem(id){
             p_bin:bin
           }
         );
-
-
       if(r.error)
         throw r.error;
-
-
       await loadInventory();
-
       closeModal();
-
       renderApp();
-
-
     }catch(e){
-
       showRealError(
         '保存商品失败',
         e
       );
-
     }
-
   }
 }
-
-
 /* =========================================================
    入库 / 出库
    ========================================================= */
-
 function openStock(
   type='in',
   sku=''
 ){
-
   APP.stockType=type;
-
-
   modal(
-
     type==='in'
     ?
     '入库'
     :
     '出库',
-
     `
-
     <div class="space-y-3">
-
       <div class="flex gap-2">
-
         <input
           id="stockSku"
           value="${esc(sku)}"
           placeholder="SKU / 条码"
           class="flex-1 border rounded-xl px-4 py-3">
-
-
         <button
           onclick="openScanner('${type==='in'?'stock-in':'stock-out'}')"
           class="border rounded-xl px-4">
-
           📷
-
         </button>
-
       </div>
-
-
       <input
         id="stockQty"
         type="number"
@@ -3077,14 +2066,10 @@ function openStock(
         value="1"
         placeholder="数量"
         class="w-full border rounded-xl px-4 py-3">
-
-
       <input
         id="stockNote"
         placeholder="备注（可选）"
         class="w-full border rounded-xl px-4 py-3">
-
-
       <button
         onclick="saveStock()"
         class="w-full ${
@@ -3094,54 +2079,35 @@ function openStock(
           :
           'bg-orange-600'
         } text-white rounded-xl py-3 font-bold">
-
         确认${type==='in'?'入库':'出库'}
-
       </button>
-
-
       <button
         onclick="openImport('stock')"
         class="w-full border rounded-xl py-3">
-
         📁 批量${type==='in'?'入库':'出库'}
-
       </button>
-
     </div>
-
     `
   );
 }
-
-
 async function saveStock(){
-
   const sku=
     $('stockSku')?.value.trim();
-
   const qty=
     intVal(
       $('stockQty')?.value
     );
-
   const note=
     $('stockNote')?.value.trim() ||
     '';
-
-
   if(!sku)
     return showError(
       '请输入或扫描SKU'
     );
-
-
   if(!qty||qty<1)
     return showError(
       '数量必须是大于0的整数'
     );
-
-
   const item=
     APP.inventory.find(
       x=>
@@ -3151,47 +2117,30 @@ async function saveStock(){
         ===
         sku.toLowerCase()
     );
-
-
   if(!item){
-
     if(APP.stockType==='in'){
-
       closeModal();
-
       openItem(null,sku);
-
       alert(
         '这个条码还没有商品资料。\n' +
         '已经把扫描到的SKU填入新增商品。'
       );
-
     }else{
-
       showError(
         '出库失败：找不到这个SKU'
       );
-
     }
-
     return;
   }
-
-
   if(
     APP.stockType==='out' &&
     Number(item.qty)<qty
   ){
-
     return showError(
       `库存不足。当前库存：${item.qty}`
     );
-
   }
-
-
   try{
-
     const r=
       await APP.sb.rpc(
         'adjust_inventory',
@@ -3202,290 +2151,172 @@ async function saveStock(){
           p_note:note
         }
       );
-
-
     if(r.error)
       throw r.error;
-
-
     await Promise.all([
       loadInventory(),
       loadLogs()
     ]);
-
-
     closeModal();
-
     renderApp();
-
-
   }catch(e){
-
     showRealError(
       '库存调整失败',
       e
     );
-
   }
 }
-
-
 /* =========================================================
    批量导入
    ========================================================= */
-
 function openImport(kind){
-
   const title=
     kind==='items'
     ?
     '批量导入商品'
     :
     `批量${APP.stockType==='in'?'入库':'出库'}`;
-
-
   modal(
-
     title,
-
     `
-
     <div class="text-sm text-gray-600 mb-3">
-
       支持：
-
       CSV / TXT / TSV / XLSX / XLS
-
       <br>
-
       第一行必须是表头。
-
       <br>
-
       SKU如果有前导0，请在Excel中设置为“文本”。
-
     </div>
-
-
     <input
       id="importFile"
       type="file"
       accept="*/*"
       onchange="showSelectedFile()"
       class="w-full border rounded-xl p-3">
-
-
     <div
       id="selectedFile"
       class="text-sm text-gray-500 mt-2">
-
       尚未选择文件
-
     </div>
-
-
     <button
       onclick="runImport('${kind}')"
       class="w-full bg-blue-600 text-white rounded-xl py-3 mt-3 font-bold">
-
       开始导入
-
     </button>
-
-
     <div class="mt-4 text-xs text-gray-500">
-
       商品表头示例：
-
       名称, SKU, 低库存, 初始数量, 货位
-
       <br><br>
-
       库存表头示例：
-
       SKU, 数量, 备注
-
       <br><br>
-
       iPhone请从“文件”App选择Excel或CSV。
-
     </div>
-
     `
   );
 }
-
-
 function showSelectedFile(){
-
   const f=
     $('importFile')
       ?.files
       ?. [0];
-
-  const e=$('selectedFile');
-
-
+  const e=
+    $('selectedFile');
   if(!e)return;
-
-
   if(!f){
-
     e.textContent=
       '尚未选择文件';
-
     return;
   }
-
-
   e.textContent=
     `已选择：${f.name} · `+
     `${(f.size/1024).toFixed(1)} KB`;
 }
-
-
 function parseDelimited(
   text,
   delimiter=','
 ){
-
   const rows=[];
-
   let row=[];
-
   let cell='';
-
   let quote=false;
-
-
   for(
     let i=0;
     i<text.length;
     i++
   ){
-
     const c=text[i];
-
     const n=text[i+1];
-
-
     if(c==='"'){
-
-      if(quote && n==='"'){
-
+      if(
+        quote &&
+        n==='"'
+      ){
         cell+='"';
-
         i++;
-
       }else{
-
         quote=!quote;
-
       }
-
     }else if(
       c===delimiter &&
       !quote
     ){
-
       row.push(cell);
-
       cell='';
-
     }else if(
       (c==='\n'||c==='\r') &&
       !quote
     ){
-
       if(
         c==='\r' &&
         n==='\n'
       ){
-
         i++;
-
       }
-
-
       row.push(cell);
-
       cell='';
-
-
       if(
         row.some(
           v=>String(v).trim()!==''
         )
       ){
-
         rows.push(row);
-
       }
-
-
       row=[];
-
     }else{
-
       cell+=c;
-
     }
-
   }
-
-
   if(
     cell!=='' ||
     row.length
   ){
-
     row.push(cell);
-
-
     if(
       row.some(
         v=>String(v).trim()!==''
       )
     ){
-
       rows.push(row);
-
     }
-
   }
-
-
   return rows;
 }
-
-
 async function readRows(file){
-
   const name=
     (file.name||'')
       .toLowerCase();
-
-
-  /* Excel */
-
   if(
     name.endsWith('.xlsx') ||
     name.endsWith('.xls')
   ){
-
     if(!window.XLSX){
-
       throw new Error(
         'Excel解析组件加载失败，请检查网络'
       );
-
     }
-
-
     const buf=
       await file.arrayBuffer();
-
-
     const wb=
       XLSX.read(
         buf,
@@ -3494,23 +2325,15 @@ async function readRows(file){
           cellDates:false
         }
       );
-
-
     if(!wb.SheetNames.length){
-
       throw new Error(
         'Excel没有工作表'
       );
-
     }
-
-
     const ws=
       wb.Sheets[
         wb.SheetNames[0]
       ];
-
-
     return XLSX.utils.sheet_to_json(
       ws,
       {
@@ -3520,150 +2343,86 @@ async function readRows(file){
       }
     );
   }
-
-
-  /* CSV / TXT / TSV */
-
   const text=
     await file.text();
-
-
   if(!text.trim()){
-
     throw new Error(
       '文件内容为空'
     );
-
   }
-
-
   const first=
     text.split(/\r?\n/)[0]||'';
-
-
   let delim=',';
-
-
   if(first.includes('\t'))
     delim='\t';
-
   else if(first.includes(';'))
     delim=';';
-
-
   return parseDelimited(
     text,
     delim
   );
 }
-
-
 function headerMap(row){
-
   const m={};
-
-
   row.forEach(
     (v,i)=>{
-
       const k=
         String(v??'')
           .replace(/^\uFEFF/,'')
           .trim()
           .toLowerCase();
-
-
       if(k)
         m[k]=i;
-
     }
   );
-
-
   return m;
 }
-
-
 function pick(
   row,
   h,
   names
 ){
-
   for(
     const n of names
   ){
-
     const i=
       h[n.toLowerCase()];
-
-
     if(i!==undefined){
-
       return String(
         row[i]??''
       ).trim();
-
     }
-
   }
-
-
   return '';
 }
-
-
 async function runImport(kind){
-
   const f=
     $('importFile')
       ?.files
       ?. [0];
-
-
   if(!f)
     return showError(
       '请选择文件'
     );
-
-
   try{
-
     const rows=
       await readRows(f);
-
-
     if(rows.length<2){
-
       throw new Error(
         '文件没有有效数据'
       );
-
     }
-
-
     const h=
       headerMap(rows[0]);
-
-
-    /* 商品 */
-
     if(kind==='items'){
-
       let ok=0;
-
       let bad=[];
-
-
       for(
         let i=1;
         i<rows.length;
         i++
       ){
-
         const r=rows[i];
-
-
         const name=
           pick(
             r,
@@ -3674,8 +2433,6 @@ async function runImport(kind){
               'name'
             ]
           );
-
-
         const sku=
           pick(
             r,
@@ -3686,8 +2443,6 @@ async function runImport(kind){
               'barcode'
             ]
           );
-
-
         const alertS=
           pick(
             r,
@@ -3699,8 +2454,6 @@ async function runImport(kind){
               'alert_qty'
             ]
           );
-
-
         const qtyS=
           pick(
             r,
@@ -3712,8 +2465,6 @@ async function runImport(kind){
               'qty'
             ]
           );
-
-
         const bin=
           pick(
             r,
@@ -3724,36 +2475,18 @@ async function runImport(kind){
               'bin'
             ]
           );
-
-
         if(!name||!sku){
-
           bad.push(i+1);
-
           continue;
         }
-
-
         const alertQty=
           intVal(
-            alertS===''
-            ?
-            0
-            :
-            alertS
+            alertS==='' ? 0 : alertS
           );
-
-
         const qty=
           intVal(
-            qtyS===''
-            ?
-            0
-            :
-            qtyS
+            qtyS==='' ? 0 : qtyS
           );
-
-
         if(
           alertQty===null ||
           qty===null ||
@@ -3766,53 +2499,31 @@ async function runImport(kind){
               sku.toLowerCase()
           )
         ){
-
           bad.push(i+1);
-
           continue;
         }
-
-
         const r1=
           await APP.sb.rpc(
             'create_inventory',
             {
               p_warehouse_id:
                 APP.warehouse.id,
-
               p_name:name,
-
               p_sku:sku,
-
               p_qty:qty,
-
               p_alert:alertQty,
-
               p_bin:bin
             }
           );
-
-
         if(r1.error){
-
           bad.push(i+1);
-
           continue;
         }
-
-
         ok++;
-
       }
-
-
       await loadInventory();
-
       closeModal();
-
       renderApp();
-
-
       alert(
         `导入完成：成功 ${ok} 条，失败 ${bad.length} 条`+
         (
@@ -3823,27 +2534,15 @@ async function runImport(kind){
           ''
         )
       );
-
-
     }else{
-
-
-      /* 批量入库 / 出库 */
-
       let ok=0;
-
       let bad=[];
-
-
       for(
         let i=1;
         i<rows.length;
         i++
       ){
-
         const r=rows[i];
-
-
         const sku=
           pick(
             r,
@@ -3854,8 +2553,6 @@ async function runImport(kind){
               'barcode'
             ]
           );
-
-
         const qtyS=
           pick(
             r,
@@ -3866,8 +2563,6 @@ async function runImport(kind){
               '数量变动'
             ]
           );
-
-
         const note=
           pick(
             r,
@@ -3877,12 +2572,8 @@ async function runImport(kind){
               'note'
             ]
           );
-
-
         const qty=
           intVal(qtyS);
-
-
         const item=
           APP.inventory.find(
             x=>
@@ -3892,8 +2583,6 @@ async function runImport(kind){
               ===
               sku.toLowerCase()
           );
-
-
         if(
           !item ||
           !qty ||
@@ -3903,13 +2592,9 @@ async function runImport(kind){
             Number(item.qty)<qty
           )
         ){
-
           bad.push(i+1);
-
           continue;
         }
-
-
         const r1=
           await APP.sb.rpc(
             'adjust_inventory',
@@ -3920,32 +2605,18 @@ async function runImport(kind){
               p_note:note
             }
           );
-
-
         if(r1.error){
-
           bad.push(i+1);
-
           continue;
         }
-
-
         ok++;
-
       }
-
-
       await Promise.all([
         loadInventory(),
         loadLogs()
       ]);
-
-
       closeModal();
-
       renderApp();
-
-
       alert(
         `批量${APP.stockType==='in'?'入库':'出库'}完成：成功 ${ok} 条，失败 ${bad.length} 条`+
         (
@@ -3956,96 +2627,54 @@ async function runImport(kind){
           ''
         )
       );
-
     }
-
-
   }catch(e){
-
     showRealError(
       '批量导入失败',
       e
     );
-
   }
 }
-
-
 /* =========================================================
    扫码
    ========================================================= */
-
 async function openScanner(mode){
-
   closeModal();
-
-
   APP.scannerMode=mode;
-
-
   modal(
-
     '扫码',
-
     `
-
     <div id="reader" class="w-full"></div>
-
-
     <div
       class="text-center text-sm text-gray-500 mt-3">
-
       请把条码/二维码放入框内。
-
       <br>
-
       扫码成功后会自动处理。
-
     </div>
-
-
     <button
       onclick="closeScanner()"
       class="w-full border rounded-xl py-3 mt-3">
-
       关闭相机
-
     </button>
-
     `
   );
-
-
   try{
-
     if(!window.Html5Qrcode){
-
       throw new Error(
         '扫码组件加载失败，请检查网络'
       );
-
     }
-
-
     APP.scanner=
       new Html5Qrcode(
         'reader'
       );
-
-
     const cams=
       await Html5Qrcode.getCameras();
-
-
     if(!cams?.length){
-
       throw new Error(
         '没有检测到摄像头，请允许浏览器使用相机'
       );
-
     }
-
-
     const back=
       cams.find(
         c=>
@@ -4054,12 +2683,8 @@ async function openScanner(mode){
       )
       ||
       cams[cams.length-1];
-
-
     await APP.scanner.start(
-
       back.id,
-
       {
         fps:10,
         qrbox:{
@@ -4067,69 +2692,37 @@ async function openScanner(mode){
           height:160
         }
       },
-
       decoded=>
         handleScan(decoded),
-
       ()=>{}
-
     );
-
-
     APP.scannerRunning=true;
-
-
   }catch(e){
-
     closeScanner();
-
     showRealError(
       '启动扫码失败',
       e
     );
-
   }
 }
-
-
 async function handleScan(decoded){
-
   if(!APP.scannerRunning)
     return;
-
-
   const code=
     String(decoded||'').trim();
-
-
   if(!code)
     return;
-
-
   const mode=
     APP.scannerMode;
-
-
   await closeScanner();
-
-
-  /* 填 SKU */
-
   if(mode==='fill-sku'){
-
     openItem(
       null,
       code
     );
-
     return;
   }
-
-
-  /* 查找 */
-
   if(mode==='find'){
-
     const item=
       APP.inventory.find(
         x=>
@@ -4139,137 +2732,77 @@ async function handleScan(decoded){
           ===
           code.toLowerCase()
       );
-
-
     if(!item){
-
       alert(
         '未找到这个SKU：'+code
       );
-
       return;
     }
-
-
     APP.page='inventory';
-
     renderApp();
-
-
     setTimeout(()=>{
-
       const inp=
         $('invSearch');
-
-
       if(inp){
-
         inp.value=code;
-
         renderInventoryList();
-
       }
-
     },50);
-
-
     alert(
       `找到商品：${item.name}\n`+
       `SKU：${item.sku}\n`+
       `货位：${item.bin||'未设置'}\n`+
       `库存：${item.qty}`
     );
-
-
     return;
   }
-
-
   if(mode==='stock-in'){
-
     openStock(
       'in',
       code
     );
-
     return;
   }
-
-
   if(mode==='stock-out'){
-
     openStock(
       'out',
       code
     );
-
     return;
   }
 }
-
-
 async function closeScanner(){
-
   if(APP.scanner){
-
     try{
-
       if(APP.scannerRunning){
-
         await APP.scanner.stop();
-
       }
-
     }catch(e){}
-
-
     try{
-
       await APP.scanner.clear();
-
     }catch(e){}
-
-
     APP.scanner=null;
-
   }
-
-
   APP.scannerRunning=false;
-
   APP.scannerMode=null;
-
   closeModal();
 }
-
-
 /* =========================================================
    备份
    ========================================================= */
-
 function exportBackup(){
-
   if(!APP.warehouse)
     return;
-
-
   const data={
-
     exported_at:
       new Date().toISOString(),
-
     warehouse:
       APP.warehouse,
-
     inventory:
       APP.inventory,
-
     stock_logs:
       APP.logs
-
   };
-
-
   const blob=
     new Blob(
       [
@@ -4283,29 +2816,19 @@ function exportBackup(){
         type:'application/json'
       }
     );
-
-
   const a=
     document.createElement('a');
-
-
   a.href=
     URL.createObjectURL(
       blob
     );
-
-
   a.download=
     'warehouse-backup-'+
     new Date()
       .toISOString()
       .slice(0,10)+
     '.json';
-
-
   a.click();
-
-
   setTimeout(
     ()=>{
       URL.revokeObjectURL(
@@ -4315,44 +2838,28 @@ function exportBackup(){
     1000
   );
 }
-
-
 /* =========================================================
    退出
    ========================================================= */
-
 async function logout(){
-
   cleanupRealtime();
-
-
   try{
-
     await APP.sb.auth.signOut();
-
   }catch(e){
-
     showRealError(
       '退出失败',
       e
     );
-
   }
 }
-
-
 window.addEventListener(
   'beforeunload',
   cleanupRealtime
 );
-
-
 window.addEventListener(
   'load',
   ()=>boot()
 );
-
 </script>
-
 </body>
 </html>
