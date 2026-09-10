@@ -261,7 +261,74 @@ function initSupabase(){
 /* =========================================================
    登录
    ========================================================= */
+async function testSupabaseConnection(){
 
+  const result = document.getElementById('connectionResult');
+
+  if(result){
+    result.textContent = '正在测试云端连接……';
+    result.className =
+      'mt-3 text-center text-sm text-blue-600';
+  }
+
+  try{
+
+    const response = await fetch(
+      SUPABASE_URL + '/auth/v1/settings',
+      {
+        method:'GET',
+        headers:{
+          'apikey':SUPABASE_KEY
+        }
+      }
+    );
+
+    const text = await response.text();
+
+    console.log(
+      'Supabase测试:',
+      response.status,
+      text
+    );
+
+    if(response.ok){
+
+      if(result){
+        result.textContent =
+          '✅ 云端连接正常！API Key 有效';
+        result.className =
+          'mt-3 text-center text-sm text-green-600 font-bold';
+      }
+
+      return;
+    }
+
+    if(result){
+      result.textContent =
+        '❌ 云端返回错误：HTTP ' +
+        response.status +
+        ' · ' +
+        text.slice(0,200);
+
+      result.className =
+        'mt-3 text-center text-sm text-red-600 font-bold';
+    }
+
+  }catch(e){
+
+    console.error(e);
+
+    if(result){
+      result.textContent =
+        '❌ 网络连接失败：' +
+        (e.message || e);
+
+      result.className =
+        'mt-3 text-center text-sm text-red-600 font-bold';
+    }
+
+  }
+}
 function renderAuth(){
 
   $('app').innerHTML=`
