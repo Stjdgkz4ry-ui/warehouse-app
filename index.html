@@ -2618,55 +2618,125 @@ function isLowStock(item){
 
 }
 
-
 function renderHome(){
 
-  const items =
-    activeInventory();
+  const items = activeInventory();
+
+  /*
+   * 商品种类：
+   * 一个 SKU = 一个商品种类
+   * 不因为放在不同库位而重复计算
+   */
+  const skuMap = new Map();
+
+  items.forEach(item => {
+
+    const sku = String(
+      item?.sku || ''
+    ).trim();
+
+    if(!sku){
+      return;
+    }
+
+    const key = sku.toLowerCase();
+
+    if(!skuMap.has(key)){
+
+      skuMap.set(key, {
+        sku: sku,
+        name: item?.name || sku,
+        qty: 0,
+        alert_qty: getAlertQty(item)
+      });
+
+    }
+
+    const record = skuMap.get(key);
+
+    record.qty += safeNumber(
+      item?.qty,
+      0
+    );
+
+  });
 
 
+  /*
+   * 商品种类数量
+   * = 不重复 SKU 数量
+   */
+  const itemCount =
+    skuMap.size;
+
+
+  /*
+   * 库存总数：
+   * 所有库位的实际库存数量相加
+   */
   const totalQty =
     items.reduce(
-      (sum,x) =>
+      (sum, item) =>
         sum +
         safeNumber(
-          x.qty,
+          item?.qty,
           0
         ),
       0
     );
 
 
+  /*
+   * 低库存：
+   * 按 SKU 汇总所有库位库存后再判断
+   *
+   * 例如：
+   * ABC001
+   * A1-01 = 5
+   * A1-02 = 3
+   *
+   * 总库存 = 8
+   *
+   * 如果预警数量 = 10
+   * 才算 1 个低库存商品
+   */
   const low =
-    items.filter(
-      isLowStock
-    ).length;
+    Array.from(
+      skuMap.values()
+    ).filter(item => {
+
+      return item.qty <= item.alert_qty;
+
+    }).length;
 
 
+  /*
+   * 货位数量：
+   * 不重复的库位数量
+   */
   const bins =
     new Set(
       items
-        .map(
-          x =>
-            String(
-              x.bin || ''
-            ).trim()
+        .map(item =>
+          String(
+            item?.bin || ''
+          ).trim()
         )
         .filter(Boolean)
     ).size;
 
 
+  /*
+   * 更新首页数字
+   */
   $('statItems').textContent =
-    items.length;
-
+    itemCount;
 
   $('statQty').textContent =
     totalQty;
 
-
   $('statLow').textContent =
     low;
-
 
   $('statBins').textContent =
     bins;
@@ -2675,6 +2745,8 @@ function renderHome(){
   updateWarehouseHeader();
 
 }
+
+
 
 
 function searchFromHome(){
