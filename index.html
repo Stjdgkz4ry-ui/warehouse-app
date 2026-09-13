@@ -4121,7 +4121,6 @@ async function deleteInventory(id){
 /* =========================================================
    Logs
 ========================================================= */
-
 async function loadLogs(){
 
   if(!APP.warehouse){
@@ -4132,20 +4131,44 @@ async function loadLogs(){
 
   }
 
-
   try{
 
-    const {data,error} =
+    const {data: inventoryData, error: inventoryError} =
       await APP.sb
-      .from('inventory_transactions')
-.select(`
-  id,
-  inventory_id,
-  type,
-  qty,
-  note,
-  created_at
-`)
+        .from('inventory')
+        .select(
+          'id,name,sku,bin,warehouse_id'
+        )
+        .eq(
+          'warehouse_id',
+          APP.warehouse.id
+        );
+
+    if(inventoryError){
+
+      throw inventoryError;
+
+    }
+
+    const inventoryMap =
+      new Map(
+        (inventoryData || []).map(item => [
+          item.id,
+          item
+        ])
+      );
+
+    const {data: transactionData, error: transactionError} =
+      await APP.sb
+        .from('inventory_transactions')
+        .select(`
+          id,
+          inventory_id,
+          type,
+          qty,
+          note,
+          created_at
+        `)
         .order(
           'created_at',
           {
@@ -4153,15 +4176,44 @@ async function loadLogs(){
           }
         );
 
+    if(transactionError){
 
-    if(error){
-      throw error;
+      throw transactionError;
+
     }
 
-
     APP.logs =
-      data || [];
+      (transactionData || [])
+      .filter(log =>
+        inventoryMap.has(
+          log.inventory_id
+        )
+      )
+      .map(log => {
 
+        const item =
+          inventoryMap.get(
+            log.inventory_id
+          );
+
+        return {
+
+          ...log,
+
+          name:
+            item?.name || '',
+
+          sku:
+            item?.sku || '',
+
+          bin:
+            item?.bin || ''
+
+        };
+
+      });
+
+    renderLogs();
 
   }catch(error){
 
@@ -4175,6 +4227,7 @@ async function loadLogs(){
   }
 
 }
+
 
 
 function getLogType(log){
