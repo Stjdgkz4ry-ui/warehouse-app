@@ -5149,7 +5149,17 @@ async function runImport(type){
           'location'
         ]
       );
-
+const noteIndex =
+      findHeader(
+        headers,
+        [
+          '备注',
+          '入库备注',
+          '备注信息',
+          'note',
+          'notes'
+        ]
+      );
 
     let success = 0;
 
@@ -5229,11 +5239,16 @@ async function runImport(type){
             row[binIndex] ?? ''
           ).trim()
         : '';
-
+const note =
+        noteIndex >= 0
+        ? String(
+            row[noteIndex] ?? ''
+          ).trim()
+        : '';
 
       try{
 
-        const {error} =
+        const {data, error} =
           await APP.sb.rpc(
             'create_inventory',
             {
