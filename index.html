@@ -5279,8 +5279,11 @@ const note =
 
 
         if(error){
-          throw error;
-        }
+  throw new Error(
+    `第${i + 1}行导入失败：SKU=[${sku}] 货位=[${bin}] 原因：${error.message}`
+  );
+}
+        
 
 
         success++;
