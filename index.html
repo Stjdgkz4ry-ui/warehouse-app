@@ -3197,7 +3197,14 @@ function renderInventoryList(){
                   )}
                 </span>
               </div>
-
+              <div class="text-sm text-gray-500 mt-1 break-all">
+                备注：
+                <span class="font-semibold text-gray-700">
+                  ${escapeHtml(
+                    x.note || '无'
+                  )}
+                </span>
+              </div>
             </div>
 
 
