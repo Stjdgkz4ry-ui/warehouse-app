@@ -4137,12 +4137,15 @@ async function loadLogs(){
 
     const {data,error} =
       await APP.sb
-        .from('stock_logs')
-        .select('*')
-        .eq(
-          'warehouse_id',
-          APP.warehouse.id
-        )
+      .from('inventory_transactions')
+.select(`
+  id,
+  inventory_id,
+  type,
+  qty,
+  note,
+  created_at
+`)
         .order(
           'created_at',
           {
