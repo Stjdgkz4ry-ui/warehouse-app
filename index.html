@@ -3409,7 +3409,15 @@ const note =
       min="0"
       value="${alert}">
 
+<label class="block text-sm font-semibold mb-2 mt-4">
+  备注
+</label>
 
+<textarea
+  id="itemNote"
+  class="w-full border rounded-lg p-3"
+  rows="3"
+  placeholder="填写商品备注...">${escapeHtml(note)}</textarea>
     <button
       class="btn btn-blue w-full mt-5"
       onclick="saveItem('${id || ''}')">
@@ -3438,7 +3446,7 @@ async function saveItem(id){
   const bin = $('itemBin').value.trim();
   const qty = Math.max(0, safeNumber($('itemQty').value, 0));
   const alert = Math.max(0, safeNumber($('itemAlert').value, 10));
-
+const note = $('itemNote').value.trim();
   if(!sku){
     return showError('SKU不能为空');
   }
@@ -3468,6 +3476,7 @@ async function saveItem(id){
           p_name: finalName,
           p_sku: sku,
           p_alert: alert,
+          p_note: note,
           p_bin: bin
         }
       );
