@@ -5981,10 +5981,11 @@ async function runOrderImport(){
 
       }
 
-
-      const item =
-        skuMap.get(key);
-
+const item =
+  skuMap.get(
+    sku.toLowerCase()
+  );
+      
 
       let resultRow;
 
