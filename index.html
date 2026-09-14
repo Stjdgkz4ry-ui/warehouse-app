@@ -926,7 +926,27 @@ th{
             id="pickingSearch"
             placeholder="搜索库位 / SKU / 商品名称"
             oninput="renderPickingList()">
+</div>
 
+
+<div class="card p-3 mb-3">
+
+  <button
+    class="btn btn-blue w-full"
+    onclick="renderWavePicking()">
+    📦 波次集中拣货
+  </button>
+
+  <div class="small mt-2">
+    按库位合并相同 SKU，减少重复走库位
+  </div>
+
+</div>
+
+
+<div id="pickingList"></div>
+
+</div>
         </div>
 
 
