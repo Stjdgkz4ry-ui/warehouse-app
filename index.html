@@ -5936,9 +5936,12 @@ async function runOrderImport(){
 
 
       const key =
-        sku.toLowerCase();
-
-
+  (
+    rowOrderNo +
+    '|' +
+    sku
+  )
+  .toLowerCase();
       /*
        * 同一个订单文件中出现同一个 SKU 多次，
        * 自动合并数量。
