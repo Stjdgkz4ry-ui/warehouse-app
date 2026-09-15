@@ -1099,7 +1099,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V3.0 · Cloud Warehouse
+          版本 V4.6 · Cloud Warehouse
         </div>
 
       </div>
@@ -1228,7 +1228,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V4.5-20260915-SMART-LABEL-PACK';
+const APP_VERSION = 'V4.6-20260915-NOTE-FIX';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -2647,6 +2647,35 @@ function getItemName(item){
 }
 
 
+function getItemNote(item){
+
+  if(!item){
+    return '';
+  }
+
+  const candidates = [
+    item.note,
+    item.remarks,
+    item.remark,
+    item.memo,
+    item.comment
+  ];
+
+  for(const value of candidates){
+
+    const text = String(value ?? '').trim();
+
+    if(text){
+      return text;
+    }
+
+  }
+
+  return '';
+
+}
+
+
 function getAlertQty(item){
 
   const value =
@@ -3164,7 +3193,8 @@ function renderInventoryList(){
       const text = [
         x.sku,
         x.name,
-        x.bin
+        x.bin,
+        getItemNote(x)
       ]
       .filter(Boolean)
       .join(' ')
@@ -3268,7 +3298,7 @@ function renderInventoryList(){
                 备注：
                 <span class="font-semibold text-gray-700">
                   ${escapeHtml(
-                    x.note || '无'
+                    getItemNote(x) || '无'
                   )}
                 </span>
               </div>
@@ -3396,7 +3426,7 @@ function openItem(id){
   item?.bin || '';
 
 const note =
-  item?.note || '';
+  getItemNote(item);
 
 
 
@@ -3552,6 +3582,22 @@ const note = $('itemNote').value.trim();
         throw infoError;
       }
 
+      /*
+       * 备注二次保险：
+       * 某些旧版数据库函数虽然接受 p_note，但旧定义可能没有真正写入。
+       * RPC 成功后直接同步 inventory.note，确保页面和流水都能读到最新备注。
+       */
+      const {error:noteSyncError} =
+        await APP.sb
+          .from('inventory')
+          .update({note:note})
+          .eq('id',id)
+          .eq('warehouse_id',APP.warehouse.id);
+
+      if(noteSyncError){
+        console.warn('备注直接同步失败，将继续使用 RPC 结果：', noteSyncError);
+      }
+
       /* 修改库存数量 */
       if(diff !== 0){
 
@@ -3579,7 +3625,7 @@ const note = $('itemNote').value.trim();
       renderLogs();
       renderHome();
 
-      showOk('商品修改成功，SKU和库存已同步');
+      showOk('商品修改成功，备注、SKU和库存已同步');
 
     }else{
 
@@ -3592,12 +3638,41 @@ const note = $('itemNote').value.trim();
           p_sku: sku,
           p_qty: qty,
           p_alert: alert,
-          p_bin: bin
+          p_bin: bin,
+          p_note: note
         }
       );
 
       if(error){
         throw error;
+      }
+
+      /*
+       * 新建商品备注二次保险：
+       * 按当前仓库 + SKU + 货位找到刚创建的记录，再同步 note。
+       */
+      if(note){
+
+        let noteQuery =
+          APP.sb
+            .from('inventory')
+            .update({note:note})
+            .eq('warehouse_id',APP.warehouse.id)
+            .eq('sku',sku);
+
+        if(bin){
+          noteQuery = noteQuery.eq('bin',bin);
+        }else{
+          noteQuery = noteQuery.or('bin.is.null,bin.eq.');
+        }
+
+        const {error:noteCreateSyncError} =
+          await noteQuery;
+
+        if(noteCreateSyncError){
+          console.warn('新商品备注直接同步失败，将继续使用 RPC 结果：', noteCreateSyncError);
+        }
+
       }
 
       closeModal();
@@ -4423,7 +4498,7 @@ function renderLogs(){
 
         item?.name,
 
-        item?.note
+        getItemNote(item)
 
       ]
       .filter(Boolean)
@@ -4487,7 +4562,7 @@ function renderLogs(){
 
       // 商品备注属于当前库存资料；流水备注属于当时这一次入/出库操作。
       // 两者分开显示，修改商品备注后流水页面也能马上看到最新商品备注。
-      const itemNote = String(item?.note || '').trim();
+      const itemNote = getItemNote(item);
 
       const operator =
         log.user_email ||
