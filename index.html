@@ -8177,9 +8177,49 @@ async function extractPdfPages(file){
     }
   }catch(e){ console.warn(e); }
 
-  const bytes=new Uint8Array(await file.arrayBuffer());
-  const pdf=await window.pdfjsLib.getDocument({data:bytes}).promise;
-  const srcDoc=await window.PDFLib.PDFDocument.load(bytes);
+  /*
+   * 重要：
+   * PDF.js 在启用 Worker 时可能会把传入的 Uint8Array buffer 转移给 Worker，
+   * 导致同一个 bytes 随后交给 pdf-lib 时已经变成空/失效数据，
+   * 从而出现：No PDF header found。
+   *
+   * 所以这里必须为 PDF.js 和 pdf-lib 各自创建独立副本。
+   */
+  const rawBuffer=await file.arrayBuffer();
+  const rawBytes=new Uint8Array(rawBuffer);
+
+  if(rawBytes.length < 5){
+    throw new Error('PDF 文件内容为空或尚未下载完成，请重新选择文件');
+  }
+
+  // 正常 PDF 开头应包含 %PDF-
+  const header=String.fromCharCode(
+    rawBytes[0]||0,
+    rawBytes[1]||0,
+    rawBytes[2]||0,
+    rawBytes[3]||0,
+    rawBytes[4]||0
+  );
+
+  if(header !== '%PDF-'){
+    throw new Error(
+      '选择的文件不是有效 PDF，或 iPhone 尚未从 iCloud 下载完成。请先在“文件”App里打开一次该 PDF，再重新选择。'
+    );
+  }
+
+  // 绝对不能让两个 PDF 库共用同一个 Uint8Array。
+  const pdfJsBytes=rawBytes.slice();
+  const pdfLibBytes=rawBytes.slice();
+
+  const pdf=await window.pdfjsLib
+    .getDocument({data:pdfJsBytes})
+    .promise;
+
+  const srcDoc=await window.PDFLib.PDFDocument.load(
+    pdfLibBytes,
+    {ignoreEncryption:true}
+  );
+
   const pages=[];
 
   for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
