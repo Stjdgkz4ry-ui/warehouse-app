@@ -1099,7 +1099,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V4.8 · Cloud Warehouse
+          版本 V4.9 · Cloud Warehouse
         </div>
 
       </div>
@@ -1228,7 +1228,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V4.8-20260915-DESKTOP-PRINT-MOBILE-INBOUND';
+const APP_VERSION = 'V4.9-20260915-ONE-SCAN-PRINT';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -9739,7 +9739,7 @@ function openPackingScanner(){
       </div>
 
       <div class="small mt-1">
-        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。满足一票订单后会自动弹出该面单的打印窗口。支持 Enter / Tab 结尾，也支持无回车自动识别。
+        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。安装本地打印桥后，满足一票订单会直接出纸；未安装时自动退回浏览器打印窗口。支持 Enter / Tab 结尾，也支持无回车自动识别。
       </div>
 
       <div id="hardwareScannerLast" class="small mt-2 text-gray-600">
@@ -9858,6 +9858,50 @@ async function manualConfirmPackOrder(orderId){
   await printShippingLabelByOrderId(order.id,true);
 }
 
+
+
+const LOCAL_PRINT_BRIDGE_URL = 'http://127.0.0.1:17891';
+
+async function localPrintBridgeReady(){
+  if(!isDesktopPackingStation()) return false;
+  try{
+    const controller = new AbortController();
+    const timer = setTimeout(()=>controller.abort(),1200);
+    const res = await fetch(LOCAL_PRINT_BRIDGE_URL + '/health',{
+      method:'GET',
+      signal:controller.signal
+    });
+    clearTimeout(timer);
+    if(!res.ok) return false;
+    const data = await res.json();
+    return data?.ok === true;
+  }catch(e){
+    return false;
+  }
+}
+
+async function sendPdfToLocalPrinter(blob,orderNo){
+  const form = new FormData();
+  form.append(
+    'file',
+    blob,
+    `${String(orderNo||'label').replace(/[^a-zA-Z0-9._-]/g,'_')}.pdf`
+  );
+  form.append('order_no',String(orderNo||''));
+
+  const res = await fetch(
+    LOCAL_PRINT_BRIDGE_URL + '/print',
+    {method:'POST',body:form}
+  );
+
+  const data = await res.json().catch(()=>({}));
+
+  if(!res.ok || !data?.ok){
+    throw new Error(data?.error || '本地打印服务返回失败');
+  }
+
+  return data;
+}
 
 function isDesktopPackingStation(){
 
@@ -10141,12 +10185,39 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       await res.blob();
 
     let autoPrintStarted=false;
+    let silentPrinted=false;
 
     if(
       isDesktopPackingStation() &&
+      await localPrintBridgeReady()
+    ){
+      try{
+        await sendPdfToLocalPrinter(
+          blob,
+          order.order_no
+        );
+
+        silentPrinted=true;
+        autoPrintStarted=true;
+
+        if(printWin){
+          try{ printWin.close(); }catch(e){}
+        }
+
+        showOk(
+          `✅ ${order.order_no} 已直接发送到面单打印机`
+        );
+
+      }catch(error){
+        console.error(error);
+      }
+    }
+
+    if(
+      !autoPrintStarted &&
+      isDesktopPackingStation() &&
       printWin
     ){
-
       autoPrintStarted=
         await renderPdfBlobToPrintWindow(
           blob,
@@ -10155,21 +10226,10 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
         );
     }
 
-    /*
-     * 手机或自动打印窗口被浏览器拦截时，
-     * 退回到普通 PDF 打开方式。
-     */
     if(!autoPrintStarted){
-
       const blobUrl=
-        URL.createObjectURL(
-          blob
-        );
-
-      window.open(
-        blobUrl,
-        '_blank'
-      );
+        URL.createObjectURL(blob);
+      window.open(blobUrl,'_blank');
     }
 
     if(markPacked && order.status!=='packed'){
@@ -10188,11 +10248,13 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
     if(markPacked && progress){
       showOk(`✅ 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`);
     }else{
-      showOk(
-        isDesktopPackingStation()
-        ? `已发送 ${order.order_no} 到打印窗口`
-        : `已打开 ${order.order_no} 的面单`
-      );
+      if(!silentPrinted){
+        showOk(
+          isDesktopPackingStation()
+          ? `已发送 ${order.order_no} 到打印窗口`
+          : `已打开 ${order.order_no} 的面单`
+        );
+      }
     }
 
   }catch(error){
