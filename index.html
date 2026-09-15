@@ -671,8 +671,8 @@ th{
 
           <button
             class="btn btn-green"
-            onclick="openScanner()">
-            📷 扫码
+            onclick="openInboundScanner()">
+            📥 扫码入库
           </button>
 
           <button
@@ -1099,7 +1099,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V4.6 · Cloud Warehouse
+          版本 V4.8 · Cloud Warehouse
         </div>
 
       </div>
@@ -1228,7 +1228,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V4.6-20260915-NOTE-FIX';
+const APP_VERSION = 'V4.8-20260915-DESKTOP-PRINT-MOBILE-INBOUND';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1266,6 +1266,14 @@ const APP = {
   pickingOrderNo:'',
 
   pickingOrderDate:'',
+
+  /* 电脑 USB / 蓝牙 HID 扫码枪 */
+  hardwareScannerActive:false,
+  hardwareScannerBuffer:'',
+  hardwareScannerLastKeyAt:0,
+  hardwareScannerTimer:null,
+  hardwareScannerHandler:null,
+  hardwareScannerBusy:false,
 
   shippingOrders:[],
 
@@ -1457,6 +1465,8 @@ function openModal(html){
 
 
 function closeModal(){
+
+  deactivateHardwareScanner();
 
   $('modalBg').classList.add(
     'hidden'
@@ -4895,6 +4905,232 @@ async function deleteStockLog(id){
 /* =========================================================
    扫码
 ========================================================= */
+
+
+/* =========================================================
+   手机扫码入库
+   =========================================================
+   手机摄像头只负责快速入库：
+   扫到 SKU -> 找库存记录 -> 打开入库数量窗口。
+   如果同一个 SKU 有多个货位，先让用户选择货位。
+========================================================= */
+
+function openInboundScanner(){
+
+  if(!APP.warehouse){
+    return showError('请先选择仓库');
+  }
+
+  openModal(`
+
+    <div class="flex items-center justify-between mb-4">
+
+      <h2 class="text-xl font-bold">
+        📥 手机扫码入库
+      </h2>
+
+      <button
+        onclick="stopScanner();closeModal()"
+        class="text-gray-400 text-2xl">
+        ×
+      </button>
+
+    </div>
+
+    <div class="bg-green-50 rounded-xl p-3 mb-3 text-sm">
+      用手机摄像头扫描商品条形码 / SKU。
+      扫到后会直接进入入库数量确认。
+    </div>
+
+    <div
+      id="reader"
+      style="width:100%;">
+    </div>
+
+    <div class="small text-center mt-3">
+      将商品条码放进扫描框
+    </div>
+
+    <button
+      class="btn btn-gray w-full mt-4"
+      onclick="stopScanner();closeModal()">
+      关闭
+    </button>
+
+  `);
+
+  setTimeout(
+    ()=>startInboundScanner(),
+    300
+  );
+}
+
+
+async function startInboundScanner(){
+
+  if(!window.Html5Qrcode){
+    return showError('扫码组件加载失败');
+  }
+
+  try{
+
+    if(APP.scannerRunning){
+      await stopScanner();
+    }
+
+    APP.scanner=
+      new Html5Qrcode('reader');
+
+    APP.scannerRunning=true;
+
+    await APP.scanner.start(
+
+      {facingMode:'environment'},
+
+      {
+        fps:15,
+        qrbox:{
+          width:280,
+          height:160
+        }
+      },
+
+      async decodedText=>{
+
+        const sku=
+          String(decodedText||'').trim();
+
+        if(!sku){
+          return;
+        }
+
+        await stopScanner();
+
+        const matches=
+          activeInventory()
+            .filter(item=>
+              normalizeShippingKey(item.sku)===
+              normalizeShippingKey(sku)
+            )
+            .sort((a,b)=>
+              naturalCompare(
+                a.bin||'',
+                b.bin||''
+              )
+            );
+
+        if(!matches.length){
+
+          closeModal();
+
+          showError(
+            `库存中找不到 SKU：${sku}`
+          );
+
+          showPage('inventory');
+
+          const search=$('inventorySearch');
+
+          if(search){
+            search.value=sku;
+            renderInventoryList();
+          }
+
+          return;
+        }
+
+        if(matches.length===1){
+
+          closeModal();
+
+          stockAction(
+            matches[0].id,
+            'in'
+          );
+
+          setTimeout(()=>{
+
+            const qty=$('stockQty');
+
+            if(qty){
+              qty.value='1';
+              qty.focus();
+              qty.select();
+            }
+
+            const note=$('stockNote');
+
+            if(note && !note.value){
+              note.value='手机扫码入库';
+            }
+
+          },50);
+
+          return;
+        }
+
+        /*
+         * 同一 SKU 在多个货位时，不能自动猜。
+         */
+        let options='';
+
+        matches.forEach(item=>{
+
+          options+=`
+            <button
+              class="btn btn-gray w-full mb-2 text-left"
+              onclick="closeModal();stockAction('${item.id}','in');setTimeout(()=>{if($('stockQty')){$('stockQty').value='1';$('stockQty').focus();$('stockQty').select();}if($('stockNote')&&!$('stockNote').value){$('stockNote').value='手机扫码入库';}},50)">
+              <div class="font-bold">
+                📍 ${escapeHtml(item.bin||'未设置货位')}
+              </div>
+              <div class="small mt-1">
+                ${escapeHtml(item.sku||'')} · 当前库存 ${safeNumber(item.qty,0)}
+              </div>
+            </button>
+          `;
+
+        });
+
+        openModal(`
+
+          <h2 class="text-xl font-bold mb-3">
+            选择入库货位
+          </h2>
+
+          <div class="bg-yellow-50 rounded-xl p-3 mb-3 text-sm">
+            SKU <strong>${escapeHtml(sku)}</strong>
+            有 ${matches.length} 个货位，请选择本次入库放在哪个货位。
+          </div>
+
+          ${options}
+
+          <button
+            class="btn btn-gray w-full mt-2"
+            onclick="closeModal()">
+            取消
+          </button>
+
+        `);
+
+      },
+
+      ()=>{}
+
+    );
+
+  }catch(error){
+
+    APP.scannerRunning=false;
+
+    console.error(error);
+
+    showError(
+      '无法打开摄像头，请检查手机浏览器摄像头权限'
+    );
+
+  }
+
+}
 
 function openScanner(){
 
@@ -9072,9 +9308,24 @@ async function startCustomScanner(onDecode){
       ()=>{}
     );
   }catch(error){
+
     APP.scannerRunning=false;
     console.error(error);
-    showError('无法打开摄像头：'+(error.message||''));
+
+    if(APP.hardwareScannerActive){
+
+      showInfo(
+        '摄像头未开启，电脑扫码枪仍可直接使用'
+      );
+
+    }else{
+
+      showError(
+        '无法打开摄像头：'+
+        (error.message||'')
+      );
+
+    }
   }
 }
 
@@ -9243,6 +9494,235 @@ function renderPackingQueue(){
   }).join('')}</div>`;
 }
 
+
+/* =========================================================
+   电脑扫码枪（USB / Bluetooth HID Keyboard）
+   =========================================================
+   常见仓库扫码枪会模拟键盘输入：
+   条码字符快速连续输入，最后发送 Enter 或 Tab。
+   这里做全局监听，不需要先点击输入框。
+========================================================= */
+
+function isProbablyHardwareScannerInput(target){
+
+  if(!target) return true;
+
+  const tag=String(target.tagName||'').toLowerCase();
+
+  if(tag==='textarea' || target.isContentEditable){
+    return false;
+  }
+
+  return true;
+}
+
+function resetHardwareScannerBuffer(){
+
+  APP.hardwareScannerBuffer='';
+  APP.hardwareScannerLastKeyAt=0;
+
+  if(APP.hardwareScannerTimer){
+    clearTimeout(APP.hardwareScannerTimer);
+    APP.hardwareScannerTimer=null;
+  }
+}
+
+async function submitHardwareScannerBuffer(){
+
+  if(APP.hardwareScannerBusy) return;
+
+  const code=String(
+    APP.hardwareScannerBuffer||''
+  ).trim();
+
+  resetHardwareScannerBuffer();
+
+  if(!code || code.length<2){
+    return;
+  }
+
+  APP.hardwareScannerBusy=true;
+
+  try{
+
+    const indicator=
+      $('hardwareScannerLast');
+
+    if(indicator){
+      indicator.innerHTML=
+        `<span class="text-green-700 font-bold">✅ 已扫：</span>${escapeHtml(code)}`;
+    }
+
+    await handlePackingScan(code);
+
+  }catch(error){
+
+    console.error(
+      '扫码枪处理失败',
+      error
+    );
+
+  }finally{
+
+    APP.hardwareScannerBusy=false;
+
+  }
+}
+
+function activateHardwareScanner(){
+
+  deactivateHardwareScanner();
+
+  APP.hardwareScannerActive=true;
+  resetHardwareScannerBuffer();
+
+  APP.hardwareScannerHandler=
+    async function(event){
+
+      if(!APP.hardwareScannerActive){
+        return;
+      }
+
+      if(
+        !isProbablyHardwareScannerInput(
+          event.target
+        )
+      ){
+        return;
+      }
+
+      if(
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey
+      ){
+        return;
+      }
+
+      const now=Date.now();
+
+      /*
+       * 扫码枪字符一般非常快。
+       * 间隔超过 180ms 时重新开始一条条码。
+       */
+      if(
+        APP.hardwareScannerLastKeyAt &&
+        now-APP.hardwareScannerLastKeyAt>180
+      ){
+        APP.hardwareScannerBuffer='';
+      }
+
+      APP.hardwareScannerLastKeyAt=now;
+
+      if(event.key==='Enter'){
+
+        if(APP.hardwareScannerBuffer){
+
+          event.preventDefault();
+          event.stopPropagation();
+
+          await submitHardwareScannerBuffer();
+        }
+
+        return;
+      }
+
+      if(event.key==='Tab'){
+
+        if(APP.hardwareScannerBuffer){
+
+          event.preventDefault();
+          event.stopPropagation();
+
+          await submitHardwareScannerBuffer();
+        }
+
+        return;
+      }
+
+      if(
+        event.key &&
+        event.key.length===1
+      ){
+
+        APP.hardwareScannerBuffer+=
+          event.key;
+
+        if(APP.hardwareScannerTimer){
+          clearTimeout(
+            APP.hardwareScannerTimer
+          );
+        }
+
+        /*
+         * 有些扫码枪不带回车。
+         * 停止输入 120ms 后自动提交。
+         */
+        APP.hardwareScannerTimer=
+          setTimeout(()=>{
+
+            if(
+              APP.hardwareScannerActive &&
+              APP.hardwareScannerBuffer.length>=3
+            ){
+              submitHardwareScannerBuffer();
+            }
+
+          },120);
+
+      }
+
+    };
+
+  document.addEventListener(
+    'keydown',
+    APP.hardwareScannerHandler,
+    true
+  );
+
+  const indicator=
+    $('hardwareScannerStatus');
+
+  if(indicator){
+    indicator.innerHTML=
+      '🟢 扫码枪监听中：USB / 蓝牙扫码枪可直接扫，不需要点击输入框';
+  }
+}
+
+function deactivateHardwareScanner(){
+
+  APP.hardwareScannerActive=false;
+  resetHardwareScannerBuffer();
+
+  if(APP.hardwareScannerHandler){
+
+    document.removeEventListener(
+      'keydown',
+      APP.hardwareScannerHandler,
+      true
+    );
+
+    APP.hardwareScannerHandler=null;
+  }
+
+  APP.hardwareScannerBusy=false;
+}
+
+async function closePackingScanner(){
+
+  deactivateHardwareScanner();
+
+  if(APP.scannerRunning){
+    try{
+      await stopScanner();
+    }catch(e){
+      console.error(e);
+    }
+  }
+
+  closeModal();
+}
+
 function openPackingScanner(){
   if(!APP.shippingCloudReady) return showError('请先同步云端订单');
   loadPackPool();
@@ -9250,23 +9730,87 @@ function openPackingScanner(){
   openModal(`
     <div class="flex items-center justify-between mb-3">
       <h2 class="text-xl font-bold">🖨️ 智能扫码组单贴单</h2>
-      <button onclick="stopScanner();closeModal()" class="text-gray-400 text-2xl">×</button>
+      <button onclick="closePackingScanner()" class="text-gray-400 text-2xl">×</button>
     </div>
-    <div class="bg-blue-50 rounded-xl p-3 mb-3 text-sm">扫商品 SKU：单件订单扫 1 件就自动出面单；一票多件会累计 SKU，全部满足后才出面单。也可以扫描订单号 / Tracking 直接查单。</div>
+
+    <div class="bg-green-50 rounded-xl p-3 mb-3 text-sm">
+      <div id="hardwareScannerStatus" class="font-bold text-green-700">
+        🟢 扫码枪监听中
+      </div>
+
+      <div class="small mt-1">
+        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。满足一票订单后会自动弹出该面单的打印窗口。支持 Enter / Tab 结尾，也支持无回车自动识别。
+      </div>
+
+      <div id="hardwareScannerLast" class="small mt-2 text-gray-600">
+        等待扫码...
+      </div>
+    </div>
+
+    <div class="bg-blue-50 rounded-xl p-3 mb-3 text-sm">
+      扫商品 SKU：单件订单扫 1 件即可出面单；一票多件会累计 SKU，全部满足后才出面单。也可以扫描订单号 / Tracking 直接查单。
+    </div>
+
     <div id="packPoolStatus" class="mb-3"></div>
-    <div id="reader" style="width:100%;"></div>
-    <input id="packManualCode" class="mt-3" placeholder="商品 SKU / 订单号 / Tracking No.">
-    <button class="btn btn-blue w-full mt-2" onclick="handlePackingScan($('packManualCode').value)">确认扫描</button>
-    <button class="btn btn-gray w-full mt-2" onclick="stopScanner();closeModal()">关闭</button>
+
+    <div class="border rounded-xl p-3 mb-3">
+      <div class="font-bold mb-2">
+        📷 手机摄像头扫码（可选）
+      </div>
+      <div id="reader" style="width:100%;"></div>
+    </div>
+
+    <input
+      id="packManualCode"
+      class="mt-3"
+      placeholder="也可以手动输入 SKU / 订单号 / Tracking No.">
+
+    <button
+      class="btn btn-blue w-full mt-2"
+      onclick="handlePackingScan($('packManualCode').value)">
+      确认扫描
+    </button>
+
+    <button
+      class="btn btn-gray w-full mt-2"
+      onclick="closePackingScanner()">
+      关闭
+    </button>
   `);
 
   renderPackPoolStatus();
-  setTimeout(()=>startCustomScanner(handlePackingScan),300);
+
+  /*
+   * 电脑打开贴单台后立即开启全局扫码枪监听。
+   * 摄像头是可选的，不影响 USB / 蓝牙扫码枪。
+   */
+  activateHardwareScanner();
+
+  setTimeout(
+    ()=>startCustomScanner(
+      handlePackingScan
+    ),
+    300
+  );
 }
 
 async function handlePackingScan(code){
-  const raw=String(code||'').trim();
-  const value=normalizeShippingKey(raw);
+
+  const raw=
+    String(code||'').trim();
+
+  const manualInput=
+    $('packManualCode');
+
+  if(
+    manualInput &&
+    document.activeElement===manualInput
+  ){
+    manualInput.value='';
+  }
+
+  const value=
+    normalizeShippingKey(raw);
   if(!value) return showError('没有读取到条码');
 
   // 先判断是不是订单号 / Tracking。
@@ -9314,14 +9858,275 @@ async function manualConfirmPackOrder(orderId){
   await printShippingLabelByOrderId(order.id,true);
 }
 
+
+function isDesktopPackingStation(){
+
+  const ua=
+    navigator.userAgent||'';
+
+  return !/iPhone|iPad|iPod|Android/i.test(ua);
+}
+
+
+function openDesktopPrintWindow(orderNo){
+
+  if(!isDesktopPackingStation()){
+    return null;
+  }
+
+  try{
+
+    const win=
+      window.open(
+        '',
+        'warehouse_label_print',
+        'width=760,height=920'
+      );
+
+    if(win){
+
+      win.document.open();
+
+      win.document.write(`
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>面单 ${escapeHtml(orderNo||'')}</title>
+          <style>
+            html,body{
+              margin:0;
+              padding:0;
+              background:#fff;
+              font-family:Arial,sans-serif;
+            }
+            .loading{
+              padding:30px;
+              font-size:18px;
+              text-align:center;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="loading">
+            正在准备面单，请稍候...
+          </div>
+        </body>
+        </html>
+      `);
+
+      win.document.close();
+    }
+
+    return win;
+
+  }catch(e){
+
+    console.error(
+      '创建打印窗口失败',
+      e
+    );
+
+    return null;
+  }
+}
+
+
+async function renderPdfBlobToPrintWindow(
+  blob,
+  orderNo,
+  printWin
+){
+
+  if(!printWin){
+    return false;
+  }
+
+  try{
+
+    const raw=
+      new Uint8Array(
+        await blob.arrayBuffer()
+      );
+
+    const pdf=
+      await window.pdfjsLib
+        .getDocument({
+          data:raw.slice()
+        })
+        .promise;
+
+    const images=[];
+
+    for(
+      let pageNo=1;
+      pageNo<=pdf.numPages;
+      pageNo++
+    ){
+
+      const page=
+        await pdf.getPage(
+          pageNo
+        );
+
+      const viewport=
+        page.getViewport({
+          scale:2
+        });
+
+      const canvas=
+        document.createElement(
+          'canvas'
+        );
+
+      canvas.width=
+        Math.ceil(
+          viewport.width
+        );
+
+      canvas.height=
+        Math.ceil(
+          viewport.height
+        );
+
+      const ctx=
+        canvas.getContext(
+          '2d'
+        );
+
+      await page.render({
+        canvasContext:ctx,
+        viewport
+      }).promise;
+
+      images.push(
+        canvas.toDataURL(
+          'image/png'
+        )
+      );
+    }
+
+    printWin.document.open();
+
+    printWin.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>面单 ${escapeHtml(orderNo||'')}</title>
+
+        <style>
+
+          html,body{
+            margin:0;
+            padding:0;
+            background:#fff;
+          }
+
+          .label-page{
+            width:100%;
+            page-break-after:always;
+          }
+
+          .label-page:last-child{
+            page-break-after:auto;
+          }
+
+          img{
+            display:block;
+            width:100%;
+            height:auto;
+          }
+
+          @page{
+            margin:0;
+          }
+
+          @media print{
+
+            html,body{
+              margin:0!important;
+              padding:0!important;
+            }
+
+          }
+
+        </style>
+      </head>
+
+      <body>
+
+        ${
+          images
+            .map(src=>
+              `<div class="label-page"><img src="${src}"></div>`
+            )
+            .join('')
+        }
+
+        <script>
+
+          window.onload=function(){
+
+            setTimeout(
+              function(){
+                window.focus();
+                window.print();
+              },
+              250
+            );
+
+          };
+
+        <\/script>
+
+      </body>
+      </html>
+    `);
+
+    printWin.document.close();
+
+    return true;
+
+  }catch(error){
+
+    console.error(
+      '自动打印面单失败',
+      error
+    );
+
+    try{
+      printWin.close();
+    }catch(e){}
+
+    return false;
+  }
+}
+
 async function printShippingLabelByOrderId(orderId, markPacked=false){
   const order=APP.shippingOrders.find(x=>x.id===orderId);
   const label=APP.shippingLabels.find(x=>x.order_id===orderId);
   if(!order) return showError('订单不存在');
   if(!label) return showError(`订单 ${order.order_no} 还没有上传面单`);
 
+  /*
+   * 桌面扫码枪触发时，先同步创建一个空打印窗口。
+   * 这样能最大限度避免浏览器把后续自动打印当成弹窗广告拦截。
+   */
+  const printWin=
+    isDesktopPackingStation()
+    ? openDesktopPrintWindow(
+        order.order_no
+      )
+    : null;
+
   try{
-    showInfo('正在打开面单...');
+
+    showInfo(
+      isDesktopPackingStation()
+      ? '正在准备面单打印...'
+      : '正在打开面单...'
+    );
     const {data,error}=await APP.sb.storage
       .from('shipping-labels')
       .createSignedUrl(label.storage_path,60);
@@ -9332,9 +10137,40 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 
     const res=await fetch(url);
     if(!res.ok) throw new Error('面单下载失败');
-    const blob=await res.blob();
-    const blobUrl=URL.createObjectURL(blob);
-    window.open(blobUrl,'_blank');
+    const blob=
+      await res.blob();
+
+    let autoPrintStarted=false;
+
+    if(
+      isDesktopPackingStation() &&
+      printWin
+    ){
+
+      autoPrintStarted=
+        await renderPdfBlobToPrintWindow(
+          blob,
+          order.order_no,
+          printWin
+        );
+    }
+
+    /*
+     * 手机或自动打印窗口被浏览器拦截时，
+     * 退回到普通 PDF 打开方式。
+     */
+    if(!autoPrintStarted){
+
+      const blobUrl=
+        URL.createObjectURL(
+          blob
+        );
+
+      window.open(
+        blobUrl,
+        '_blank'
+      );
+    }
 
     if(markPacked && order.status!=='packed'){
       const {error:updateError}=await APP.sb
@@ -9352,12 +10188,27 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
     if(markPacked && progress){
       showOk(`✅ 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`);
     }else{
-      showOk(`已打开 ${order.order_no} 的面单，请直接打印`);
+      showOk(
+        isDesktopPackingStation()
+        ? `已发送 ${order.order_no} 到打印窗口`
+        : `已打开 ${order.order_no} 的面单`
+      );
     }
 
   }catch(error){
+
     console.error(error);
-    showError('打开面单失败：'+(error.message||''));
+
+    if(printWin){
+      try{
+        printWin.close();
+      }catch(e){}
+    }
+
+    showError(
+      '打开面单失败：'+
+      (error.message||'')
+    );
   }
 }
 
