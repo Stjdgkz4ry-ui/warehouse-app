@@ -961,6 +961,8 @@ th{
     <button class="btn btn-gray" onclick="loadShippingWorkspace(true)">🔄 云端同步</button>
     <button class="btn btn-green" onclick="openPickScanner()">📷 扫码拣货</button>
     <button class="btn btn-blue" onclick="openPackingScanner()">🖨️ 扫码贴单</button>
+    <button class="btn btn-yellow" onclick="openShippingPickAudit()">📋 配货表校验</button>
+    <button class="btn btn-gray" onclick="openProductionPreflight()">✅ 开工前检查</button>
   </div>
 
   <div id="shippingCloudSummary" class="small mt-3">
@@ -1099,7 +1101,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V5.5 · Cloud Warehouse
+          版本 V5.7 · Cloud Warehouse
         </div>
 
       </div>
@@ -1228,7 +1230,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V5.5-20260915-LABEL-REMATCH-FIX';
+const APP_VERSION = 'V5.7-20260915-PRODUCTION-PREFLIGHT';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1280,6 +1282,7 @@ const APP = {
   shippingItems:[],
 
   shippingLabels:[],
+  shippingPickAudit:null,
 
   shippingHistoryOrders:[],
 
@@ -8252,12 +8255,34 @@ function updateShippingCloudSummary(){
   const el = $('shippingCloudSummary');
   if(!el) return;
 
-  const openOrders = APP.shippingOrders.length;
-  const totalItems = APP.shippingItems.reduce((s,x)=>s+safeNumber(x.qty,0),0);
-  const pickedItems = APP.shippingItems.reduce((s,x)=>s+safeNumber(x.picked_qty,0),0);
-  const withLabel = new Set(APP.shippingLabels.map(x=>x.order_id)).size;
+  const stats=getShippingProductionStats();
+  const pickedItems=APP.shippingItems.reduce(
+    (s,x)=>s+Math.min(
+      safeNumber(x.picked_qty,0),
+      safeNumber(x.qty,0)
+    ),
+    0
+  );
 
-  el.innerHTML = `订单 <b>${openOrders}</b> 个 · 商品 <b>${pickedItems}/${totalItems}</b> 件已拣 · 已匹配面单 <b>${withLabel}</b> 个`;
+  const audit=APP.shippingPickAudit;
+  const auditText=
+    audit
+    ? (
+        audit.diffCount===0 &&
+        audit.pickPieces===stats.pieces &&
+        audit.pickSkuCount===stats.skuCount
+        ? ' · ✅ 配货表一致'
+        : ` · ❌ 配货差异 ${audit.diffCount}`
+      )
+    : '';
+
+  el.innerHTML =
+    `订单 <b>${stats.orderCount}</b> 个 · `+
+    `SKU <b>${stats.skuCount}</b> 个 · `+
+    `商品 <b>${pickedItems}/${stats.pieces}</b> 件已拣 · `+
+    `一票多件 <b>${stats.multiPieceOrders}</b> 单 · `+
+    `面单 <b>${stats.labels}/${stats.orderCount}</b>`+
+    auditText;
 }
 
 
@@ -8752,6 +8777,512 @@ async function runOrderImport(){
   }
 }
 
+
+function shippingCarrierName(order){
+
+  const t=normalizeTrackingValue(
+    order?.tracking_no || ''
+  );
+
+  if(/^SWX/i.test(t)) return 'SWIFTX';
+  if(/^YWE/i.test(t)) return 'YWE';
+  if(/^GFUS/i.test(t)) return 'GOFO/ECO';
+  if(/^\d{20,22}$/.test(t)) return 'USPS';
+
+  return t ? '其他' : '无Tracking';
+}
+
+
+function getShippingProductionStats(){
+
+  const orders=APP.shippingOrders||[];
+  const items=APP.shippingItems||[];
+
+  const itemByOrder=new Map();
+
+  items.forEach(item=>{
+    if(!itemByOrder.has(item.order_id)){
+      itemByOrder.set(item.order_id,[]);
+    }
+    itemByOrder.get(item.order_id).push(item);
+  });
+
+  const skuTotals=new Map();
+  let pieces=0;
+  let multiPieceOrders=0;
+  let multiSkuOrders=0;
+  let emptyOrders=0;
+
+  orders.forEach(order=>{
+    const its=itemByOrder.get(order.id)||[];
+
+    if(!its.length){
+      emptyOrders++;
+      return;
+    }
+
+    const total=its.reduce(
+      (s,x)=>s+safeNumber(x.qty,0),
+      0
+    );
+
+    const skuCount=new Set(
+      its.map(x=>normalizeShippingKey(x.sku))
+    ).size;
+
+    if(total>1) multiPieceOrders++;
+    if(skuCount>1) multiSkuOrders++;
+
+    its.forEach(item=>{
+      const key=normalizeShippingKey(item.sku);
+      const row=skuTotals.get(key)||{
+        sku:String(item.sku||''),
+        qty:0
+      };
+      row.qty+=safeNumber(item.qty,0);
+      skuTotals.set(key,row);
+      pieces+=safeNumber(item.qty,0);
+    });
+  });
+
+  const labelOrderIds=new Set(
+    (APP.shippingLabels||[])
+      .map(x=>x.order_id)
+  );
+
+  const carrierMap=new Map();
+
+  orders.forEach(order=>{
+    const c=shippingCarrierName(order);
+    carrierMap.set(
+      c,
+      (carrierMap.get(c)||0)+1
+    );
+  });
+
+  const trackingMap=new Map();
+
+  orders.forEach(order=>{
+    const t=normalizeTrackingValue(
+      order.tracking_no||''
+    );
+    if(!t) return;
+    if(!trackingMap.has(t)){
+      trackingMap.set(t,[]);
+    }
+    trackingMap.get(t).push(order.order_no);
+  });
+
+  const duplicateTracking=
+    Array.from(trackingMap.entries())
+      .filter(([,arr])=>arr.length>1);
+
+  return {
+    orderCount:orders.length,
+    pieces,
+    skuCount:skuTotals.size,
+    multiPieceOrders,
+    multiSkuOrders,
+    emptyOrders,
+    labels:labelOrderIds.size,
+    missingLabels:Math.max(
+      0,
+      orders.length-labelOrderIds.size
+    ),
+    carrierMap,
+    skuTotals,
+    duplicateTracking
+  };
+}
+
+
+function findPickAuditQtyHeader(headers){
+
+  return findHeader(
+    headers,
+    [
+      '当日配货数量',
+      '配货数量',
+      '拣货数量',
+      '数量',
+      'qty',
+      'quantity',
+      '件数'
+    ]
+  );
+}
+
+
+async function openShippingPickAudit(){
+
+  if(!APP.shippingOrders?.length){
+    return showError(
+      '请先上传客户订单明细，再校验配货数量合计表'
+    );
+  }
+
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h2 class="text-xl font-bold">📋 配货数量合计表校验</h2>
+        <div class="small mt-1">
+          用客户的配货合计表，与当前云端订单逐 SKU 核对。
+        </div>
+      </div>
+      <button onclick="closeModal()" class="text-gray-400 text-2xl">×</button>
+    </div>
+
+    <div class="bg-blue-50 rounded-xl p-3 text-sm mb-3">
+      支持你今天这种表头：日期 / SKU / 当日配货数量。<br>
+      系统会核对 SKU 数量、总件数和 SKU 种类；任何差异都会列出来。
+    </div>
+
+    <input
+      id="shippingPickAuditFile"
+      type="file"
+      accept=".xlsx,.xls,.csv,.txt"
+      class="w-full border rounded-xl p-3">
+
+    <button
+      class="btn btn-yellow w-full mt-3"
+      onclick="runShippingPickAudit()">
+      开始逐 SKU 校验
+    </button>
+
+    <div id="shippingPickAuditResult" class="mt-3"></div>
+  `);
+}
+
+
+async function runShippingPickAudit(){
+
+  const file=
+    $('shippingPickAuditFile')
+      ?.files?.[0];
+
+  if(!file){
+    return showError(
+      '请先选择配货数量合计表'
+    );
+  }
+
+  try{
+
+    showInfo(
+      '正在核对配货表和订单...'
+    );
+
+    const rows=
+      await parseSpreadsheetFile(file);
+
+    if(!rows || rows.length<2){
+      throw new Error(
+        '配货表没有有效数据'
+      );
+    }
+
+    const headers=rows[0];
+
+    const skuIndex=
+      findOrderSkuHeader(headers);
+
+    const qtyIndex=
+      findPickAuditQtyHeader(headers);
+
+    if(skuIndex<0){
+      throw new Error(
+        '配货表没有找到 SKU 列'
+      );
+    }
+
+    if(qtyIndex<0){
+      throw new Error(
+        '配货表没有找到“当日配货数量/数量”列'
+      );
+    }
+
+    const pickMap=new Map();
+
+    for(let i=1;i<rows.length;i++){
+
+      const sku=String(
+        rows[i][skuIndex]??''
+      ).trim();
+
+      if(!sku) continue;
+
+      const qty=Math.floor(
+        importNumber(
+          rows[i][qtyIndex]
+        )
+      );
+
+      if(qty<=0) continue;
+
+      const key=
+        normalizeShippingKey(sku);
+
+      const old=
+        pickMap.get(key)||{
+          sku,
+          qty:0
+        };
+
+      old.qty+=qty;
+
+      pickMap.set(
+        key,
+        old
+      );
+    }
+
+    const stats=
+      getShippingProductionStats();
+
+    const orderMap=
+      stats.skuTotals;
+
+    const keys=new Set([
+      ...pickMap.keys(),
+      ...orderMap.keys()
+    ]);
+
+    const diffs=[];
+
+    keys.forEach(key=>{
+
+      const p=pickMap.get(key);
+      const o=orderMap.get(key);
+
+      const pickQty=
+        safeNumber(p?.qty,0);
+
+      const orderQty=
+        safeNumber(o?.qty,0);
+
+      if(pickQty!==orderQty){
+
+        diffs.push({
+          sku:
+            p?.sku ||
+            o?.sku ||
+            key,
+          pickQty,
+          orderQty,
+          diff:pickQty-orderQty
+        });
+
+      }
+    });
+
+    diffs.sort(
+      (a,b)=>
+        naturalCompare(
+          a.sku,
+          b.sku
+        )
+    );
+
+    const pickPieces=
+      Array.from(pickMap.values())
+        .reduce(
+          (s,x)=>s+safeNumber(x.qty,0),
+          0
+        );
+
+    APP.shippingPickAudit={
+      fileName:file.name,
+      checkedAt:
+        new Date().toISOString(),
+      pickPieces,
+      pickSkuCount:pickMap.size,
+      orderPieces:stats.pieces,
+      orderSkuCount:stats.skuCount,
+      diffCount:diffs.length,
+      diffs
+    };
+
+    const ok=
+      diffs.length===0 &&
+      pickPieces===stats.pieces &&
+      pickMap.size===stats.skuCount;
+
+    const el=
+      $('shippingPickAuditResult');
+
+    if(el){
+
+      el.innerHTML=`
+        <div class="${ok?'bg-green-50 text-green-800':'bg-red-50 text-red-700'} rounded-xl p-3">
+          <div class="font-bold text-lg">
+            ${ok?'✅ 配货表与订单完全一致':'❌ 配货表与订单存在差异'}
+          </div>
+          <div class="mt-2">
+            配货表：${pickMap.size} 个 SKU / ${pickPieces} 件
+          </div>
+          <div>
+            订单明细：${stats.skuCount} 个 SKU / ${stats.pieces} 件
+          </div>
+          <div>
+            差异 SKU：${diffs.length} 个
+          </div>
+        </div>
+
+        ${
+          diffs.length
+          ? `<div class="mt-3 max-h-64 overflow-auto border rounded-xl">
+              ${diffs.slice(0,200).map(x=>`
+                <div class="p-2 border-b text-sm">
+                  <b>${escapeHtml(x.sku)}</b>
+                  · 配货 ${x.pickQty}
+                  · 订单 ${x.orderQty}
+                  · 差 ${x.diff>0?'+':''}${x.diff}
+                </div>
+              `).join('')}
+            </div>`
+          : ''
+        }
+      `;
+    }
+
+    updateShippingCloudSummary();
+
+    if(ok){
+      showOk(
+        '配货合计表校验通过'
+      );
+    }else{
+      showError(
+        `发现 ${diffs.length} 个 SKU 数量差异`
+      );
+    }
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      '配货表校验失败：'+
+      (error.message||'未知错误')
+    );
+
+  }
+}
+
+
+function openProductionPreflight(){
+
+  if(!APP.shippingOrders?.length){
+    return showError(
+      '当前没有待处理订单'
+    );
+  }
+
+  const s=
+    getShippingProductionStats();
+
+  const audit=
+    APP.shippingPickAudit;
+
+  const auditOk=
+    !!audit &&
+    audit.diffCount===0 &&
+    audit.pickPieces===s.pieces &&
+    audit.pickSkuCount===s.skuCount;
+
+  const labelOk=
+    s.orderCount>0 &&
+    s.missingLabels===0;
+
+  const structureOk=
+    s.emptyOrders===0 &&
+    s.duplicateTracking.length===0;
+
+  const coreOk=
+    labelOk &&
+    structureOk;
+
+  const carriers=
+    Array.from(
+      s.carrierMap.entries()
+    )
+    .sort(
+      (a,b)=>b[1]-a[1]
+    );
+
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h2 class="text-xl font-bold">✅ 正式开工前检查</h2>
+        <div class="small mt-1">
+          开始拣货/贴单前先看这里。红色项目必须处理。
+        </div>
+      </div>
+      <button onclick="closeModal()" class="text-gray-400 text-2xl">×</button>
+    </div>
+
+    <div class="${coreOk?'bg-green-50':'bg-red-50'} rounded-xl p-4 mb-3">
+      <div class="font-bold text-lg">
+        ${coreOk?'✅ 核心订单/面单检查通过':'❌ 还有问题，暂时不要正式贴单'}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-2 text-sm">
+      <div class="bg-gray-50 rounded-lg p-2">订单 <b>${s.orderCount}</b></div>
+      <div class="bg-gray-50 rounded-lg p-2">总件数 <b>${s.pieces}</b></div>
+      <div class="bg-gray-50 rounded-lg p-2">SKU <b>${s.skuCount}</b></div>
+      <div class="bg-purple-50 rounded-lg p-2">一票多件 <b>${s.multiPieceOrders}</b></div>
+      <div class="${s.missingLabels?'bg-red-50 text-red-700':'bg-green-50 text-green-700'} rounded-lg p-2">
+        面单 <b>${s.labels}/${s.orderCount}</b>
+      </div>
+      <div class="${s.emptyOrders?'bg-red-50 text-red-700':'bg-green-50 text-green-700'} rounded-lg p-2">
+        空订单 <b>${s.emptyOrders}</b>
+      </div>
+    </div>
+
+    <div class="mt-3 border rounded-xl p-3">
+      <div class="font-bold">🚚 承运商</div>
+      <div class="mt-2 text-sm">
+        ${carriers.map(([name,count])=>`${escapeHtml(name)}：<b>${count}</b>`).join('　') || '无'}
+      </div>
+    </div>
+
+    <div class="mt-3 ${auditOk?'bg-green-50':'bg-yellow-50'} rounded-xl p-3">
+      <div class="font-bold">
+        ${auditOk?'✅ 配货合计表已逐 SKU 校验通过':'⚠️ 配货合计表尚未通过校验'}
+      </div>
+      <div class="small mt-1">
+        ${
+          audit
+          ? `${escapeHtml(audit.fileName)} · 差异 ${audit.diffCount} 个 SKU`
+          : '如果客户提供配货数量合计表，建议正式开工前上传校验一次。'
+        }
+      </div>
+    </div>
+
+    ${
+      s.missingLabels
+      ? `<div class="mt-3 bg-red-50 text-red-700 rounded-xl p-3">
+          ❌ 还有 ${s.missingLabels} 个订单没有面单，不能全部进入自动贴单。
+        </div>`
+      : ''
+    }
+
+    ${
+      s.duplicateTracking.length
+      ? `<div class="mt-3 bg-red-50 text-red-700 rounded-xl p-3">
+          ❌ 发现 ${s.duplicateTracking.length} 个重复 Tracking，请先核对。
+        </div>`
+      : ''
+    }
+
+    <div class="mt-3 bg-blue-50 rounded-xl p-3 text-sm">
+      一票多件订单会按订单完整 SKU + 数量组单；最后一件扫齐后才允许出面单。
+    </div>
+  `);
+}
+
+
 function openLabelUpload(){
   if(!APP.warehouse) return showError('请先选择仓库');
 
@@ -8811,6 +9342,25 @@ function extractLabelSkuItems(rawText){
     }
   }
   if(!candidate) return [];
+
+  /*
+   * V5.7：兼容今天真实客户面单的一票多件格式。
+   *
+   * 例：
+   * 60023heihua2HF*2, M60223laohuaHF*2*1;
+   * HF30cmhei*3, HF25CMlaohua*3*1;
+   *
+   * 这里最后的 *1 是整组组合标记，不是最后一个 SKU 的数量。
+   * 正确结果应为：
+   * A ×2 + B ×2
+   * A ×3 + B ×3
+   *
+   * 只在“多 SKU + 整串最后为 *1”时去掉最后的组合 *1。
+   * 单 SKU 如 CMCAX-black*2 仍保持数量 2。
+   */
+  if(candidate.includes(',') && /\*1\s*$/.test(candidate)){
+    candidate=candidate.replace(/\*1\s*$/,'');
+  }
 
   const out=[];
   candidate.split(',').forEach(part=>{
@@ -9233,11 +9783,14 @@ async function uploadShippingLabels(){
           continue;
         }
 
-        // 如果订单表和面单都提供了 SKU 明细，自动核对一票多件结构。
+        // 如果订单表和面单都提供了 SKU 明细，必须核对一票多件结构。
+        // V5.7：只要明确识别出不一致，就禁止自动绑定，宁可停下来也不能贴错单。
         const itemCheck=labelItemsMatchOrder(order.id,info.items);
         if(itemCheck===false){
           mismatch++;
-          details.push(`⚠️ ${file.name} 第${page.pageNo}页：订单 ${order.order_no} 的面单SKU「${skuText}」与订单表「${describeOrderRequirement(order.id)}」不一致，仍按订单号绑定，请人工复核`);
+          unmatched++;
+          details.push(`❌ ${file.name} 第${page.pageNo}页：订单 ${order.order_no} 的面单SKU「${skuText}」与订单表「${describeOrderRequirement(order.id)}」不一致，已阻止绑定`);
+          continue;
         }
 
         const pageFileName=(file.name.replace(/\.pdf$/i,'') + `_P${page.pageNo}_${(info.items?.[0]?.sku)||order.order_no}.pdf`);
@@ -9264,7 +9817,7 @@ async function uploadShippingLabels(){
 
     if(resultEl){
       resultEl.innerHTML=`
-        <div class="font-bold">共 ${totalPages} 页 · 已绑定 ${matched} · 面单自动建单 ${created} · 未匹配 ${unmatched}${mismatch?` · SKU不一致 ${mismatch}`:''}</div>
+        <div class="font-bold">共 ${totalPages} 页 · 已绑定 ${matched} · 面单自动建单 ${created} · 未匹配 ${unmatched}${mismatch?` · SKU不一致并拦截 ${mismatch}`:''}</div>
         <div class="mt-2 small leading-6">${details.map(escapeHtml).join('<br>')}</div>
         ${unmatched?'<div class="mt-3 bg-yellow-50 rounded-xl p-3 text-sm">⚠️ 未匹配页面不会上传，避免贴错地址。已有订单只要订单号或 Tracking 能精确匹配，即使这一页暂时没识别出 SKU，也允许重新绑定/替换面单；只有既匹配不到订单号/Tracking、又无法从 SKU 安全确定订单时才会保留为未匹配。</div>':''}
       `;
@@ -10061,7 +10614,7 @@ function openPackingScanner(){
       </div>
 
       <div class="small mt-1">
-        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。打印桥在线时真正静默出纸，不再弹出或闪现浏览器小窗口。扫错/超量会发错误音并拦截。
+        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。电脑端只走打印桥直接出纸；打印桥未连接时会立即报错并停止，不会再弹浏览器打印窗口。扫错/超量会发错误音并拦截。
       </div>
 
       <div id="hardwareScannerLast" class="small mt-2 text-gray-600">
@@ -10707,35 +11260,33 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
     }
 
     /*
-     * 只有本地打印桥不可用 / 打印失败时，
-     * 才创建浏览器打印窗口作为备用。
+     * V5.6 电脑端生产模式：
+     * 电脑贴单台只允许走本地打印桥。
+     * 打印桥不可用时直接报错并停止，绝不再弹浏览器打印窗口。
      */
     if(
       !autoPrintStarted &&
       isDesktopPackingStation()
     ){
 
-      printWin=
-        openDesktopPrintWindow(
-          order.order_no
-        );
+      playWarehouseTone(
+        'error'
+      );
 
-      if(printWin){
+      showError(
+        '❌ 打印桥未连接，已停止出单。请先启动打印桥，再重新扫描。'
+      );
 
-        autoPrintStarted=
-          await renderPdfBlobToPrintWindow(
-            blob,
-            order.order_no,
-            printWin
-          );
-
-      }
+      return false;
     }
 
     /*
-     * 最后的保底：直接打开 PDF。
+     * 手机端仍保留打开 PDF 的方式。
      */
-    if(!autoPrintStarted){
+    if(
+      !autoPrintStarted &&
+      !isDesktopPackingStation()
+    ){
 
       const blobUrl=
         URL.createObjectURL(
