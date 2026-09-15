@@ -1099,7 +1099,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V5.0 · Cloud Warehouse
+          版本 V5.1 · Cloud Warehouse
         </div>
 
       </div>
@@ -1228,7 +1228,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V5.0-20260915-DESKTOP-NO-CAMERA';
+const APP_VERSION = 'V5.1-20260915-PACKING-GUARD';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -9423,23 +9423,130 @@ function orderNeeds(orderId){
   return m;
 }
 
-function orderCanUsePackPool(order){
-  if(order.status!=='picked') return false;
-  if(!APP.shippingLabels.some(x=>x.order_id===order.id)) return false;
-  const need=orderNeeds(order.id);
-  if(!need.size) return false;
-  for(const [sku,qty] of need){
-    if(safeNumber((APP.packPool||{})[sku],0)<qty) return false;
+function isOrderFullyPicked(order){
+  if(!order) return false;
+
+  if(['packed','shipped','cancelled'].includes(order.status)){
+    return false;
   }
+
+  const items=
+    APP.shippingItems
+      .filter(x=>x.order_id===order.id);
+
+  if(!items.length){
+    return false;
+  }
+
+  return items.every(item=>
+    safeNumber(item.picked_qty,0) >=
+    safeNumber(item.qty,0)
+  );
+}
+
+function isOrderPackingEligible(order){
+  if(!isOrderFullyPicked(order)){
+    return false;
+  }
+
+  return APP.shippingLabels.some(
+    x=>x.order_id===order.id
+  );
+}
+
+function totalRemainingPackDemandForSku(sku){
+  const key=normalizeShippingKey(sku);
+
+  let total=0;
+
+  APP.shippingOrders
+    .filter(isOrderPackingEligible)
+    .forEach(order=>{
+
+      const need=orderNeeds(order.id);
+
+      total+=safeNumber(
+        need.get(key),
+        0
+      );
+
+    });
+
+  return total;
+}
+
+function sanitizePackPoolAgainstDemand(){
+
+  let changed=false;
+
+  for(
+    const [sku,rawQty]
+    of Object.entries(APP.packPool||{})
+  ){
+
+    const qty=safeNumber(rawQty,0);
+
+    const maxQty=
+      totalRemainingPackDemandForSku(
+        sku
+      );
+
+    if(maxQty<=0){
+
+      delete APP.packPool[sku];
+      changed=true;
+      continue;
+    }
+
+    if(qty>maxQty){
+
+      APP.packPool[sku]=maxQty;
+      changed=true;
+    }
+
+  }
+
+  if(changed){
+    savePackPool();
+  }
+}
+
+function orderCanUsePackPool(order){
+  if(!isOrderPackingEligible(order)) return false;
+
+  const need=orderNeeds(order.id);
+
+  if(!need.size) return false;
+
+  for(const [sku,qty] of need){
+    if(
+      safeNumber(
+        (APP.packPool||{})[sku],
+        0
+      ) < qty
+    ){
+      return false;
+    }
+  }
+
   return true;
 }
 
 function consumePackPoolForOrder(order){
   const need=orderNeeds(order.id);
+
   for(const [sku,qty] of need){
-    APP.packPool[sku]=Math.max(0,safeNumber(APP.packPool[sku],0)-qty);
-    if(APP.packPool[sku]<=0) delete APP.packPool[sku];
+
+    APP.packPool[sku]=Math.max(
+      0,
+      safeNumber(APP.packPool[sku],0)-qty
+    );
+
+    if(APP.packPool[sku]<=0){
+      delete APP.packPool[sku];
+    }
   }
+
   savePackPool();
 }
 
@@ -9447,26 +9554,54 @@ function nextCompletablePackingOrder(){
   const ready=APP.shippingOrders
     .filter(orderCanUsePackPool)
     .sort((a,b)=>{
-      const qa=[...orderNeeds(a.id).values()].reduce((s,x)=>s+x,0);
-      const qb=[...orderNeeds(b.id).values()].reduce((s,x)=>s+x,0);
-      if(qa!==qb) return qa-qb; // 单件单优先，扫一个就能立刻出面单。
-      return String(a.created_at||'').localeCompare(String(b.created_at||''));
+
+      const qa=
+        [...orderNeeds(a.id).values()]
+          .reduce((s,x)=>s+x,0);
+
+      const qb=
+        [...orderNeeds(b.id).values()]
+          .reduce((s,x)=>s+x,0);
+
+      if(qa!==qb) return qa-qb;
+
+      return String(a.created_at||'')
+        .localeCompare(
+          String(b.created_at||'')
+        );
     });
+
   return ready[0]||null;
 }
 
 function renderPackPoolStatus(){
   const el=$('packPoolStatus');
   if(!el) return;
+
   loadPackPool();
-  const entries=Object.entries(APP.packPool||{}).filter(([,q])=>safeNumber(q,0)>0);
-  const candidates=APP.shippingOrders.filter(o=>o.status==='picked');
+
+  /*
+   * V5.1 会自动清理旧版本留下的“超扫数量”。
+   * 货物池绝不会高于当前待贴单订单真正需要的数量。
+   */
+  sanitizePackPoolAgainstDemand();
+
+  const entries=
+    Object.entries(APP.packPool||{})
+      .filter(([,q])=>
+        safeNumber(q,0)>0
+      );
+
+  const candidates=
+    APP.shippingOrders
+      .filter(isOrderPackingEligible);
+
   el.innerHTML=`
     <div class="bg-blue-50 rounded-xl p-3">
       <div class="font-bold">📦 当前扫码货物池</div>
       <div class="mt-1 text-sm">${entries.length?entries.map(([sku,q])=>`${escapeHtml(sku)} ×${q}`).join('　'):'还没有扫码商品'}</div>
-      <div class="small mt-2">系统会自动判断这些商品能组成哪一个完整订单；一票多件必须全部扫够才会出面单。</div>
-      <div class="small mt-1">待组单：${candidates.length} 个</div>
+      <div class="small mt-2">系统会自动判断这些商品能组成哪一个完整订单；一票多件必须全部扫够才会出面单。超过拣货/订单所需数量会直接拦截。</div>
+      <div class="small mt-1">可贴单订单：${candidates.length} 个</div>
       ${entries.length?'<button class="btn btn-gray btn-small mt-2" onclick="clearPackPool()">清空扫码货物池</button>':''}
     </div>`;
 }
@@ -9480,7 +9615,10 @@ function renderPackingQueue(){
   }
 
   const labelMap=new Map(APP.shippingLabels.map(x=>[x.order_id,x]));
-  const ready=APP.shippingOrders.filter(o=>['picked','packed'].includes(o.status));
+  const ready=APP.shippingOrders.filter(o=>
+    o.status==='packed' ||
+    isOrderPackingEligible(o)
+  );
   if(!ready.length){
     el.innerHTML='';
     return;
@@ -9851,48 +9989,157 @@ async function handlePackingScan(code){
 
   const value=
     normalizeShippingKey(raw);
-  if(!value) return showError('没有读取到条码');
 
-  // 先判断是不是订单号 / Tracking。
-  const directOrder=APP.shippingOrders.find(o=>
-    normalizeShippingKey(o.order_no)===value || normalizeShippingKey(o.tracking_no)===value
-  );
-  if(directOrder){
-    if(!['picked','packed'].includes(directOrder.status)) return showError(`订单 ${directOrder.order_no} 还没有拣完`);
-    return printShippingLabelByOrderId(directOrder.id,false);
+  if(!value){
+    return showError(
+      '没有读取到条码'
+    );
   }
 
-  // 否则按商品 SKU 进入“扫码货物池”。
-  const known=APP.shippingItems.some(item=>normalizeShippingKey(item.sku)===value);
-  if(!known) return showError(`没有找到 SKU：${raw}`);
+  /*
+   * 先判断是不是订单号 / Tracking。
+   */
+  const directOrder=
+    APP.shippingOrders.find(o=>
+      normalizeShippingKey(o.order_no)===value ||
+      normalizeShippingKey(o.tracking_no)===value
+    );
+
+  if(directOrder){
+
+    if(
+      directOrder.status!=='packed' &&
+      !isOrderFullyPicked(directOrder)
+    ){
+      return showError(
+        `订单 ${directOrder.order_no} 还没有拣完`
+      );
+    }
+
+    return printShippingLabelByOrderId(
+      directOrder.id,
+      false
+    );
+  }
+
+  /*
+   * 否则按商品 SKU 进入扫码货物池。
+   */
+  const known=
+    APP.shippingItems.some(item=>
+      normalizeShippingKey(item.sku)===value
+    );
+
+  if(!known){
+    return showError(
+      `没有找到 SKU：${raw}`
+    );
+  }
 
   loadPackPool();
-  APP.packPool[value]=safeNumber(APP.packPool[value],0)+1;
+  sanitizePackPoolAgainstDemand();
+
+  /*
+   * V5.1 核心保护：
+   * 此 SKU 当前所有“已拣完 + 有面单 + 未贴单”的订单
+   * 一共还需要多少件，就最多只能扫多少件。
+   */
+  const allowedQty=
+    totalRemainingPackDemandForSku(
+      value
+    );
+
+  const alreadyScanned=
+    safeNumber(
+      APP.packPool[value],
+      0
+    );
+
+  if(allowedQty<=0){
+
+    if(navigator.vibrate){
+      navigator.vibrate([100,60,100]);
+    }
+
+    return showError(
+      `❌ SKU ${raw} 当前没有待贴单数量，禁止继续扫描`
+    );
+  }
+
+  if(alreadyScanned>=allowedQty){
+
+    if(navigator.vibrate){
+      navigator.vibrate([100,60,100]);
+    }
+
+    return showError(
+      `❌ SKU ${raw} 已扫够 ${allowedQty} 件，不能再扫`
+    );
+  }
+
+  APP.packPool[value]=
+    alreadyScanned+1;
+
   savePackPool();
   renderPackPoolStatus();
 
-  if(navigator.vibrate) navigator.vibrate(40);
+  if(navigator.vibrate){
+    navigator.vibrate(40);
+  }
 
-  const order=nextCompletablePackingOrder();
+  const order=
+    nextCompletablePackingOrder();
+
   if(!order){
-    showOk(`✅ ${raw} +1，继续扫描`);
-    const manual=$('packManualCode'); if(manual) manual.value='';
+
+    showOk(
+      `✅ ${raw} ${alreadyScanned+1}/${allowedQty}，继续扫描`
+    );
+
+    const manual=
+      $('packManualCode');
+
+    if(manual){
+      manual.value='';
+    }
+
     return;
   }
 
-  // 形成一个完整订单后，从池中扣掉对应货物，再出这一张面单。
+  /*
+   * 形成完整订单：
+   * 先打印并标记 packed，成功后才从货物池扣掉该订单数量。
+   */
+  const printed=
+    await printShippingLabelByOrderId(
+      order.id,
+      true
+    );
+
+  if(printed===false){
+    renderPackPoolStatus();
+    return;
+  }
+
   consumePackPoolForOrder(order);
   renderPackPoolStatus();
-  await printShippingLabelByOrderId(order.id,true);
-  showOk(`✅ 已组成订单 ${order.order_no}：${describeOrderRequirement(order.id)}，面单已生成`);
 
-  const manual=$('packManualCode'); if(manual) manual.value='';
+  showOk(
+    `✅ 已组成订单 ${order.order_no}：${describeOrderRequirement(order.id)}`
+  );
+
+  const manual=
+    $('packManualCode');
+
+  if(manual){
+    manual.value='';
+  }
 }
 
 async function manualConfirmPackOrder(orderId){
   const order=APP.shippingOrders.find(x=>x.id===orderId);
   if(!order) return showError('订单不存在');
-  if(order.status!=='picked') return showError('这个订单还没有完成拣货');
+  if(!isOrderFullyPicked(order)) return showError('这个订单还没有完成拣货');
   const ok=confirm(`人工确认这个订单货物正确并生成面单？\n\n订单：${order.order_no}\n需要：${describeOrderRequirement(order.id)}\n\n系统会记录为已完成贴单。`);
   if(!ok) return;
   await printShippingLabelByOrderId(order.id,true);
@@ -10304,6 +10551,8 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       }
     }
 
+    return true;
+
   }catch(error){
 
     console.error(error);
@@ -10318,6 +10567,8 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       '打开面单失败：'+
       (error.message||'')
     );
+
+    return false;
   }
 }
 
