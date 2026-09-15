@@ -1099,7 +1099,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V5.1 · Cloud Warehouse
+          版本 V5.3 · Cloud Warehouse
         </div>
 
       </div>
@@ -1228,7 +1228,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V5.1-20260915-PACKING-GUARD';
+const APP_VERSION = 'V5.3-20260915-SCAN-BEEP-PRINT';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -9445,9 +9445,28 @@ function isOrderFullyPicked(order){
 }
 
 function isOrderPackingEligible(order){
-  if(!isOrderFullyPicked(order)){
+
+  if(!order) return false;
+
+  /*
+   * V5.2：贴单台按当前订单 / 拣货单真实需求工作。
+   * 物理拣货可以先按拣货单完成，不要求系统里逐件登记 picked_qty。
+   * 到贴单台后，扫码枪负责最终复核和自动出面单。
+   */
+  if(
+    ['packed','shipped','cancelled']
+      .includes(order.status)
+  ){
     return false;
   }
+
+  const hasItems=
+    APP.shippingItems.some(
+      x=>x.order_id===order.id &&
+      safeNumber(x.qty,0)>0
+    );
+
+  if(!hasItems) return false;
 
   return APP.shippingLabels.some(
     x=>x.order_id===order.id
@@ -9581,8 +9600,8 @@ function renderPackPoolStatus(){
   loadPackPool();
 
   /*
-   * V5.1 会自动清理旧版本留下的“超扫数量”。
-   * 货物池绝不会高于当前待贴单订单真正需要的数量。
+   * V5.2 按当前未完成订单 / 拣货单真实需求限制扫码数量。
+   * 不要求先逐件登记 picked_qty；贴单扫码本身就是最终复核。
    */
   sanitizePackPoolAgainstDemand();
 
@@ -9600,8 +9619,8 @@ function renderPackPoolStatus(){
     <div class="bg-blue-50 rounded-xl p-3">
       <div class="font-bold">📦 当前扫码货物池</div>
       <div class="mt-1 text-sm">${entries.length?entries.map(([sku,q])=>`${escapeHtml(sku)} ×${q}`).join('　'):'还没有扫码商品'}</div>
-      <div class="small mt-2">系统会自动判断这些商品能组成哪一个完整订单；一票多件必须全部扫够才会出面单。超过拣货/订单所需数量会直接拦截。</div>
-      <div class="small mt-1">可贴单订单：${candidates.length} 个</div>
+      <div class="small mt-2">系统会按当前订单/拣货单自动组单：单件订单扫 1 件立即出面单；一票多件必须全部扫够，最后一件扫完立即出面单。超数量或错误 SKU 会立刻拦截。</div>
+      <div class="small mt-1">待贴单订单：${candidates.length} 个</div>
       ${entries.length?'<button class="btn btn-gray btn-small mt-2" onclick="clearPackPool()">清空扫码货物池</button>':''}
     </div>`;
 }
@@ -9632,6 +9651,145 @@ function renderPackingQueue(){
   }).join('')}</div>`;
 }
 
+
+
+/* =========================================================
+   扫码贴单提示音
+   ========================================================= */
+
+function playWarehouseTone(type='ok'){
+
+  try{
+
+    const AudioCtx =
+      window.AudioContext ||
+      window.webkitAudioContext;
+
+    if(!AudioCtx){
+      return;
+    }
+
+    const ctx =
+      new AudioCtx();
+
+    const osc =
+      ctx.createOscillator();
+
+    const gain =
+      ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    const now =
+      ctx.currentTime;
+
+    if(type==='error'){
+
+      osc.frequency.setValueAtTime(
+        220,
+        now
+      );
+
+      osc.frequency.setValueAtTime(
+        160,
+        now+0.12
+      );
+
+      gain.gain.setValueAtTime(
+        0.18,
+        now
+      );
+
+      gain.gain.exponentialRampToValueAtTime(
+        0.01,
+        now+0.28
+      );
+
+      osc.start(now);
+      osc.stop(now+0.28);
+
+    }else if(type==='print'){
+
+      osc.frequency.setValueAtTime(
+        660,
+        now
+      );
+
+      osc.frequency.setValueAtTime(
+        880,
+        now+0.10
+      );
+
+      gain.gain.setValueAtTime(
+        0.18,
+        now
+      );
+
+      gain.gain.exponentialRampToValueAtTime(
+        0.01,
+        now+0.24
+      );
+
+      osc.start(now);
+      osc.stop(now+0.24);
+
+    }else{
+
+      osc.frequency.setValueAtTime(
+        520,
+        now
+      );
+
+      gain.gain.setValueAtTime(
+        0.12,
+        now
+      );
+
+      gain.gain.exponentialRampToValueAtTime(
+        0.01,
+        now+0.12
+      );
+
+      osc.start(now);
+      osc.stop(now+0.12);
+
+    }
+
+    setTimeout(()=>{
+      try{
+        ctx.close();
+      }catch(e){}
+    },400);
+
+  }catch(error){
+
+    console.error(
+      '提示音播放失败',
+      error
+    );
+
+  }
+
+}
+
+
+function packingScanError(message){
+
+  playWarehouseTone(
+    'error'
+  );
+
+  if(navigator.vibrate){
+    navigator.vibrate(
+      [120,70,120]
+    );
+  }
+
+  showError(message);
+
+  return false;
+}
 
 /* =========================================================
    电脑扫码枪（USB / Bluetooth HID Keyboard）
@@ -9688,7 +9846,7 @@ async function submitHardwareScannerBuffer(){
 
     if(indicator){
       indicator.innerHTML=
-        `<span class="text-green-700 font-bold">✅ 已扫：</span>${escapeHtml(code)}`;
+        `<span class="text-blue-700 font-bold">🔎 识别到：</span>${escapeHtml(code)}`;
     }
 
     await handlePackingScan(code);
@@ -9877,7 +10035,7 @@ function openPackingScanner(){
       </div>
 
       <div class="small mt-1">
-        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。电脑端不会再启动摄像头；安装本地打印桥后，满足一票订单会直接出纸。支持 Enter / Tab 结尾，也支持无回车自动识别。
+        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。扫错/超量会发错误音并拦截。电脑端不会启动摄像头。
       </div>
 
       <div id="hardwareScannerLast" class="small mt-2 text-gray-600">
@@ -9991,7 +10149,7 @@ async function handlePackingScan(code){
     normalizeShippingKey(raw);
 
   if(!value){
-    return showError(
+    return packingScanError(
       '没有读取到条码'
     );
   }
@@ -10009,10 +10167,10 @@ async function handlePackingScan(code){
 
     if(
       directOrder.status!=='packed' &&
-      !isOrderFullyPicked(directOrder)
+      !isOrderPackingEligible(directOrder)
     ){
-      return showError(
-        `订单 ${directOrder.order_no} 还没有拣完`
+      return packingScanError(
+        `订单 ${directOrder.order_no} 当前没有可用面单或已经完成`
       );
     }
 
@@ -10031,7 +10189,7 @@ async function handlePackingScan(code){
     );
 
   if(!known){
-    return showError(
+    return packingScanError(
       `没有找到 SKU：${raw}`
     );
   }
@@ -10040,9 +10198,10 @@ async function handlePackingScan(code){
   sanitizePackPoolAgainstDemand();
 
   /*
-   * V5.1 核心保护：
-   * 此 SKU 当前所有“已拣完 + 有面单 + 未贴单”的订单
+   * V5.2 核心保护：
+   * 此 SKU 当前所有“有面单 + 未完成贴单”的订单
    * 一共还需要多少件，就最多只能扫多少件。
+   * 这个上限就是当前订单 / 拣货单真实需求。
    */
   const allowedQty=
     totalRemainingPackDemandForSku(
@@ -10061,7 +10220,7 @@ async function handlePackingScan(code){
       navigator.vibrate([100,60,100]);
     }
 
-    return showError(
+    return packingScanError(
       `❌ SKU ${raw} 当前没有待贴单数量，禁止继续扫描`
     );
   }
@@ -10072,7 +10231,7 @@ async function handlePackingScan(code){
       navigator.vibrate([100,60,100]);
     }
 
-    return showError(
+    return packingScanError(
       `❌ SKU ${raw} 已扫够 ${allowedQty} 件，不能再扫`
     );
   }
@@ -10082,6 +10241,14 @@ async function handlePackingScan(code){
 
   savePackPool();
   renderPackPoolStatus();
+
+  /*
+   * 有效商品：短“滴”一声。
+   * 如果这一件刚好完成一个订单，后面打印成功会再发“出单成功”提示音。
+   */
+  playWarehouseTone(
+    'ok'
+  );
 
   if(navigator.vibrate){
     navigator.vibrate(40);
@@ -10139,7 +10306,7 @@ async function handlePackingScan(code){
 async function manualConfirmPackOrder(orderId){
   const order=APP.shippingOrders.find(x=>x.id===orderId);
   if(!order) return showError('订单不存在');
-  if(!isOrderFullyPicked(order)) return showError('这个订单还没有完成拣货');
+  if(!isOrderPackingEligible(order)) return showError('这个订单当前没有可用面单，或者已经完成贴单');
   const ok=confirm(`人工确认这个订单货物正确并生成面单？\n\n订单：${order.order_no}\n需要：${describeOrderRequirement(order.id)}\n\n系统会记录为已完成贴单。`);
   if(!ok) return;
   await printShippingLabelByOrderId(order.id,true);
@@ -10498,6 +10665,10 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
           try{ printWin.close(); }catch(e){}
         }
 
+        playWarehouseTone(
+          'print'
+        );
+
         showOk(
           `✅ ${order.order_no} 已直接发送到面单打印机`
         );
@@ -10543,6 +10714,11 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       showOk(`✅ 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`);
     }else{
       if(!silentPrinted){
+
+        playWarehouseTone(
+          'print'
+        );
+
         showOk(
           isDesktopPackingStation()
           ? `已发送 ${order.order_no} 到打印窗口`
@@ -10562,6 +10738,10 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
         printWin.close();
       }catch(e){}
     }
+
+    playWarehouseTone(
+      'error'
+    );
 
     showError(
       '打开面单失败：'+
