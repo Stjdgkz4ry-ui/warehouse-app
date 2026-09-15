@@ -944,7 +944,32 @@ th{
 </div>
 
 
-<div id="pickingList"></div>
+<div class="card p-4 mb-3">
+
+  <div class="flex items-center justify-between gap-3">
+    <div>
+      <div class="font-bold text-lg">☁️ 云端订单工作流</div>
+      <div class="small mt-1">订单、面单、拣货进度可在同一仓库的手机之间共享</div>
+    </div>
+    <span id="shippingCloudBadge" class="badge badge-gray">未检查</span>
+  </div>
+
+  <div class="grid grid-cols-2 gap-2 mt-3">
+    <button class="btn btn-purple" onclick="openLabelUpload()">📄 上传面单 PDF</button>
+    <button class="btn btn-gray" onclick="loadShippingWorkspace(true)">🔄 云端同步</button>
+    <button class="btn btn-green" onclick="openPickScanner()">📷 扫码拣货</button>
+    <button class="btn btn-blue" onclick="openPackingScanner()">🖨️ 扫码贴单</button>
+  </div>
+
+  <div id="shippingCloudSummary" class="small mt-3">
+    导入订单后会自动保存到当前仓库。
+  </div>
+
+</div>
+
+<div id="packingQueue" class="mb-3"></div>
+
+<div id="pickingListLegacyDuplicate" class="hidden"></div>
 
 </div>
         </div>
@@ -1070,7 +1095,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V2.4 · Cloud Warehouse
+          版本 V3.0 · Cloud Warehouse
         </div>
 
       </div>
@@ -1199,7 +1224,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V2.4-20260910';
+const APP_VERSION = 'V3.0-20260914';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1236,7 +1261,19 @@ const APP = {
 
   pickingOrderNo:'',
 
-  pickingOrderDate:''
+  pickingOrderDate:'',
+
+  shippingOrders:[],
+
+  shippingItems:[],
+
+  shippingLabels:[],
+
+  shippingCloudReady:null,
+
+  pickScanMode:false,
+
+  packScanMode:false
 
 };
 
@@ -5528,7 +5565,7 @@ function openOrderImport(){
       </div>
 
       <div class="font-mono text-xs">
-        SKU　数量
+        订单号　SKU　数量　Tracking No.（可选）
       </div>
 
       <div class="font-mono text-xs mt-2">
@@ -5541,11 +5578,11 @@ function openOrderImport(){
 
 
       <div class="text-sm text-gray-600 mt-3">
-        第一行必须有“SKU”和“数量”。
+        第一行必须有“SKU”和“数量”。有多个订单时建议同时有“订单号”。
       </div>
 
       <div class="text-sm text-gray-600 mt-1">
-        订单号可以在拣货页面另外填写。
+        如果整个文件只有一个订单，也可以在拣货页面手动填写订单号。
       </div>
 
     </div>
@@ -5713,7 +5750,32 @@ function findOrderNoHeader(headers){
       'order',
       'order no',
       'order_no',
-      'orderno'
+      'orderno',
+      'Order ID',
+      'OrderID',
+      '订单ID',
+      '订单 id'
+    ]
+  );
+
+}
+
+
+function findTrackingHeader(headers){
+
+  return findHeader(
+    headers,
+    [
+      '追踪号',
+      '追踪号码',
+      '运单号',
+      '快递单号',
+      'tracking',
+      'tracking no',
+      'tracking_no',
+      'tracking number',
+      'label',
+      '面单编号'
     ]
   );
 
@@ -7634,6 +7696,782 @@ function exportLogs(){
 
 }
 
+
+/* =========================================================
+   V3 云端订单 / 拣货扫码 / 面单打印
+========================================================= */
+
+function shippingDateToday(){
+  return new Date().toISOString().slice(0,10);
+}
+
+function normalizeShippingKey(value){
+  return String(value ?? '').trim().toLowerCase();
+}
+
+async function checkShippingCloud(){
+
+  if(!APP.warehouse){
+    APP.shippingCloudReady = false;
+    return false;
+  }
+
+  try{
+    const {error} = await APP.sb
+      .from('shipping_orders')
+      .select('id')
+      .eq('warehouse_id',APP.warehouse.id)
+      .limit(1);
+
+    if(error){
+      APP.shippingCloudReady = false;
+      updateShippingCloudBadge();
+      return false;
+    }
+
+    APP.shippingCloudReady = true;
+    updateShippingCloudBadge();
+    return true;
+
+  }catch(error){
+    console.error(error);
+    APP.shippingCloudReady = false;
+    updateShippingCloudBadge();
+    return false;
+  }
+}
+
+function updateShippingCloudBadge(){
+  const badge = $('shippingCloudBadge');
+  if(!badge) return;
+
+  if(APP.shippingCloudReady === true){
+    badge.className = 'badge badge-green';
+    badge.textContent = '云端已连接';
+  }else if(APP.shippingCloudReady === false){
+    badge.className = 'badge badge-red';
+    badge.textContent = '需初始化';
+  }else{
+    badge.className = 'badge badge-gray';
+    badge.textContent = '未检查';
+  }
+}
+
+function shippingOrderStatusText(status){
+  const map = {
+    pending:'待拣货',
+    picking:'拣货中',
+    picked:'已拣完',
+    packed:'已贴单',
+    shipped:'已出库'
+  };
+  return map[status] || status || '待处理';
+}
+
+async function loadShippingWorkspace(silent=false){
+
+  if(!APP.warehouse) return;
+
+  const ready = await checkShippingCloud();
+
+  if(!ready){
+    APP.shippingOrders = [];
+    APP.shippingItems = [];
+    APP.shippingLabels = [];
+    renderPackingQueue();
+    if(!silent){
+      showError('云端订单表还没有建立。先执行我提供的 shipping_setup.sql，一次即可。');
+    }
+    return;
+  }
+
+  try{
+    if(!silent) showInfo('正在同步云端订单...');
+
+    const {data:orders,error:orderError} = await APP.sb
+      .from('shipping_orders')
+      .select('*')
+      .eq('warehouse_id',APP.warehouse.id)
+      .neq('status','shipped')
+      .order('created_at',{ascending:true});
+
+    if(orderError) throw orderError;
+
+    const orderIds = (orders || []).map(x => x.id);
+    let items = [];
+    let labels = [];
+
+    if(orderIds.length){
+      const {data:itemData,error:itemError} = await APP.sb
+        .from('shipping_order_items')
+        .select('*')
+        .in('order_id',orderIds)
+        .order('created_at',{ascending:true});
+      if(itemError) throw itemError;
+      items = itemData || [];
+
+      const {data:labelData,error:labelError} = await APP.sb
+        .from('shipping_labels')
+        .select('*')
+        .in('order_id',orderIds)
+        .order('created_at',{ascending:false});
+      if(labelError) throw labelError;
+      labels = labelData || [];
+    }
+
+    APP.shippingOrders = orders || [];
+    APP.shippingItems = items;
+    APP.shippingLabels = labels;
+
+    buildCloudPickingRows();
+    renderPackingQueue();
+    updateShippingCloudSummary();
+
+    if(!silent) showOk('云端订单已同步');
+
+  }catch(error){
+    console.error(error);
+    showError('同步云端订单失败：' + (error.message || '未知错误'));
+  }
+}
+
+function updateShippingCloudSummary(){
+  const el = $('shippingCloudSummary');
+  if(!el) return;
+
+  const openOrders = APP.shippingOrders.length;
+  const totalItems = APP.shippingItems.reduce((s,x)=>s+safeNumber(x.qty,0),0);
+  const pickedItems = APP.shippingItems.reduce((s,x)=>s+safeNumber(x.picked_qty,0),0);
+  const withLabel = new Set(APP.shippingLabels.map(x=>x.order_id)).size;
+
+  el.innerHTML = `订单 <b>${openOrders}</b> 个 · 商品 <b>${pickedItems}/${totalItems}</b> 件已拣 · 已匹配面单 <b>${withLabel}</b> 个`;
+}
+
+function activeShippingItems(){
+  const orderMap = new Map(APP.shippingOrders.map(x=>[x.id,x]));
+  return APP.shippingItems.filter(item=>{
+    const order = orderMap.get(item.order_id);
+    return order && order.status !== 'shipped';
+  });
+}
+
+function buildCloudPickingRows(){
+
+  if(!APP.shippingCloudReady || !APP.shippingOrders.length){
+    return;
+  }
+
+  const demand = new Map();
+
+  activeShippingItems().forEach(item=>{
+    const remain = Math.max(0,safeNumber(item.qty,0)-safeNumber(item.picked_qty,0));
+    if(remain <= 0) return;
+    const key = normalizeShippingKey(item.sku);
+    if(!key) return;
+
+    if(!demand.has(key)){
+      demand.set(key,{
+        sku:String(item.sku || '').trim(),
+        name:String(item.name || item.sku || '').trim(),
+        remaining:0,
+        itemIds:[]
+      });
+    }
+    const d=demand.get(key);
+    d.remaining += remain;
+    d.itemIds.push(item.id);
+  });
+
+  const result=[];
+
+  demand.forEach(d=>{
+    const invRows = activeInventory()
+      .filter(x=>normalizeShippingKey(x.sku)===normalizeShippingKey(d.sku))
+      .sort((a,b)=>naturalCompare(a.bin||'',b.bin||''));
+
+    if(!invRows.length){
+      result.push({
+        sku:d.sku,name:d.name,bin:'',orderQty:d.remaining,pickedQty:0,
+        stockQty:0,status:'missing',statusText:'❌ 找不到SKU',shortage:d.remaining,
+        inventoryId:null,duplicateSku:false,cloud:true
+      });
+      return;
+    }
+
+    let need=d.remaining;
+    const totalStock=invRows.reduce((sum,x)=>sum+safeNumber(x.qty,0),0);
+
+    invRows.forEach((inv,index)=>{
+      if(need<=0) return;
+      const stock=Math.max(0,safeNumber(inv.qty,0));
+      const take=Math.min(need,stock);
+      if(take<=0 && index<invRows.length-1) return;
+      const qty = take>0 ? take : need;
+      result.push({
+        sku:String(inv.sku||d.sku),
+        name:getItemName(inv),
+        bin:String(inv.bin||'').trim(),
+        orderQty:qty,
+        pickedQty:0,
+        stockQty:stock,
+        status: totalStock>=d.remaining ? 'ok' : 'short',
+        statusText: totalStock>=d.remaining ? '✅ 可拣' : '⚠️ 库存不足',
+        shortage:Math.max(0,d.remaining-totalStock),
+        inventoryId:inv.id,
+        duplicateSku:invRows.length>1,
+        cloud:true
+      });
+      need-=qty;
+    });
+  });
+
+  result.sort((a,b)=>{
+    if(!a.bin && b.bin) return 1;
+    if(a.bin && !b.bin) return -1;
+    const c=naturalCompare(a.bin||'',b.bin||'');
+    return c!==0 ? c : naturalCompare(a.sku||'',b.sku||'');
+  });
+
+  APP.pickingRows=result;
+  APP.pickingFileName='云端订单';
+  APP.pickingOrderDate=shippingDateToday();
+
+  if(result.length){
+    renderPickingList();
+  }else{
+    renderPickingEmpty();
+  }
+}
+
+async function saveImportedOrdersToCloud(parsedOrders, sourceFile){
+
+  const ready = await checkShippingCloud();
+  if(!ready){
+    throw new Error('云端订单表尚未初始化');
+  }
+
+  for(const order of parsedOrders){
+
+    const payload={
+      warehouse_id:APP.warehouse.id,
+      order_no:order.orderNo,
+      order_date:$('pickOrderDate')?.value || shippingDateToday(),
+      status:'pending',
+      source_file:sourceFile || '',
+      tracking_no:order.trackingNo || null,
+      created_by:APP.user.id
+    };
+
+    const {data:orderRow,error:orderError}=await APP.sb
+      .from('shipping_orders')
+      .upsert(payload,{onConflict:'warehouse_id,order_no'})
+      .select('*')
+      .single();
+
+    if(orderError) throw orderError;
+
+    // 重新导入同一订单时，只在尚未拣货的情况下刷新明细，避免重复累计。
+    const {data:oldItems,error:oldError}=await APP.sb
+      .from('shipping_order_items')
+      .select('id,picked_qty')
+      .eq('order_id',orderRow.id);
+    if(oldError) throw oldError;
+
+    const hasPicked=(oldItems||[]).some(x=>safeNumber(x.picked_qty,0)>0);
+    if(hasPicked){
+      continue;
+    }
+
+    const {error:deleteError}=await APP.sb
+      .from('shipping_order_items')
+      .delete()
+      .eq('order_id',orderRow.id);
+    if(deleteError) throw deleteError;
+
+    const rows=order.items.map(item=>({
+      order_id:orderRow.id,
+      warehouse_id:APP.warehouse.id,
+      sku:item.sku,
+      name:item.name || item.sku,
+      qty:item.qty,
+      picked_qty:0
+    }));
+
+    if(rows.length){
+      const {error:itemError}=await APP.sb
+        .from('shipping_order_items')
+        .insert(rows);
+      if(itemError) throw itemError;
+    }
+  }
+}
+
+// V3 覆盖旧订单导入：支持一个文件内多个订单，并同步到 Supabase。
+async function runOrderImport(){
+
+  const file=$('orderImportFile')?.files?.[0];
+  if(!file) return showError('请先选择订单文件');
+  if(!APP.warehouse) return showError('请先选择仓库');
+
+  try{
+    showInfo('正在读取订单并保存云端...');
+    const rows=await parseSpreadsheetFile(file);
+    if(!rows || rows.length<2) throw new Error('订单文件没有有效数据');
+
+    const headers=rows[0];
+    const skuIndex=findOrderSkuHeader(headers);
+    const qtyIndex=findOrderQtyHeader(headers);
+    const nameIndex=findOrderNameHeader(headers);
+    const orderNoIndex=findOrderNoHeader(headers);
+    const trackingIndex=findTrackingHeader(headers);
+
+    if(skuIndex<0) throw new Error('没有找到 SKU 表头');
+    if(qtyIndex<0) throw new Error('没有找到数量表头');
+
+    const manualOrderNo=String($('pickOrderNo')?.value||'').trim();
+    const byOrder=new Map();
+    const errors=[];
+
+    for(let i=1;i<rows.length;i++){
+      const row=rows[i];
+      const sku=String(row[skuIndex]??'').trim();
+      if(!sku) continue;
+      const qty=Math.floor(importNumber(row[qtyIndex]));
+      if(qty<=0){
+        errors.push(`第${i+1}行：${sku} 数量无效`);
+        continue;
+      }
+
+      let orderNo=orderNoIndex>=0 ? String(row[orderNoIndex]??'').trim() : '';
+      if(!orderNo) orderNo=manualOrderNo;
+      if(!orderNo){
+        const baseName=String(file.name||'order').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9_-]+/g,'-').slice(0,40);
+        orderNo='FILE-' + shippingDateToday().replaceAll('-','') + '-' + baseName;
+      }
+
+      const trackingNo=trackingIndex>=0 ? String(row[trackingIndex]??'').trim() : '';
+      const name=nameIndex>=0 ? String(row[nameIndex]??'').trim() : '';
+      const key=normalizeShippingKey(orderNo);
+
+      if(!byOrder.has(key)){
+        byOrder.set(key,{orderNo,trackingNo,items:[]});
+      }
+      const order=byOrder.get(key);
+      if(!order.trackingNo && trackingNo) order.trackingNo=trackingNo;
+
+      const existing=order.items.find(x=>normalizeShippingKey(x.sku)===normalizeShippingKey(sku));
+      if(existing){
+        existing.qty+=qty;
+      }else{
+        order.items.push({sku,name,qty});
+      }
+    }
+
+    const orders=Array.from(byOrder.values()).filter(x=>x.items.length);
+    if(!orders.length) throw new Error('没有找到有效订单商品');
+
+    await saveImportedOrdersToCloud(orders,file.name);
+    APP.pickingFileName=file.name;
+    APP.pickingOrderNo=orders.length===1 ? orders[0].orderNo : `共${orders.length}个订单`;
+    APP.pickingOrderDate=$('pickOrderDate')?.value || shippingDateToday();
+
+    closeModal();
+    await loadShippingWorkspace(true);
+    showPage('picking');
+
+    const suffix=errors.length ? `，另有 ${errors.length} 行被跳过` : '';
+    showOk(`导入成功：${orders.length} 个订单${suffix}`);
+
+  }catch(error){
+    console.error(error);
+    showError('订单导入失败：' + (error.message || '未知错误'));
+  }
+}
+
+function openLabelUpload(){
+  if(!APP.warehouse) return showError('请先选择仓库');
+
+  openModal(`
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-bold">📄 上传面单 PDF</h2>
+      <button onclick="closeModal()" class="text-gray-400 text-2xl">×</button>
+    </div>
+
+    <div class="bg-blue-50 rounded-xl p-3 text-sm mb-4">
+      可以一次选择多份 PDF。系统会优先用“订单号 / Tracking No.”在 PDF 文件名中自动匹配订单。
+    </div>
+
+    <input id="shippingLabelFiles" type="file" accept="application/pdf,.pdf" multiple>
+
+    <button class="btn btn-blue w-full mt-4" onclick="uploadShippingLabels()">☁️ 上传并自动匹配</button>
+    <button class="btn btn-gray w-full mt-2" onclick="closeModal()">取消</button>
+    <div id="labelUploadResult" class="mt-3 text-sm"></div>
+  `);
+}
+
+function findOrderForLabelName(fileName){
+  const name=normalizeShippingKey(fileName);
+  const candidates=[...APP.shippingOrders].sort((a,b)=>
+    Math.max(String(b.order_no||'').length,String(b.tracking_no||'').length)-
+    Math.max(String(a.order_no||'').length,String(a.tracking_no||'').length)
+  );
+
+  return candidates.find(order=>{
+    const orderNo=normalizeShippingKey(order.order_no);
+    const tracking=normalizeShippingKey(order.tracking_no);
+    return (orderNo && name.includes(orderNo)) || (tracking && name.includes(tracking));
+  }) || null;
+}
+
+async function uploadShippingLabels(){
+  const input=$('shippingLabelFiles');
+  const files=Array.from(input?.files||[]);
+  if(!files.length) return showError('请先选择 PDF 面单');
+
+  try{
+    const ready=await checkShippingCloud();
+    if(!ready) throw new Error('云端订单表尚未初始化');
+    if(!APP.shippingOrders.length) await loadShippingWorkspace(true);
+
+    let matched=0,unmatched=0;
+    const details=[];
+
+    for(const file of files){
+      const order=findOrderForLabelName(file.name);
+      if(!order){
+        unmatched++;
+        details.push(`❌ ${file.name}：未找到对应订单`);
+        continue;
+      }
+
+      const safeName=file.name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fff]/g,'_');
+      const path=`${APP.warehouse.id}/${order.id}/${Date.now()}_${safeName}`;
+
+      const {error:uploadError}=await APP.sb.storage
+        .from('shipping-labels')
+        .upload(path,file,{contentType:'application/pdf',upsert:false});
+      if(uploadError) throw uploadError;
+
+      const {error:labelError}=await APP.sb
+        .from('shipping_labels')
+        .upsert({
+          order_id:order.id,
+          warehouse_id:APP.warehouse.id,
+          file_name:file.name,
+          storage_path:path,
+          tracking_no:order.tracking_no || null,
+          uploaded_by:APP.user.id
+        },{onConflict:'order_id'});
+      if(labelError) throw labelError;
+
+      matched++;
+      details.push(`✅ ${file.name} → ${order.order_no}`);
+    }
+
+    const el=$('labelUploadResult');
+    if(el){
+      el.innerHTML=`<div class="font-bold">匹配 ${matched}，未匹配 ${unmatched}</div><div class="mt-2 small">${details.map(escapeHtml).join('<br>')}</div>`;
+    }
+
+    await loadShippingWorkspace(true);
+    showOk(`面单上传完成：${matched} 份已匹配`);
+
+  }catch(error){
+    console.error(error);
+    showError('面单上传失败：'+(error.message||'未知错误'));
+  }
+}
+
+function openPickScanner(){
+  if(!APP.shippingCloudReady){
+    return showError('请先同步云端订单');
+  }
+  if(!APP.shippingItems.length){
+    return showError('当前没有待拣订单');
+  }
+
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-xl font-bold">📷 扫码拣货</h2>
+      <button onclick="stopScanner();closeModal()" class="text-gray-400 text-2xl">×</button>
+    </div>
+    <div id="pickScanNext" class="bg-blue-50 rounded-xl p-3 mb-3"></div>
+    <div id="reader" style="width:100%;"></div>
+    <div class="small text-center mt-2">每扫一次 = 拣 1 件。扫错 SKU 不会计数。</div>
+    <input id="pickManualCode" class="mt-3" placeholder="也可以手动输入 SKU">
+    <button class="btn btn-green w-full mt-2" onclick="handlePickScan($('pickManualCode').value)">确认 1 件</button>
+    <button class="btn btn-gray w-full mt-2" onclick="stopScanner();closeModal()">关闭</button>
+  `);
+
+  renderNextPickHint();
+  setTimeout(()=>startCustomScanner(handlePickScan),300);
+}
+
+function nextCloudPickRow(){
+  return APP.pickingRows.find(row=>safeNumber(row.orderQty,0)>0 && row.status!=='missing') || null;
+}
+
+function renderNextPickHint(){
+  const el=$('pickScanNext');
+  if(!el) return;
+  const row=nextCloudPickRow();
+  if(!row){
+    el.innerHTML='<div class="font-bold text-green-700">✅ 当前订单已经全部拣完</div>';
+    return;
+  }
+  el.innerHTML=`<div class="small">下一项</div><div class="text-xl font-bold mt-1">📍 ${escapeHtml(row.bin||'未设置库位')}</div><div class="font-bold mt-1">SKU：${escapeHtml(row.sku)}</div><div class="mt-1">还要拣：<b>${row.orderQty}</b></div>`;
+}
+
+async function startCustomScanner(onDecode){
+  if(!window.Html5Qrcode) return showError('扫码组件加载失败');
+  try{
+    if(APP.scannerRunning) await stopScanner();
+    APP.scanner=new Html5Qrcode('reader');
+    APP.scannerRunning=true;
+    await APP.scanner.start(
+      {facingMode:'environment'},
+      {fps:10,qrbox:{width:250,height:180}},
+      async decodedText=>{
+        try{ await onDecode(decodedText); }catch(e){ console.error(e); }
+      },
+      ()=>{}
+    );
+  }catch(error){
+    APP.scannerRunning=false;
+    console.error(error);
+    showError('无法打开摄像头：'+(error.message||''));
+  }
+}
+
+async function handlePickScan(code){
+  const sku=String(code||'').trim();
+  if(!sku) return showError('没有读取到 SKU');
+
+  const next=nextCloudPickRow();
+  if(!next) return showOk('已经全部拣完');
+
+  if(normalizeShippingKey(next.sku)!==normalizeShippingKey(sku)){
+    if(navigator.vibrate) navigator.vibrate([120,80,120]);
+    return showError(`扫错了：现在应该拣 ${next.sku}`);
+  }
+
+  try{
+    // 把 1 件分配到该 SKU 最早的未完成订单。
+    const item=[...activeShippingItems()]
+      .filter(x=>normalizeShippingKey(x.sku)===normalizeShippingKey(sku) && safeNumber(x.picked_qty,0)<safeNumber(x.qty,0))
+      .sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')))[0];
+
+    if(!item) return showError('这个 SKU 已经拣够了');
+
+    const nextQty=safeNumber(item.picked_qty,0)+1;
+    const {error}=await APP.sb
+      .from('shipping_order_items')
+      .update({picked_qty:nextQty})
+      .eq('id',item.id)
+      .eq('warehouse_id',APP.warehouse.id);
+    if(error) throw error;
+
+    item.picked_qty=nextQty;
+    await refreshShippingOrderStatuses();
+    buildCloudPickingRows();
+    renderNextPickHint();
+    updateShippingCloudSummary();
+
+    if(navigator.vibrate) navigator.vibrate(50);
+    showOk(`✅ ${sku} +1`);
+
+    const manual=$('pickManualCode');
+    if(manual) manual.value='';
+
+  }catch(error){
+    console.error(error);
+    showError('拣货记录失败：'+(error.message||''));
+  }
+}
+
+async function refreshShippingOrderStatuses(){
+  for(const order of APP.shippingOrders){
+    const items=APP.shippingItems.filter(x=>x.order_id===order.id);
+    if(!items.length) continue;
+    const done=items.every(x=>safeNumber(x.picked_qty,0)>=safeNumber(x.qty,0));
+    const any=items.some(x=>safeNumber(x.picked_qty,0)>0);
+    const wanted=done ? 'picked' : (any ? 'picking' : 'pending');
+    if(order.status!==wanted && !['packed','shipped'].includes(order.status)){
+      const {error}=await APP.sb.from('shipping_orders').update({status:wanted}).eq('id',order.id);
+      if(!error) order.status=wanted;
+    }
+  }
+}
+
+function renderPackingQueue(){
+  const el=$('packingQueue');
+  if(!el) return;
+  if(!APP.shippingCloudReady || !APP.shippingOrders.length){
+    el.innerHTML='';
+    return;
+  }
+
+  const labelMap=new Map(APP.shippingLabels.map(x=>[x.order_id,x]));
+  const ready=APP.shippingOrders.filter(o=>['picked','packed'].includes(o.status));
+  if(!ready.length){
+    el.innerHTML='';
+    return;
+  }
+
+  el.innerHTML=`<div class="card p-4"><div class="font-bold mb-2">🖨️ 待贴单订单</div>${ready.map(o=>{
+    const label=labelMap.get(o.id);
+    return `<div class="border-t py-2 flex items-center justify-between gap-2"><div class="min-w-0"><div class="font-bold break-all">${escapeHtml(o.order_no)}</div><div class="small">${shippingOrderStatusText(o.status)} · ${label?'✅ 已有面单':'❌ 缺面单'}</div></div><div class="flex gap-1"><button class="btn btn-small ${label?'btn-blue':'btn-gray'}" ${label?`onclick="printShippingLabelByOrderId('${o.id}')"`:'disabled'}>打印</button><button class="btn btn-small btn-green" ${o.status==='packed'?`onclick="completePackedOrder('${o.id}')"`:'disabled'}>出库</button></div></div>`;
+  }).join('')}</div>`;
+}
+
+function openPackingScanner(){
+  if(!APP.shippingCloudReady) return showError('请先同步云端订单');
+
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-xl font-bold">🖨️ 扫码贴单</h2>
+      <button onclick="stopScanner();closeModal()" class="text-gray-400 text-2xl">×</button>
+    </div>
+    <div class="bg-blue-50 rounded-xl p-3 mb-3 text-sm">扫描订单号或 Tracking No.。匹配成功后会打开该订单原始 PDF 面单。</div>
+    <div id="reader" style="width:100%;"></div>
+    <input id="packManualCode" class="mt-3" placeholder="订单号 / Tracking No.">
+    <button class="btn btn-blue w-full mt-2" onclick="handlePackingScan($('packManualCode').value)">查找并打印</button>
+    <button class="btn btn-gray w-full mt-2" onclick="stopScanner();closeModal()">关闭</button>
+  `);
+
+  setTimeout(()=>startCustomScanner(handlePackingScan),300);
+}
+
+async function handlePackingScan(code){
+  const value=normalizeShippingKey(code);
+  if(!value) return showError('没有读取到订单号');
+
+  let order=APP.shippingOrders.find(o=>
+    normalizeShippingKey(o.order_no)===value || normalizeShippingKey(o.tracking_no)===value
+  );
+
+  // 如果扫的是商品 SKU：从已经拣完、尚未贴单的订单里按先后顺序取一个。
+  if(!order){
+    const orderIds=new Set(
+      APP.shippingItems
+        .filter(item=>normalizeShippingKey(item.sku)===value)
+        .map(item=>item.order_id)
+    );
+    order=APP.shippingOrders.find(o=>orderIds.has(o.id) && o.status==='picked') || null;
+  }
+
+  if(!order) return showError('没有找到对应的待贴单订单');
+  if(!['picked','packed'].includes(order.status)){
+    return showError(`订单 ${order.order_no} 还没有拣完`);
+  }
+
+  await printShippingLabelByOrderId(order.id,true);
+}
+
+async function printShippingLabelByOrderId(orderId, markPacked=false){
+  const order=APP.shippingOrders.find(x=>x.id===orderId);
+  const label=APP.shippingLabels.find(x=>x.order_id===orderId);
+  if(!order) return showError('订单不存在');
+  if(!label) return showError(`订单 ${order.order_no} 还没有上传面单`);
+
+  try{
+    showInfo('正在打开面单...');
+    const {data,error}=await APP.sb.storage
+      .from('shipping-labels')
+      .createSignedUrl(label.storage_path,60);
+    if(error) throw error;
+
+    const url=data?.signedUrl;
+    if(!url) throw new Error('无法生成面单地址');
+
+    const res=await fetch(url);
+    if(!res.ok) throw new Error('面单下载失败');
+    const blob=await res.blob();
+    const blobUrl=URL.createObjectURL(blob);
+    window.open(blobUrl,'_blank');
+
+    if(markPacked && order.status!=='packed'){
+      const {error:updateError}=await APP.sb
+        .from('shipping_orders')
+        .update({status:'packed',packed_at:new Date().toISOString()})
+        .eq('id',order.id);
+      if(updateError) throw updateError;
+      order.status='packed';
+      renderPackingQueue();
+      updateShippingCloudSummary();
+    }
+
+    showOk(`已打开 ${order.order_no} 的面单，请直接打印`);
+
+  }catch(error){
+    console.error(error);
+    showError('打开面单失败：'+(error.message||''));
+  }
+}
+
+async function completePackedOrder(orderId){
+  try{
+    const {data,error}=await APP.sb.rpc('complete_shipping_order',{p_order_id:orderId});
+    if(error) throw error;
+    await loadInventory();
+    await loadLogs();
+    await loadShippingWorkspace(true);
+    renderHome();
+    renderInventoryList();
+    renderLogs();
+    showOk('订单已出库并扣减库存');
+    return data;
+  }catch(error){
+    console.error(error);
+    showError('出库失败：'+(error.message||''));
+  }
+}
+
+// 云端订单全部拣完后，仍然保留出货中心结果区，方便继续扫码贴单/出库。
+const _v3RenderPickingEmpty = renderPickingEmpty;
+renderPickingEmpty = function(){
+  if(APP.shippingCloudReady && APP.shippingOrders.length){
+    const empty=$('pickingEmpty');
+    const result=$('pickingResult');
+    const list=$('pickingList');
+    if(empty) empty.classList.add('hidden');
+    if(result) result.classList.remove('hidden');
+    if(list) list.innerHTML='<div class="card p-5 text-center text-green-700 font-bold">✅ 当前待处理订单已全部拣完，可以开始扫码贴单</div>';
+    renderPackingQueue();
+    updateShippingCloudSummary();
+    return;
+  }
+  _v3RenderPickingEmpty();
+};
+
+// 在原来的拣货卡片上增加云端状态，并保持原界面兼容。
+const _v3RenderPickingList = renderPickingList;
+renderPickingList = function(){
+  _v3RenderPickingList();
+  if(APP.shippingCloudReady){
+    updateShippingCloudSummary();
+    renderPackingQueue();
+  }
+};
+
+const _v3ShowPage = showPage;
+showPage = function(page){
+  _v3ShowPage(page);
+  if(page==='picking' && APP.warehouse){
+    loadShippingWorkspace(true);
+  }
+};
+
+const _v3SelectWarehouse = selectWarehouse;
+selectWarehouse = async function(id){
+  await _v3SelectWarehouse(id);
+  APP.shippingOrders=[];
+  APP.shippingItems=[];
+  APP.shippingLabels=[];
+  APP.shippingCloudReady=null;
+  updateShippingCloudBadge();
+  await loadShippingWorkspace(true);
+};
 
 /* =========================================================
    Realtime
