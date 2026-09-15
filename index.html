@@ -10,6 +10,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 
 <style>
 *{box-sizing:border-box}
@@ -8098,29 +8100,187 @@ function openLabelUpload(){
     </div>
 
     <div class="bg-blue-50 rounded-xl p-3 text-sm mb-4">
-      可以一次选择多份 PDF。系统会优先用“订单号 / Tracking No.”在 PDF 文件名中自动匹配订单。
+      <div class="font-bold mb-1">支持多页面单自动识别</div>
+      <div>系统会逐页读取 PDF，并自动识别订单号 / Tracking No. / 面单中的 SKU。</div>
+      <div class="mt-1">像 <b>JFK-CBS 12195-82*1</b> 会识别为 SKU <b>12195-82</b>、数量 <b>1</b>，多页面单会自动拆成一页一个 PDF 保存。</div>
     </div>
 
     <input id="shippingLabelFiles" type="file" accept="application/pdf,.pdf" multiple>
 
-    <button class="btn btn-blue w-full mt-4" onclick="uploadShippingLabels()">☁️ 上传并自动匹配</button>
+    <button class="btn btn-blue w-full mt-4" onclick="uploadShippingLabels()">🤖 自动识别、拆页并上传</button>
     <button class="btn btn-gray w-full mt-2" onclick="closeModal()">取消</button>
     <div id="labelUploadResult" class="mt-3 text-sm"></div>
   `);
 }
 
-function findOrderForLabelName(fileName){
-  const name=normalizeShippingKey(fileName);
-  const candidates=[...APP.shippingOrders].sort((a,b)=>
-    Math.max(String(b.order_no||'').length,String(b.tracking_no||'').length)-
-    Math.max(String(a.order_no||'').length,String(a.tracking_no||'').length)
+function normalizeTrackingValue(value){
+  return String(value ?? '').replace(/[^0-9A-Za-z]/g,'').toLowerCase();
+}
+
+function extractShippingLabelInfo(text){
+  const raw=String(text||'');
+  const flat=raw.replace(/\s+/g,' ').trim();
+  const compact=normalizeShippingKey(flat);
+
+  let sku='';
+  let qty=1;
+  let service='';
+
+  // 你的 CBS 面单格式：JFK-CBS 12195-82*1
+  let m=flat.match(/JFK\s*-?\s*CBS\s+([A-Za-z0-9._-]+)\s*\*\s*(\d+)/i);
+  if(m){
+    sku=String(m[1]||'').trim();
+    qty=Math.max(1,parseInt(m[2]||'1',10)||1);
+    service='JFK-CBS';
+  }
+
+  // 某些 PDF 提取后 JFK-CBS 与 SKU 之间会断行，再做一次宽松匹配。
+  if(!sku){
+    m=raw.match(/JFK\s*-?\s*CBS[\s\S]{0,40}?([0-9A-Za-z]+(?:[-_.][0-9A-Za-z]+)+)\s*\*\s*(\d+)/i);
+    if(m){
+      sku=String(m[1]||'').trim();
+      qty=Math.max(1,parseInt(m[2]||'1',10)||1);
+      service='JFK-CBS';
+    }
+  }
+
+  let tracking='';
+  // 优先抓 USPS TRACKING 后面的 20~34 位数字（允许空格）。
+  const trackingMatch=raw.match(/USPS\s*TRACKING[\s\S]{0,100}?((?:\d[\s-]*){18,34})/i);
+  if(trackingMatch){
+    const digits=String(trackingMatch[1]||'').replace(/\D/g,'');
+    if(digits.length>=18 && digits.length<=34) tracking=digits;
+  }
+
+  // 若上面没有抓到，再从全文寻找 20~22 位常见 USPS tracking。
+  if(!tracking){
+    const candidates=raw.match(/(?:\d[\s-]*){20,22}/g) || [];
+    for(const c of candidates){
+      const digits=String(c).replace(/\D/g,'');
+      if(digits.length>=20 && digits.length<=22){ tracking=digits; break; }
+    }
+  }
+
+  const guMatch=flat.match(/\b(GU\d{10,})\b/i);
+  const referenceNo=guMatch ? guMatch[1] : '';
+
+  return {rawText:raw,flatText:flat,compactText:compact,sku,qty,tracking,referenceNo,service};
+}
+
+async function extractPdfPages(file){
+  if(!window.pdfjsLib) throw new Error('PDF 识别组件没有加载，请刷新网页后重试');
+  if(!window.PDFLib) throw new Error('PDF 拆页组件没有加载，请刷新网页后重试');
+
+  try{
+    if(window.pdfjsLib.GlobalWorkerOptions){
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  }catch(e){ console.warn(e); }
+
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  const pdf=await window.pdfjsLib.getDocument({data:bytes}).promise;
+  const srcDoc=await window.PDFLib.PDFDocument.load(bytes);
+  const pages=[];
+
+  for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
+    const page=await pdf.getPage(pageNo);
+    const content=await page.getTextContent();
+    const text=(content.items||[]).map(x=>String(x.str||'')).join(' ');
+    const info=extractShippingLabelInfo(text);
+
+    const outDoc=await window.PDFLib.PDFDocument.create();
+    const copied=await outDoc.copyPages(srcDoc,[pageNo-1]);
+    outDoc.addPage(copied[0]);
+    const outBytes=await outDoc.save();
+    const blob=new Blob([outBytes],{type:'application/pdf'});
+
+    pages.push({pageNo,text,info,blob});
+  }
+
+  return pages;
+}
+
+function findOrderForLabelContent(info, alreadyAssigned=new Set()){
+  const textKey=normalizeShippingKey(info?.flatText||'');
+  const compactNoSpace=normalizeTrackingValue(info?.flatText||'');
+  const trackingKey=normalizeTrackingValue(info?.tracking||'');
+  const referenceKey=normalizeShippingKey(info?.referenceNo||'');
+
+  const available=APP.shippingOrders.filter(o=>
+    o.status!=='shipped' && !alreadyAssigned.has(o.id)
   );
 
-  return candidates.find(order=>{
-    const orderNo=normalizeShippingKey(order.order_no);
-    const tracking=normalizeShippingKey(order.tracking_no);
-    return (orderNo && name.includes(orderNo)) || (tracking && name.includes(tracking));
-  }) || null;
+  // 1. Tracking 精确匹配，最可靠。
+  if(trackingKey){
+    const hit=available.find(o=>normalizeTrackingValue(o.tracking_no)===trackingKey);
+    if(hit) return {order:hit,reason:'Tracking 精确匹配',confidence:'high'};
+  }
+
+  // 2. PDF 正文里出现订单号 / Tracking / GU 参考号。
+  const direct=available.find(o=>{
+    const orderNo=normalizeShippingKey(o.order_no);
+    const orderNoCompact=normalizeTrackingValue(o.order_no);
+    const tracking=normalizeTrackingValue(o.tracking_no);
+    return (orderNo && textKey.includes(orderNo)) ||
+      (orderNoCompact && compactNoSpace.includes(orderNoCompact)) ||
+      (tracking && compactNoSpace.includes(tracking)) ||
+      (referenceKey && (orderNo===referenceKey || orderNoCompact===normalizeTrackingValue(referenceKey)));
+  });
+  if(direct) return {order:direct,reason:'订单号/参考号匹配',confidence:'high'};
+
+  // 3. SKU 匹配。只有候选唯一时自动绑定，避免同 SKU 多订单贴错地址。
+  const skuKey=normalizeShippingKey(info?.sku||'');
+  if(skuKey){
+    const orderIds=new Set(
+      APP.shippingItems
+        .filter(item=>normalizeShippingKey(item.sku)===skuKey)
+        .map(item=>item.order_id)
+    );
+    const candidates=available.filter(o=>orderIds.has(o.id));
+    if(candidates.length===1){
+      return {order:candidates[0],reason:'SKU 唯一匹配',confidence:'medium'};
+    }
+    if(candidates.length>1){
+      return {order:null,reason:`SKU ${info.sku} 对应 ${candidates.length} 个订单，需订单号或 Tracking 才能安全区分`,confidence:'ambiguous'};
+    }
+  }
+
+  return {order:null,reason:'没有找到对应订单',confidence:'none'};
+}
+
+async function uploadOneShippingLabelPage(order,page,fileName){
+  const safeName=fileName.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fff]/g,'_');
+  const path=`${APP.warehouse.id}/${order.id}/${Date.now()}_${Math.random().toString(36).slice(2,8)}_${safeName}`;
+
+  const {error:uploadError}=await APP.sb.storage
+    .from('shipping-labels')
+    .upload(path,page.blob,{contentType:'application/pdf',upsert:false});
+  if(uploadError) throw uploadError;
+
+  const detectedTracking=page.info?.tracking || order.tracking_no || null;
+
+  const {error:labelError}=await APP.sb
+    .from('shipping_labels')
+    .upsert({
+      order_id:order.id,
+      warehouse_id:APP.warehouse.id,
+      file_name:fileName,
+      storage_path:path,
+      tracking_no:detectedTracking,
+      uploaded_by:APP.user.id
+    },{onConflict:'order_id'});
+  if(labelError) throw labelError;
+
+  // Excel 没有 Tracking，但面单识别到了，就自动补到订单上，后续扫码可以直接扫 USPS 条码。
+  if(page.info?.tracking && !order.tracking_no){
+    const {error:updateError}=await APP.sb
+      .from('shipping_orders')
+      .update({tracking_no:page.info.tracking})
+      .eq('id',order.id);
+    if(!updateError) order.tracking_no=page.info.tracking;
+  }
+
+  return path;
 }
 
 async function uploadShippingLabels(){
@@ -8131,54 +8291,53 @@ async function uploadShippingLabels(){
   try{
     const ready=await checkShippingCloud();
     if(!ready) throw new Error('云端订单表尚未初始化');
-    if(!APP.shippingOrders.length) await loadShippingWorkspace(true);
+    await loadShippingWorkspace(true);
 
-    let matched=0,unmatched=0;
+    const resultEl=$('labelUploadResult');
+    if(resultEl) resultEl.innerHTML='<div class="font-bold">正在逐页识别、拆分并匹配，请稍候...</div>';
+
+    let matched=0,unmatched=0,totalPages=0;
     const details=[];
+    const alreadyAssigned=new Set(APP.shippingLabels.map(x=>x.order_id));
 
     for(const file of files){
-      const order=findOrderForLabelName(file.name);
-      if(!order){
-        unmatched++;
-        details.push(`❌ ${file.name}：未找到对应订单`);
-        continue;
+      const pages=await extractPdfPages(file);
+      totalPages+=pages.length;
+
+      for(const page of pages){
+        const info=page.info;
+        const match=findOrderForLabelContent(info,alreadyAssigned);
+        const skuText=info.sku ? `SKU ${info.sku} ×${info.qty}` : '未识别SKU';
+        const trackText=info.tracking ? `Tracking ${info.tracking}` : '未识别Tracking';
+
+        if(!match.order){
+          unmatched++;
+          details.push(`❌ ${file.name} 第${page.pageNo}页：${skuText} · ${trackText} · ${match.reason}`);
+          continue;
+        }
+
+        const pageFileName=(file.name.replace(/\.pdf$/i,'') + `_P${page.pageNo}_${info.sku||match.order.order_no}.pdf`);
+        await uploadOneShippingLabelPage(match.order,page,pageFileName);
+        alreadyAssigned.add(match.order.id);
+        matched++;
+        details.push(`✅ ${file.name} 第${page.pageNo}页：${skuText} → 订单 ${match.order.order_no}（${match.reason}）`);
       }
-
-      const safeName=file.name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fff]/g,'_');
-      const path=`${APP.warehouse.id}/${order.id}/${Date.now()}_${safeName}`;
-
-      const {error:uploadError}=await APP.sb.storage
-        .from('shipping-labels')
-        .upload(path,file,{contentType:'application/pdf',upsert:false});
-      if(uploadError) throw uploadError;
-
-      const {error:labelError}=await APP.sb
-        .from('shipping_labels')
-        .upsert({
-          order_id:order.id,
-          warehouse_id:APP.warehouse.id,
-          file_name:file.name,
-          storage_path:path,
-          tracking_no:order.tracking_no || null,
-          uploaded_by:APP.user.id
-        },{onConflict:'order_id'});
-      if(labelError) throw labelError;
-
-      matched++;
-      details.push(`✅ ${file.name} → ${order.order_no}`);
     }
 
-    const el=$('labelUploadResult');
-    if(el){
-      el.innerHTML=`<div class="font-bold">匹配 ${matched}，未匹配 ${unmatched}</div><div class="mt-2 small">${details.map(escapeHtml).join('<br>')}</div>`;
+    if(resultEl){
+      resultEl.innerHTML=`
+        <div class="font-bold">共 ${totalPages} 页 · 成功匹配 ${matched} · 未匹配 ${unmatched}</div>
+        <div class="mt-2 small leading-6">${details.map(escapeHtml).join('<br>')}</div>
+        ${unmatched?'<div class="mt-3 bg-yellow-50 rounded-xl p-3 text-sm">⚠️ 未匹配页面没有上传，避免贴错地址。若同一个 SKU 有多个订单，请确保订单 Excel 带订单号或 Tracking No.，系统就能精确匹配。</div>':''}
+      `;
     }
 
     await loadShippingWorkspace(true);
-    showOk(`面单上传完成：${matched} 份已匹配`);
+    showOk(`面单处理完成：${matched}/${totalPages} 页已自动匹配`);
 
   }catch(error){
     console.error(error);
-    showError('面单上传失败：'+(error.message||'未知错误'));
+    showError('面单处理失败：'+(error.message||'未知错误'));
   }
 }
 
