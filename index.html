@@ -1099,7 +1099,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V5.4 · Cloud Warehouse
+          版本 V5.5 · Cloud Warehouse
         </div>
 
       </div>
@@ -1228,7 +1228,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V5.4-20260915-TRUE-SILENT-PRINT';
+const APP_VERSION = 'V5.5-20260915-LABEL-REMATCH-FIX';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -9188,7 +9188,19 @@ async function uploadShippingLabels(){
 
     let matched=0,created=0,unmatched=0,totalPages=0,mismatch=0;
     const details=[];
-    const alreadyAssigned=new Set(APP.shippingLabels.map(x=>x.order_id));
+
+    /*
+     * V5.5 修复：
+     * 这里只防止“本次上传”的多个 PDF 页重复绑定到同一个订单。
+     *
+     * 不能把云端已经存在的 shippingLabels 预先放进集合，
+     * 否则用户重新上传同一批面单、替换面单、重新解析时，
+     * 明明订单号/Tracking 完全一致也会被误判成“没有找到对应订单”。
+     *
+     * uploadOneShippingLabelPage 本身使用 order_id upsert，
+     * 所以重新上传同一订单时会安全覆盖/刷新面单记录，不会多建订单。
+     */
+    const alreadyAssigned=new Set();
 
     for(const file of files){
       const pages=await extractPdfPages(file);
@@ -9232,7 +9244,21 @@ async function uploadShippingLabels(){
         await uploadOneShippingLabelPage(order,page,pageFileName);
         alreadyAssigned.add(order.id);
         matched++;
-        details.push(`✅ ${file.name} 第${page.pageNo}页：${orderText} · ${skuText} → ${createdFromLabel?'新建':'匹配'}订单 ${order.order_no}`);
+
+        const hadOldLabel=
+          APP.shippingLabels.some(
+            x=>x.order_id===order.id
+          );
+
+        details.push(
+          `✅ ${file.name} 第${page.pageNo}页：${orderText} · ${skuText} → ${
+            createdFromLabel
+              ? '新建'
+              : hadOldLabel
+                ? '重新绑定/替换面单'
+                : '匹配'
+          }订单 ${order.order_no}`
+        );
       }
     }
 
@@ -9240,7 +9266,7 @@ async function uploadShippingLabels(){
       resultEl.innerHTML=`
         <div class="font-bold">共 ${totalPages} 页 · 已绑定 ${matched} · 面单自动建单 ${created} · 未匹配 ${unmatched}${mismatch?` · SKU不一致 ${mismatch}`:''}</div>
         <div class="mt-2 small leading-6">${details.map(escapeHtml).join('<br>')}</div>
-        ${unmatched?'<div class="mt-3 bg-yellow-50 rounded-xl p-3 text-sm">⚠️ 未匹配页面不会上传，避免贴错地址。只要面单上能读到订单号/Tracking 和 SKU，系统会自动建单；完全没有 SKU 的面单仍需要订单明细表辅助。</div>':''}
+        ${unmatched?'<div class="mt-3 bg-yellow-50 rounded-xl p-3 text-sm">⚠️ 未匹配页面不会上传，避免贴错地址。已有订单只要订单号或 Tracking 能精确匹配，即使这一页暂时没识别出 SKU，也允许重新绑定/替换面单；只有既匹配不到订单号/Tracking、又无法从 SKU 安全确定订单时才会保留为未匹配。</div>':''}
       `;
     }
 
