@@ -8289,8 +8289,24 @@ function findOrderForLabelContent(info, alreadyAssigned=new Set()){
 }
 
 async function uploadOneShippingLabelPage(order,page,fileName){
-  const safeName=fileName.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fff]/g,'_');
-  const path=`${APP.warehouse.id}/${order.id}/${Date.now()}_${Math.random().toString(36).slice(2,8)}_${safeName}`;
+  /*
+   * Supabase Storage 的对象 key 必须尽量使用稳定的 ASCII 字符。
+   * iPhone 文件名里常有中文、空格、全角符号，直接放进 Storage path
+   * 可能报：Invalid key。
+   *
+   * 数据库里的 file_name 仍保留原始中文文件名；
+   * 只有 Storage 内部路径改成纯英文/数字，避免上传失败。
+   */
+  const skuPart=String(page?.info?.sku || order?.order_no || 'label')
+    .replace(/[^a-zA-Z0-9._-]/g,'_')
+    .replace(/_+/g,'_')
+    .slice(0,80) || 'label';
+
+  const storageFileName=
+    `label_P${page?.pageNo || 1}_${skuPart}_${Date.now()}_${Math.random().toString(36).slice(2,8)}.pdf`;
+
+  const path=
+    `${APP.warehouse.id}/${order.id}/${storageFileName}`;
 
   const {error:uploadError}=await APP.sb.storage
     .from('shipping-labels')
