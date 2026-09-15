@@ -1099,7 +1099,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V5.3 · Cloud Warehouse
+          版本 V5.4 · Cloud Warehouse
         </div>
 
       </div>
@@ -1228,7 +1228,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V5.3-20260915-SCAN-BEEP-PRINT';
+const APP_VERSION = 'V5.4-20260915-TRUE-SILENT-PRINT';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -10035,7 +10035,7 @@ function openPackingScanner(){
       </div>
 
       <div class="small mt-1">
-        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。扫错/超量会发错误音并拦截。电脑端不会启动摄像头。
+        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。打印桥在线时真正静默出纸，不再弹出或闪现浏览器小窗口。扫错/超量会发错误音并拦截。
       </div>
 
       <div id="hardwareScannerLast" class="small mt-2 text-gray-600">
@@ -10615,15 +10615,11 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
   if(!label) return showError(`订单 ${order.order_no} 还没有上传面单`);
 
   /*
-   * 桌面扫码枪触发时，先同步创建一个空打印窗口。
-   * 这样能最大限度避免浏览器把后续自动打印当成弹窗广告拦截。
+   * V5.4 真正静默打印：
+   * 不再预先打开空白浏览器窗口。
+   * 先尝试本地打印桥；只有打印桥不可用时，才创建浏览器打印窗口作为备用。
    */
-  const printWin=
-    isDesktopPackingStation()
-    ? openDesktopPrintWindow(
-        order.order_no
-      )
-    : null;
+  let printWin=null;
 
   try{
 
@@ -10648,11 +10644,16 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
     let autoPrintStarted=false;
     let silentPrinted=false;
 
+    /*
+     * 第一优先：本地打印桥。
+     * 成功时完全不创建浏览器窗口，所以不会再闪一下小窗口。
+     */
     if(
       isDesktopPackingStation() &&
       await localPrintBridgeReady()
     ){
       try{
+
         await sendPdfToLocalPrinter(
           blob,
           order.order_no
@@ -10660,10 +10661,6 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 
         silentPrinted=true;
         autoPrintStarted=true;
-
-        if(printWin){
-          try{ printWin.close(); }catch(e){}
-        }
 
         playWarehouseTone(
           'print'
@@ -10674,27 +10671,55 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
         );
 
       }catch(error){
-        console.error(error);
+
+        console.error(
+          '静默打印失败，准备退回浏览器打印',
+          error
+        );
+
       }
     }
 
+    /*
+     * 只有本地打印桥不可用 / 打印失败时，
+     * 才创建浏览器打印窗口作为备用。
+     */
     if(
       !autoPrintStarted &&
-      isDesktopPackingStation() &&
-      printWin
+      isDesktopPackingStation()
     ){
-      autoPrintStarted=
-        await renderPdfBlobToPrintWindow(
-          blob,
-          order.order_no,
-          printWin
+
+      printWin=
+        openDesktopPrintWindow(
+          order.order_no
         );
+
+      if(printWin){
+
+        autoPrintStarted=
+          await renderPdfBlobToPrintWindow(
+            blob,
+            order.order_no,
+            printWin
+          );
+
+      }
     }
 
+    /*
+     * 最后的保底：直接打开 PDF。
+     */
     if(!autoPrintStarted){
+
       const blobUrl=
-        URL.createObjectURL(blob);
-      window.open(blobUrl,'_blank');
+        URL.createObjectURL(
+          blob
+        );
+
+      window.open(
+        blobUrl,
+        '_blank'
+      );
     }
 
     if(markPacked && order.status!=='packed'){
