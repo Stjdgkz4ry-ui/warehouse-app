@@ -1099,7 +1099,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V4.9 · Cloud Warehouse
+          版本 V5.0 · Cloud Warehouse
         </div>
 
       </div>
@@ -1228,7 +1228,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V4.9-20260915-ONE-SCAN-PRINT';
+const APP_VERSION = 'V5.0-20260915-DESKTOP-NO-CAMERA';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -9739,7 +9739,7 @@ function openPackingScanner(){
       </div>
 
       <div class="small mt-1">
-        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。安装本地打印桥后，满足一票订单会直接出纸；未安装时自动退回浏览器打印窗口。支持 Enter / Tab 结尾，也支持无回车自动识别。
+        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。电脑端不会再启动摄像头；安装本地打印桥后，满足一票订单会直接出纸。支持 Enter / Tab 结尾，也支持无回车自动识别。
       </div>
 
       <div id="hardwareScannerLast" class="small mt-2 text-gray-600">
@@ -9753,11 +9753,15 @@ function openPackingScanner(){
 
     <div id="packPoolStatus" class="mb-3"></div>
 
-    <div class="border rounded-xl p-3 mb-3">
+    <div id="packingCameraBox" class="border rounded-xl p-3 mb-3">
       <div class="font-bold mb-2">
-        📷 手机摄像头扫码（可选）
+        📷 手机摄像头扫码（仅手机显示）
       </div>
       <div id="reader" style="width:100%;"></div>
+    </div>
+
+    <div id="desktopScannerOnlyBox" class="hidden bg-blue-50 rounded-xl p-3 mb-3 text-sm">
+      💻 电脑贴单台已关闭摄像头，只监听 USB / 蓝牙扫码枪。
     </div>
 
     <input
@@ -9781,17 +9785,53 @@ function openPackingScanner(){
   renderPackPoolStatus();
 
   /*
-   * 电脑打开贴单台后立即开启全局扫码枪监听。
-   * 摄像头是可选的，不影响 USB / 蓝牙扫码枪。
+   * V5.0：
+   * 电脑贴单台只启用扫码枪，不再调用笔记本摄像头。
+   * 手机打开贴单页时才保留摄像头扫码作为备用。
    */
   activateHardwareScanner();
 
-  setTimeout(
-    ()=>startCustomScanner(
-      handlePackingScan
-    ),
-    300
-  );
+  const cameraBox=
+    $('packingCameraBox');
+
+  const desktopOnlyBox=
+    $('desktopScannerOnlyBox');
+
+  if(isDesktopPackingStation()){
+
+    if(cameraBox){
+      cameraBox.classList.add(
+        'hidden'
+      );
+    }
+
+    if(desktopOnlyBox){
+      desktopOnlyBox.classList.remove(
+        'hidden'
+      );
+    }
+
+  }else{
+
+    if(cameraBox){
+      cameraBox.classList.remove(
+        'hidden'
+      );
+    }
+
+    if(desktopOnlyBox){
+      desktopOnlyBox.classList.add(
+        'hidden'
+      );
+    }
+
+    setTimeout(
+      ()=>startCustomScanner(
+        handlePackingScan
+      ),
+      300
+    );
+  }
 }
 
 async function handlePackingScan(code){
@@ -9909,6 +9949,13 @@ function isDesktopPackingStation(){
     navigator.userAgent||'';
 
   return !/iPhone|iPad|iPod|Android/i.test(ua);
+}
+
+
+function isMobileWarehouseDevice(){
+
+  return !isDesktopPackingStation();
+
 }
 
 
