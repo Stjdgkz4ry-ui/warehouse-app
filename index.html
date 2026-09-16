@@ -828,7 +828,7 @@ th{
             </button>
 
             <button class="btn btn-red" onclick="clearPickingList()">
-              🗑️ 归档待处理订单
+              📦 归档当前待处理订单
             </button>
           </div>
         </div>
@@ -1006,7 +1006,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V8.2 · Cloud Warehouse
+          版本 V8.4 · Cloud Warehouse
         </div>
 
       </div>
@@ -1135,7 +1135,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V8.2-20260916-PRODUCTION-HARDENED';
+const APP_VERSION = 'V8.4-20260916-ARCHIVE-PERMANENT-DELETE';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -7780,7 +7780,13 @@ async function verifyWarehouseAdminPassword(actionName='库存操作'){
       return false;
     }
 
-    return true;
+    /*
+     * V8.4：
+     * 返回本次已经验证成功的 PIN。
+     * 普通调用仍然把它当作 true 使用；
+     * 永久删除归档批次时，会把它交给云端 RPC 再验证一次。
+     */
+    return String(input);
 
   }catch(error){
 
@@ -7827,7 +7833,7 @@ async function clearPickingList(){
 
     saveShippingProgressSnapshot();
 
-    showInfo('正在安全归档待处理订单...');
+    showInfo('正在安全归档当前待处理订单...');
 
     const {data,error}=
       await APP.sb
@@ -8897,9 +8903,13 @@ function buildShippingBatchHistory(){
 function renderShippingBatchHistory(){
 
   const el=$('shippingBatchHistory');
-  if(!el) return;
 
-  const batches=buildShippingBatchHistory();
+  if(!el){
+    return;
+  }
+
+  const batches=
+    buildShippingBatchHistory();
 
   if(!batches.length){
 
@@ -8914,21 +8924,16 @@ function renderShippingBatchHistory(){
       el.innerHTML=`
         <div class="card p-4">
           <div class="font-bold text-lg">📚 订单批次记录</div>
-
           <div class="bg-yellow-50 rounded-xl p-3 mt-2 text-sm">
             ⚠️ 当前云端批次暂时没有返回。下面显示这台设备最后一次自动保存的工作进度快照。
           </div>
-
           <div class="grid grid-cols-2 gap-2 mt-3 text-sm">
             <div class="bg-gray-50 rounded-lg p-2">订单 <b>${total}</b></div>
             <div class="bg-green-50 rounded-lg p-2">已出库 <b>${shipped}</b></div>
             <div class="bg-blue-50 rounded-lg p-2">已贴单 <b>${packed}</b></div>
             <div class="bg-yellow-50 rounded-lg p-2">未完成 <b>${Math.max(0,total-shipped)}</b></div>
           </div>
-
-          <div class="small mt-2">
-            本机快照时间：${formatDate(snap.savedAt)}
-          </div>
+          <div class="small mt-2">本机快照时间：${formatDate(snap.savedAt)}</div>
         </div>
       `;
       return;
@@ -8943,53 +8948,357 @@ function renderShippingBatchHistory(){
     return;
   }
 
-  el.innerHTML=`
-    <div class="card p-4">
-      <div class="flex items-center justify-between mb-3">
-        <div>
-          <div class="font-bold text-lg">📚 订单批次记录</div>
-          <div class="small mt-1">这里始终显示当前仓库的出货批次和完成进度；数据以云端为主，并自动保存本机安全快照。刷新、断网或重新打开页面后可继续恢复。</div>
-        </div>
-        <button class="btn btn-gray btn-small" onclick="loadShippingBatchHistory(false)">刷新</button>
-      </div>
+  const current=
+    batches.filter(b=>b.status!=='archived');
 
-      <div class="space-y-3">
-        ${batches.slice(0,20).map((b,index)=>{
-          const total=safeNumber(b.totalOrders,b.orders?.length||0);
-          const incomplete=Math.max(0,total-b.completed);
-          const allDone=total>0 && incomplete===0;
-          const date=formatDate(b.createdAt);
-          return `
-            <div class="border rounded-xl p-3 ${allDone?'bg-green-50':'bg-white'}">
-              <div class="flex items-start justify-between gap-2">
-                <div class="min-w-0">
-                  <div class="font-bold break-all">${escapeHtml(b.name)}</div>
-                  <div class="small mt-1">${escapeHtml(date)}</div>
-                </div>
-                <span class="badge ${allDone?'badge-green':'badge-yellow'}">
-                  ${b.status==='archived'?'📦 已归档':allDone?'✅ 全部完成':'⏳ 处理中'}
-                </span>
-              </div>
+  const archived=
+    batches.filter(b=>b.status==='archived');
 
-              <div class="grid grid-cols-2 gap-2 mt-3 text-sm">
-                <div class="bg-gray-50 rounded-lg p-2">订单 <b>${total}</b></div>
-                <div class="bg-gray-50 rounded-lg p-2">总件数 <b>${b.totalPieces}</b></div>
-                <div class="bg-green-50 rounded-lg p-2 text-green-700">已完成 <b>${b.completed}</b></div>
-                <div class="bg-yellow-50 rounded-lg p-2 text-yellow-800">未完成 <b>${incomplete}</b></div>
-                <div class="bg-blue-50 rounded-lg p-2 text-blue-700">已匹配面单 <b>${b.labels}/${total}</b></div>
-                <div class="bg-purple-50 rounded-lg p-2 text-purple-700">已拣 <b>${b.pickedPieces}/${b.totalPieces}</b></div>
-              </div>
+  function batchCard(b){
 
-              <button class="btn btn-gray btn-small w-full mt-2"
-                onclick="openShippingBatchDetail('${encodeURIComponent(b.key)}')">
-                查看这个批次订单
-              </button>
+    const total=safeNumber(b.totalOrders,b.orders?.length||0);
+    const completed=safeNumber(b.completed,0);
+    const shipped=safeNumber(b.shipped,0);
+    const labels=safeNumber(b.labels,0);
+    const pieces=safeNumber(b.totalPieces,0);
+    const incomplete=Math.max(0,total-completed);
+
+    return `
+      <button
+        class="w-full text-left border rounded-2xl p-3 bg-white"
+        onclick="openShippingBatchDetail('${encodeURIComponent(b.key)}')">
+
+        <div class="flex items-start justify-between gap-2">
+
+          <div class="min-w-0">
+
+            <div class="font-bold break-all">
+              ${escapeHtml(b.name||'未命名批次')}
             </div>
-          `;
-        }).join('')}
+
+            <div class="small mt-1">
+              ${escapeHtml(formatDate(b.createdAt))}
+              ${b.orderDate?` · ${escapeHtml(String(b.orderDate).slice(0,10))}`:''}
+            </div>
+
+          </div>
+
+          <span class="badge ${b.status==='archived'?'badge-gray':completed>=total&&total>0?'badge-green':'badge-yellow'}">
+            ${
+              b.status==='archived'
+                ? '📦 已归档'
+                : completed>=total&&total>0
+                  ? '✅ 全部完成'
+                  : '⏳ 处理中'
+            }
+          </span>
+
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 mt-3 text-sm">
+
+          <div class="bg-gray-50 rounded-lg p-2">
+            订单 <b>${total}</b>
+          </div>
+
+          <div class="bg-blue-50 rounded-lg p-2">
+            总件 <b>${pieces}</b>
+          </div>
+
+          <div class="bg-purple-50 rounded-lg p-2">
+            已绑定面单 <b>${labels}</b>
+          </div>
+
+          <div class="bg-green-50 rounded-lg p-2">
+            已完成 <b>${completed}</b>
+          </div>
+
+          <div class="bg-emerald-50 rounded-lg p-2">
+            已出库 <b>${shipped}</b>
+          </div>
+
+          <div class="bg-yellow-50 rounded-lg p-2">
+            未完成 <b>${incomplete}</b>
+          </div>
+
+        </div>
+
+        <div class="small mt-2">
+          点这里可以查看这个批次的订单明细和 Tracking。
+        </div>
+
+      </button>
+    `;
+  }
+
+  el.innerHTML=`
+    <div class="space-y-4">
+
+      <div class="card p-4">
+
+        <div class="flex items-center justify-between">
+
+          <div>
+            <div class="font-bold text-lg">🚚 当前 / 进行中批次</div>
+            <div class="small mt-1">
+              正在工作的批次显示在这里。
+            </div>
+          </div>
+
+          <span class="badge badge-blue">
+            ${current.length}
+          </span>
+
+        </div>
+
+        <div class="space-y-2 mt-3">
+          ${
+            current.length
+              ? current.map(batchCard).join('')
+              : `
+                <div class="bg-gray-50 rounded-xl p-4 text-center small">
+                  当前没有进行中的批次
+                </div>
+              `
+          }
+        </div>
+
       </div>
+
+      <div class="card p-4">
+
+        <div class="flex items-center justify-between">
+
+          <div>
+            <div class="font-bold text-lg">📦 历史 / 已归档批次</div>
+            <div class="small mt-1">
+              归档不会删除。这里长期保留历史批次，可随时查看；确定不再需要时，可在批次详情里用管理员密码永久删除。
+            </div>
+          </div>
+
+          <span class="badge badge-gray">
+            ${archived.length}
+          </span>
+
+        </div>
+
+        <div class="space-y-2 mt-3">
+          ${
+            archived.length
+              ? archived.map(batchCard).join('')
+              : `
+                <div class="bg-gray-50 rounded-xl p-4 text-center small">
+                  暂时没有已归档批次
+                </div>
+              `
+          }
+        </div>
+
+      </div>
+
     </div>
   `;
+}
+
+
+
+async function permanentDeleteArchivedBatch(encodedKey){
+
+  const key=decodeURIComponent(encodedKey||'');
+
+  const batch=
+    buildShippingBatchHistory()
+      .find(x=>x.key===key);
+
+  if(!batch){
+    return showError('找不到这个历史批次');
+  }
+
+  if(batch.status!=='archived'){
+    return showError(
+      '❌ 只有“已归档”批次才允许永久删除。当前/进行中批次绝对不能永久删除。'
+    );
+  }
+
+  const adminPin=
+    await verifyWarehouseAdminPassword(
+      `永久删除已归档批次：${batch.name}`
+    );
+
+  if(!adminPin){
+    return;
+  }
+
+  const typed=prompt(
+    '⚠️ 永久删除不可恢复。\n\n' +
+    '这会删除该批次的：\n' +
+    '• 订单\n' +
+    '• 订单明细\n' +
+    '• 面单数据库记录\n' +
+    '• 云端面单 PDF 文件\n' +
+    '• 批次统计记录\n\n' +
+    '请输入下面完整批次名称确认：\n\n' +
+    batch.name
+  );
+
+  if(typed===null){
+    return;
+  }
+
+  if(String(typed).trim()!==String(batch.name).trim()){
+    return showError(
+      '❌ 批次名称输入不一致，没有删除任何数据。'
+    );
+  }
+
+  const finalOk=confirm(
+    '最后确认：永久删除这个已归档批次？\n\n' +
+    `${batch.name}\n\n` +
+    '删除后无法恢复。'
+  );
+
+  if(!finalOk){
+    return;
+  }
+
+  try{
+
+    showInfo('正在读取该批次面单文件清单...');
+
+    let orderQuery=
+      APP.sb
+        .from('shipping_orders')
+        .select('id')
+        .eq('warehouse_id',APP.warehouse.id)
+        .eq('source_file',batch.sourceFile);
+
+    if(batch.orderDate){
+      orderQuery=
+        orderQuery.eq(
+          'order_date',
+          String(batch.orderDate).slice(0,10)
+        );
+    }
+
+    const {
+      data:batchOrders,
+      error:orderReadError
+    }=await orderQuery;
+
+    if(orderReadError){
+      throw orderReadError;
+    }
+
+    const orderIds=
+      (batchOrders||[])
+        .map(x=>x.id)
+        .filter(Boolean);
+
+    let storagePaths=[];
+
+    if(orderIds.length){
+
+      const labels=
+        await shippingFetchByOrderIds(
+          'shipping_labels',
+          orderIds,
+          {select:'storage_path'}
+        );
+
+      storagePaths=
+        labels
+          .map(x=>String(x.storage_path||'').trim())
+          .filter(Boolean);
+    }
+
+    showInfo('正在永久删除已归档批次...');
+
+    const {data,error}=
+      await APP.sb.rpc(
+        'permanent_delete_archived_shipping_batch',
+        {
+          p_warehouse_id:APP.warehouse.id,
+          p_source_file:String(batch.sourceFile||''),
+          p_order_date:String(batch.orderDate||'').slice(0,10),
+          p_admin_pin:String(adminPin)
+        }
+      );
+
+    if(error){
+      throw error;
+    }
+
+    /*
+     * 先由数据库 RPC 原子删除订单/明细/面单记录；
+     * 再删除 Storage 实体文件。
+     * 即使 Storage 临时清理失败，也不会造成订单误删之外的额外数据风险；
+     * 页面会明确提示还有孤立文件未清理。
+     */
+    let storageCleanupFailed=false;
+    let storageCleanupMessage='';
+
+    if(storagePaths.length){
+
+      const chunkSize=100;
+
+      for(
+        let i=0;
+        i<storagePaths.length;
+        i+=chunkSize
+      ){
+
+        const chunk=
+          storagePaths.slice(
+            i,
+            i+chunkSize
+          );
+
+        const {error:removeError}=
+          await APP.sb.storage
+            .from('shipping-labels')
+            .remove(chunk);
+
+        if(removeError){
+          storageCleanupFailed=true;
+          storageCleanupMessage=
+            removeError.message||'Storage 清理失败';
+          console.error(
+            '删除归档批次 Storage 文件失败：',
+            removeError
+          );
+          break;
+        }
+      }
+    }
+
+    closeModal();
+
+    await syncShippingBatchSummaries();
+    await loadShippingBatchHistory(false);
+
+    if(storageCleanupFailed){
+
+      showError(
+        '⚠️ 批次数据库记录已经永久删除，但有部分旧面单 PDF 没有从 Storage 清干净：'+
+        storageCleanupMessage
+      );
+
+      return;
+    }
+
+    showOk(
+      `✅ 已永久删除归档批次：${batch.name}；订单 ${safeNumber(data?.deleted_orders,0)} 个，面单文件 ${storagePaths.length} 个`
+    );
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      '永久删除失败：'+
+      (error.message||'')
+    );
+  }
 }
 
 
@@ -9040,6 +9349,22 @@ async function openShippingBatchDetail(encodedKey){
           </div>
         `).join('')}
       </div>
+
+      ${
+        batch.status==='archived'
+          ? `
+            <div class="bg-red-50 rounded-xl p-3 mt-4 text-sm text-red-700">
+              ⚠️ 这个批次已经归档。只有确定以后永远不需要时，才使用永久删除。
+            </div>
+
+            <button
+              class="btn btn-red w-full mt-3"
+              onclick="permanentDeleteArchivedBatch('${encodeURIComponent(batch.key)}')">
+              🗑️ 永久删除这个已归档批次
+            </button>
+          `
+          : ''
+      }
 
       <button class="btn btn-gray w-full mt-3" onclick="closeModal()">关闭</button>
     `);
