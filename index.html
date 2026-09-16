@@ -405,6 +405,21 @@ th{
     margin-bottom:12px
   }
 
+  .carrier-print-page{
+    break-after:page;
+    page-break-after:always;
+  }
+
+  .carrier-print-page.carrier-print-last{
+    break-after:auto;
+    page-break-after:auto;
+  }
+
+  .carrier-pick-table th,
+  .carrier-pick-table td{
+    padding:9px 10px!important;
+  }
+
   @page{
     size:auto;
     margin:10mm
@@ -848,7 +863,7 @@ th{
           </button>
 
           <div class="small mt-2">
-            手机拣货固定按库位 A→B→C、1→2→3→10 自然排序；同一 SKU 仍按快递公司分开
+            手机拣货按真实货架路线排序：例如 A2-1-1 → A2-1-2 → A2-1-3（同一货架从第1层到第3层），再进入 A2-2-*；同一 SKU 仍按快递公司分开
           </div>
         </div>
 
@@ -1007,7 +1022,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V9.1 · Cloud Warehouse
+          版本 V9.2 · Cloud Warehouse
         </div>
 
       </div>
@@ -1137,7 +1152,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V9.1-20260916-PACKING-PROGRESS-AUTO-OUTBOUND';
+const APP_VERSION = 'V9.2-20260916-PACKING-PROGRESS-AUTO-OUTBOUND';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1369,6 +1384,54 @@ function naturalCompare(a,b){
     }
   );
 
+}
+
+
+/* =========================================================
+   V9.2 仓库物理路线排序
+   例：A2-1-1、A2-1-2、A2-1-3 是同一个货架的三层，
+   必须连续拣完，再去 A2-2-*。
+========================================================= */
+function warehouseBinParts(value){
+
+  const raw=
+    String(value??'')
+      .trim()
+      .toUpperCase();
+
+  if(!raw){
+    return {raw:'',zone:'',rack:Infinity,level:Infinity,extra:[]};
+  }
+
+  const parts=raw.split('-').map(x=>x.trim());
+  const zone=parts[0]||'';
+  const rack=Number.parseInt(parts[1],10);
+  const level=Number.parseInt(parts[2],10);
+
+  return {
+    raw,
+    zone,
+    rack:Number.isFinite(rack)?rack:Infinity,
+    level:Number.isFinite(level)?level:Infinity,
+    extra:parts.slice(3)
+  };
+}
+
+function warehouseBinCompare(a,b){
+
+  const aa=warehouseBinParts(a);
+  const bb=warehouseBinParts(b);
+
+  if(!aa.raw && bb.raw) return 1;
+  if(aa.raw && !bb.raw) return -1;
+
+  const zoneCompare=naturalCompare(aa.zone,bb.zone);
+  if(zoneCompare!==0) return zoneCompare;
+
+  if(aa.rack!==bb.rack) return aa.rack-bb.rack;
+  if(aa.level!==bb.level) return aa.level-bb.level;
+
+  return naturalCompare(aa.raw,bb.raw);
 }
 
 
@@ -8447,7 +8510,7 @@ function getPickingSortedRows(){
       if(abin && !bbin) return -1;
 
       const binCompare=
-        naturalCompare(
+        warehouseBinCompare(
           abin,
           bbin
         );
@@ -8496,73 +8559,12 @@ function buildPrintTable(){
   const groups=
     getPickingCarrierGroups();
 
-  const tbody=
-    $('printTableBody');
+  const printArea=
+    $('printArea');
 
-  if(!tbody){
+  if(!printArea){
     return;
   }
-
-  let sequence=0;
-
-  tbody.innerHTML=
-    groups.map(group=>{
-
-      const groupQty=
-        group.rows.reduce(
-          (s,row)=>
-            s+
-            safeNumber(
-              row.orderQty,
-              0
-            ),
-          0
-        );
-
-      const heading=`
-        <tr>
-          <td colspan="8" style="font-weight:800;font-size:15px;background:#eef2ff;">
-            🚚 ${escapeHtml(group.carrier)}
-            &nbsp;&nbsp;
-            ${group.rows.length} 个拣货项目
-            &nbsp;&nbsp;
-            ${groupQty} 件
-          </td>
-        </tr>
-      `;
-
-      const rows=
-        group.rows.map(row=>{
-
-          sequence++;
-
-          let status;
-
-          if(row.status==='ok'){
-            status='可拣';
-          }else if(row.status==='short'){
-            status=`库存不足，缺 ${row.shortage}`;
-          }else{
-            status='找不到SKU';
-          }
-
-          return `
-            <tr>
-              <td>${sequence}</td>
-              <td><b>${escapeHtml(group.carrier)}</b></td>
-              <td>${escapeHtml(row.bin||'未设置')}</td>
-              <td>${escapeHtml(row.sku)}</td>
-              <td>${escapeHtml(row.name)}</td>
-              <td>${row.orderQty}</td>
-              <td>${row.stockQty}</td>
-              <td>${escapeHtml(status)}</td>
-            </tr>
-          `;
-        }).join('');
-
-      return heading+rows;
-
-    }).join('');
 
   const warehouseName=
     APP.warehouse?.name||
@@ -8578,23 +8580,101 @@ function buildPrintTable(){
       .toISOString()
       .slice(0,10);
 
-  const rowCount=
-    groups.reduce(
-      (s,g)=>s+g.rows.length,
-      0
-    );
+  /*
+   * V9.2：每个快递公司独立一页。
+   * 页面里不再每一行重复显示快递公司。
+   * 拣货表只保留“库位 + SKU”，数量直接写在 SKU 后面。
+   */
+  printArea.innerHTML=
+    groups.map((group,index)=>{
 
-  $('printMeta').innerHTML=`
-    仓库：${escapeHtml(warehouseName)}
-    &nbsp;&nbsp;
-    订单号：${escapeHtml(orderNo)}
-    &nbsp;&nbsp;
-    日期：${escapeHtml(date)}
-    &nbsp;&nbsp;
-    快递公司：${groups.length}
-    &nbsp;&nbsp;
-    拣货项目：${rowCount}
-  `;
+      const rows=
+        [...group.rows]
+          .sort((a,b)=>{
+
+            const c=
+              warehouseBinCompare(
+                a.bin||'',
+                b.bin||''
+              );
+
+            if(c!==0){
+              return c;
+            }
+
+            return naturalCompare(
+              a.sku||'',
+              b.sku||''
+            );
+          });
+
+      const totalQty=
+        rows.reduce(
+          (sum,row)=>
+            sum+
+            safeNumber(
+              row.orderQty,
+              0
+            ),
+          0
+        );
+
+      const body=
+        rows.map(row=>{
+
+          const qty=
+            Math.max(
+              0,
+              safeNumber(
+                row.orderQty,
+                0
+              )
+            );
+
+          return `
+            <tr>
+              <td style="font-size:15px;font-weight:800;white-space:nowrap;">
+                ${escapeHtml(row.bin||'未设置')}
+              </td>
+              <td style="font-size:14px;font-weight:700;word-break:break-all;">
+                ${escapeHtml(row.sku||'')}
+                ${qty!==1
+                  ? `<b style="font-size:16px;"> × ${qty}</b>`
+                  : ''}
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      return `
+        <section class="carrier-print-page ${index===groups.length-1?'carrier-print-last':''}">
+          <div class="print-title">
+            📋 ${escapeHtml(group.carrier)} 拣货单
+          </div>
+
+          <div class="print-meta">
+            仓库：${escapeHtml(warehouseName)}
+            &nbsp;&nbsp;日期：${escapeHtml(date)}
+            &nbsp;&nbsp;订单号：${escapeHtml(orderNo)}
+            &nbsp;&nbsp;SKU行：${rows.length}
+            &nbsp;&nbsp;总件数：${totalQty}
+          </div>
+
+          <table class="print-table carrier-pick-table">
+            <thead>
+              <tr>
+                <th style="width:34%;">库位</th>
+                <th>SKU</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${body}
+            </tbody>
+          </table>
+        </section>
+      `;
+
+    }).join('');
 }
 
 
@@ -10124,7 +10204,7 @@ function buildCloudPickingRows(){
 
       rows.sort(
         (a,b)=>
-          naturalCompare(
+          warehouseBinCompare(
             a.bin||'',
             b.bin||''
           )
@@ -10317,8 +10397,8 @@ function buildCloudPickingRows(){
 
   /*
    * 手机拣货顺序：
-   * 不按快递公司先后走，而是严格按库位自然顺序走。
-   * A -> B -> C；1 -> 2 -> 3 -> 10。
+   * 不按快递公司先后走，而是严格按“区域 -> 货架 -> 层”走。
+   * 例如 A2-1-1 -> A2-1-2 -> A2-1-3 -> A2-2-1。
    * 同一库位内再按快递公司、SKU 排。
    */
   result.sort((a,b)=>{
@@ -10327,7 +10407,7 @@ function buildCloudPickingRows(){
     if(a.bin && !b.bin) return -1;
 
     const binCompare=
-      naturalCompare(
+      warehouseBinCompare(
         a.bin||'',
         b.bin||''
       );
@@ -11326,7 +11406,7 @@ function getPickingCarrierGroups(){
         if(a.bin && !b.bin) return -1;
 
         const c=
-          naturalCompare(
+          warehouseBinCompare(
             a.bin||'',
             b.bin||''
           );
