@@ -966,7 +966,7 @@ th{
   </div>
 
   <div class="small mt-3 text-gray-500">
-    🔒 订单、拣货进度和面单以云端为准；刷新页面不会主动删除数据。
+    🔒 订单、拣货进度和面单以云端为准；刷新不删数据，后台同步也不会自动切换页面。
   </div>
 
   <div id="shippingCloudSummary" class="small mt-2">
@@ -1105,7 +1105,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V6.0 · Cloud Warehouse
+          版本 V6.2 · Cloud Warehouse
         </div>
 
       </div>
@@ -1234,7 +1234,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V6.0-20260915-REFRESH-SAFE';
+const APP_VERSION = 'V6.2-20260915-LOGS-SAFE';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1291,6 +1291,9 @@ const APP = {
   shippingImportBusy:false,
   shippingImportExpectedOrders:0,
   shippingImportExpectedPieces:0,
+  currentPage:'home',
+  logsLoading:false,
+  logsLoadedOnce:false,
 
   shippingHistoryOrders:[],
 
@@ -1785,6 +1788,32 @@ async function logout(){
    App 启动
 ========================================================= */
 
+
+window.addEventListener(
+  'pageshow',
+  ()=>{
+    if(APP.user){
+      requestAnimationFrame(
+        enforceCurrentPageVisibility
+      );
+    }
+  }
+);
+
+document.addEventListener(
+  'visibilitychange',
+  ()=>{
+    if(
+      document.visibilityState==='visible' &&
+      APP.user
+    ){
+      requestAnimationFrame(
+        enforceCurrentPageVisibility
+      );
+    }
+  }
+);
+
 async function bootApp(){
 
   try{
@@ -1832,6 +1861,17 @@ async function bootApp(){
 
 
     await loadWarehouses();
+
+    /*
+     * V6.1：恢复用户最后所在页面。
+     * Safari 切后台/回来、刷新页面、云端同步完成后，都不抢页面。
+     */
+    const lastPage=getRememberedPage();
+    APP.currentPage=lastPage;
+    showPage(
+      lastPage,
+      {remember:false}
+    );
 
 
   }catch(error){
@@ -2499,87 +2539,139 @@ async function deleteWarehouse(id){
    页面导航
 ========================================================= */
 
-function showPage(page){
+function pageStorageKey(){
+  return `warehouse_last_page_${APP.warehouse?.id||'global'}`;
+}
 
-  [
+function normalizePageName(page){
+  const allowed=[
+    'home',
+    'inventory',
+    'picking',
+    'logs',
+    'settings'
+  ];
+  return allowed.includes(page)
+    ? page
+    : 'home';
+}
+
+function rememberCurrentPage(page){
+  APP.currentPage=normalizePageName(page);
+  try{
+    localStorage.setItem(
+      pageStorageKey(),
+      APP.currentPage
+    );
+  }catch(e){}
+}
+
+function getRememberedPage(){
+  try{
+    return normalizePageName(
+      localStorage.getItem(
+        pageStorageKey()
+      ) || APP.currentPage || 'home'
+    );
+  }catch(e){
+    return normalizePageName(
+      APP.currentPage || 'home'
+    );
+  }
+}
+
+function enforceCurrentPageVisibility(){
+
+  const page=normalizePageName(
+    APP.currentPage || 'home'
+  );
+
+  const names=[
     'Home',
     'Inventory',
     'Picking',
     'Logs',
     'Settings'
-  ].forEach(name => {
+  ];
 
-    const el =
-      $('page' + name);
+  names.forEach(name=>{
+
+    const el=$('page'+name);
+    const nav=$('nav'+name);
+
+    const normalized=
+      name.charAt(0).toLowerCase()+
+      name.slice(1);
+
+    const active=
+      normalized===page;
 
     if(el){
-      el.classList.add('hidden');
+      el.classList.toggle(
+        'hidden',
+        !active
+      );
     }
 
-
-    const nav =
-      $('nav' + name);
-
     if(nav){
-      nav.classList.remove(
-        'active'
+      nav.classList.toggle(
+        'active',
+        active
       );
     }
 
   });
+}
 
+function showPage(page,options={}){
 
-  const section =
-    $('page' +
-      page.charAt(0).toUpperCase() +
-      page.slice(1));
+  page=normalizePageName(page);
 
-
-  const nav =
-    $('nav' +
-      page.charAt(0).toUpperCase() +
-      page.slice(1));
-
-
-  if(section){
-    section.classList.remove(
-      'hidden'
-    );
+  /*
+   * V6.1 页面锁：
+   * 只有用户主动导航才改变当前页面。
+   * 后台订单同步、面单同步、批次刷新都只能更新数据，
+   * 不允许偷偷把用户从“设置/库存/流水”等页面切回拣货页。
+   */
+  if(options.remember!==false){
+    rememberCurrentPage(page);
+  }else{
+    APP.currentPage=page;
   }
 
-
-  if(nav){
-    nav.classList.add(
-      'active'
-    );
-  }
-
+  enforceCurrentPageVisibility();
 
   if(page === 'home'){
     renderHome();
   }
 
-
   if(page === 'inventory'){
     renderInventoryList();
   }
 
-
   if(page === 'picking'){
-
     if(APP.pickingRows.length){
       renderPickingList();
     }else{
       renderPickingEmpty();
     }
-
   }
-
 
   if(page === 'logs'){
     renderLogs();
+
+    if(!APP.logsLoadedOnce && !APP.logsLoading){
+      setTimeout(
+        ()=>loadLogs({silent:true}),
+        0
+      );
+    }
   }
 
+  // 渲染函数运行完后再强制一次，避免任何异步 DOM 更新把其他页面露出来。
+  requestAnimationFrame(
+    enforceCurrentPageVisibility
+  );
 }
 
 
@@ -4284,23 +4376,46 @@ async function deleteInventory(id){
 /* =========================================================
    Logs
 ========================================================= */
-async function loadLogs(){
+async function loadLogs(options={}){
 
   if(!APP.warehouse){
-
     APP.logs = [];
-
+    renderLogs();
     return;
+  }
 
+  if(APP.logsLoading){
+    return;
+  }
+
+  APP.logsLoading=true;
+
+  const refreshBtn =
+    document.querySelector(
+      '#pageLogs button[onclick="loadLogs()"]'
+    );
+
+  if(refreshBtn){
+    refreshBtn.disabled=true;
+    refreshBtn.textContent='同步中…';
   }
 
   try{
 
-    const {data: inventoryData, error: inventoryError} =
+    /*
+     * V6.2 流水安全：
+     * 只读取当前仓库相关库存的流水。
+     * 同时兼容两种历史表：
+     *   1) inventory_transactions
+     *   2) stock_logs
+     * 避免旧版本写在 A 表、新版本读 B 表导致“暂无流水”。
+     */
+
+    const {data:inventoryData,error:inventoryError} =
       await APP.sb
         .from('inventory')
         .select(
-          'id,name,sku,bin,warehouse_id'
+          'id,name,sku,bin,warehouse_id,note'
         )
         .eq(
           'warehouse_id',
@@ -4308,87 +4423,227 @@ async function loadLogs(){
         );
 
     if(inventoryError){
-
       throw inventoryError;
-
     }
 
-    const inventoryMap =
+    const inventoryRows=inventoryData||[];
+
+    const inventoryMap=
       new Map(
-        (inventoryData || []).map(item => [
+        inventoryRows.map(item=>[
           item.id,
           item
         ])
       );
 
-    const {data: transactionData, error: transactionError} =
-      await APP.sb
-        .from('inventory_transactions')
-        .select(`
-          id,
-          inventory_id,
-          type,
-          qty,
-          note,
-          created_at
-        `)
-        .order(
-          'created_at',
-          {
-            ascending:false
-          }
-        );
+    const inventoryIds=
+      inventoryRows.map(x=>x.id);
 
-    if(transactionError){
+    let merged=[];
 
-      throw transactionError;
+    /*
+     * 读取 inventory_transactions。
+     * 按 50 个 inventory_id 分块，避免大量库存时 URL 过长。
+     */
+    if(inventoryIds.length){
+
+      for(
+        let i=0;
+        i<inventoryIds.length;
+        i+=50
+      ){
+
+        const ids=
+          inventoryIds.slice(
+            i,
+            i+50
+          );
+
+        const {data,error}=
+          await APP.sb
+            .from('inventory_transactions')
+            .select(`
+              id,
+              inventory_id,
+              type,
+              qty,
+              note,
+              created_at
+            `)
+            .in(
+              'inventory_id',
+              ids
+            )
+            .order(
+              'created_at',
+              {ascending:false}
+            )
+            .limit(1000);
+
+        if(error){
+
+          /*
+           * 如果这个项目没有 inventory_transactions，
+           * 不让整个流水页面卡死，继续尝试 stock_logs。
+           */
+          console.warn(
+            '读取 inventory_transactions 失败，继续尝试 stock_logs：',
+            error
+          );
+
+          break;
+        }
+
+        (data||[]).forEach(log=>{
+
+          const item=
+            inventoryMap.get(
+              log.inventory_id
+            );
+
+          merged.push({
+            ...log,
+            _source_table:'inventory_transactions',
+            name:item?.name||'',
+            sku:item?.sku||'',
+            bin:item?.bin||'',
+            item_note:item?.note||''
+          });
+
+        });
+
+      }
 
     }
 
-    APP.logs =
-      (transactionData || [])
-      .filter(log =>
-        inventoryMap.has(
-          log.inventory_id
-        )
-      )
-      .map(log => {
+    /*
+     * 兼容旧版 stock_logs。
+     * 如果表不存在/权限不允许，仅跳过，不影响页面导航。
+     */
+    try{
 
-        const item =
-          inventoryMap.get(
+      const {data:stockData,error:stockError}=
+        await APP.sb
+          .from('stock_logs')
+          .select('*')
+          .eq(
+            'warehouse_id',
+            APP.warehouse.id
+          )
+          .order(
+            'created_at',
+            {ascending:false}
+          )
+          .limit(2000);
+
+      if(stockError){
+        console.warn(
+          '读取 stock_logs 失败：',
+          stockError
+        );
+      }else{
+
+        (stockData||[]).forEach(log=>{
+
+          const item=
             log.inventory_id
-          );
+            ? inventoryMap.get(log.inventory_id)
+            : inventoryRows.find(
+                x=>
+                  String(x.sku||'').trim().toLowerCase() ===
+                  String(log.sku||'').trim().toLowerCase()
+              );
 
-        return {
+          merged.push({
+            ...log,
+            _source_table:'stock_logs',
+            name:
+              log.name ||
+              item?.name ||
+              '',
+            sku:
+              log.sku ||
+              item?.sku ||
+              '',
+            bin:
+              log.bin ||
+              item?.bin ||
+              '',
+            item_note:
+              item?.note ||
+              ''
+          });
 
-          ...log,
+        });
 
-          name:
-            item?.name || '',
+      }
 
-          sku:
-            item?.sku || '',
+    }catch(stockCatchError){
+      console.warn(
+        'stock_logs 兼容读取异常：',
+        stockCatchError
+      );
+    }
 
-          bin:
-            item?.bin || ''
+    /*
+     * 去重：同一个表同一个 id 只保留一次。
+     */
+    const dedup=new Map();
 
-        };
+    merged.forEach(log=>{
+      const key=
+        `${log._source_table||'unknown'}:${log.id||Math.random()}`;
 
-      });
+      if(!dedup.has(key)){
+        dedup.set(key,log);
+      }
+    });
+
+    APP.logs=
+      Array.from(dedup.values())
+        .sort(
+          (a,b)=>
+            new Date(b.created_at||0) -
+            new Date(a.created_at||0)
+        );
+
+    APP.logsLoadedOnce=true;
 
     renderLogs();
 
   }catch(error){
 
-    console.error(error);
-
-    showError(
-      error.message ||
-      '加载流水失败'
+    console.error(
+      '加载流水失败：',
+      error
     );
 
-  }
+    /*
+     * 流水失败不能卡住整个 App。
+     * 保留已有 APP.logs，导航继续可用。
+     */
+    renderLogs();
 
+    if(options.silent!==true){
+      showError(
+        '流水同步失败：' +
+        (error.message || '未知错误') +
+        '。不会影响库存、订单或其他页面。'
+      );
+    }
+
+  }finally{
+
+    APP.logsLoading=false;
+
+    if(refreshBtn){
+      refreshBtn.disabled=false;
+      refreshBtn.textContent='刷新';
+    }
+
+    // 防止流水异步完成后把别的页面盖住。
+    enforceCurrentPageVisibility();
+  }
 }
 
 
@@ -4471,16 +4726,13 @@ function findInventoryForLog(log){
 
 function renderLogs(){
 
-  const container =
-    $('logsList');
-
+  const container=$('logsList');
 
   if(!container){
     return;
   }
 
-
-  const search =
+  const search=
     (
       $('logSearch')?.value ||
       ''
@@ -4488,89 +4740,96 @@ function renderLogs(){
     .trim()
     .toLowerCase();
 
+  const source=
+    Array.isArray(APP.logs)
+    ? APP.logs
+    : [];
 
-  const filtered =
-    APP.logs.filter(log => {
+  const filtered=
+    source.filter(log=>{
 
       if(!search){
         return true;
       }
 
+      const item=
+        findInventoryForLog(log);
 
-      const item =
-        findInventoryForLog(
-          log
-        );
-
-
-      const text = [
-
+      const text=[
         log.sku,
-
         log.note,
-
         log.type,
-
         log.action,
-
         log.user_email,
-
         log.operator_email,
-
+        log.name,
         item?.name,
-
+        log.item_note,
         getItemNote(item)
-
       ]
       .filter(Boolean)
       .join(' ')
       .toLowerCase();
 
-
-      return text.includes(
-        search
-      );
-
+      return text.includes(search);
     });
 
+  if(APP.logsLoading && !filtered.length){
 
-  if(!filtered.length){
-
-    container.innerHTML = `
-
+    container.innerHTML=`
       <div class="card p-8 text-center">
-
-        <div class="text-4xl mb-3">
-          📋
-        </div>
-
-        <div class="font-bold">
-          暂无流水
-        </div>
-
+        <div class="text-4xl mb-3">⏳</div>
+        <div class="font-bold">正在读取流水…</div>
+        <div class="small mt-2">页面仍可正常切换</div>
       </div>
-
     `;
 
     return;
-
   }
 
+  if(!filtered.length){
 
-  container.innerHTML =
-    filtered.map(log => {
+    container.innerHTML=`
+      <div class="card p-8 text-center">
+        <div class="text-4xl mb-3">📋</div>
+        <div class="font-bold">
+          ${APP.logsLoadedOnce?'当前仓库暂无流水':'流水尚未同步'}
+        </div>
+        <div class="small mt-2">
+          ${APP.logsLoadedOnce?'入库/出库后会显示在这里':'点右上角“刷新”读取云端流水'}
+        </div>
+      </div>
+    `;
 
-      const item =
-        findInventoryForLog(
-          log
-        );
+    return;
+  }
 
+  /*
+   * 手机一次最多绘制前 300 条，避免几千条流水把 Safari 主线程卡死。
+   * 搜索仍然对已加载流水进行筛选。
+   */
+  const visible=
+    filtered.slice(0,300);
 
-      const type =
+  const moreText=
+    filtered.length>visible.length
+    ? `<div class="card p-3 text-center small mb-3">
+         已显示最近 ${visible.length} 条，共 ${filtered.length} 条。
+         可使用搜索框快速查找。
+       </div>`
+    : '';
+
+  container.innerHTML=
+    moreText+
+    visible.map(log=>{
+
+      const item=
+        findInventoryForLog(log);
+
+      const type=
         getLogType(log);
 
-
-      const qty =
+      const qty=
         safeNumber(
           log.qty ??
           log.quantity ??
@@ -4578,22 +4837,23 @@ function renderLogs(){
           0
         );
 
+      const note=
+        String(log.note||'').trim();
 
-      const note = String(log.note || '').trim();
+      const itemNote=
+        String(
+          log.item_note ||
+          getItemNote(item) ||
+          ''
+        ).trim();
 
-      // 商品备注属于当前库存资料；流水备注属于当时这一次入/出库操作。
-      // 两者分开显示，修改商品备注后流水页面也能马上看到最新商品备注。
-      const itemNote = getItemNote(item);
-
-      const operator =
+      const operator=
         log.user_email ||
         log.operator_email ||
         log.email ||
         '—';
 
-
       return `
-
         <div class="log-row">
 
           <div class="flex justify-between gap-3">
@@ -4601,19 +4861,13 @@ function renderLogs(){
             <div class="min-w-0">
 
               <div class="flex items-center gap-2">
-
                 <span class="badge ${type.cls}">
-                  ${escapeHtml(
-                    type.label
-                  )}
+                  ${escapeHtml(type.label)}
                 </span>
-
                 <span class="font-bold">
                   ${qty}
                 </span>
-
               </div>
-
 
               <div class="font-semibold mt-2 break-all">
                 ${escapeHtml(
@@ -4624,7 +4878,6 @@ function renderLogs(){
                 )}
               </div>
 
-
               <div class="small mt-1 break-all">
                 SKU：
                 ${escapeHtml(
@@ -4634,46 +4887,34 @@ function renderLogs(){
                 )}
               </div>
 
-
               ${
                 note
-                ? `
-                  <div class="text-sm text-gray-600 mt-2">
+                ? `<div class="text-sm text-gray-600 mt-2">
                     🧾 流水备注：${escapeHtml(note)}
-                  </div>
-                `
+                  </div>`
                 : ''
               }
 
               ${
                 itemNote
-                ? `
-                  <div class="text-sm text-blue-700 mt-1">
+                ? `<div class="text-sm text-blue-700 mt-1">
                     📝 商品备注：${escapeHtml(itemNote)}
-                  </div>
-                `
+                  </div>`
                 : ''
               }
 
-
               <div class="small mt-2">
-                ${formatDate(
-                  log.created_at
-                )}
+                ${formatDate(log.created_at)}
               </div>
-
 
               <div class="small mt-1 break-all">
                 操作人：
-                ${escapeHtml(
-                  operator
-                )}
+                ${escapeHtml(operator)}
               </div>
 
             </div>
 
           </div>
-
 
           <div class="flex gap-2 mt-3">
 
@@ -4692,11 +4933,9 @@ function renderLogs(){
           </div>
 
         </div>
-
       `;
 
     }).join('');
-
 }
 
 
@@ -4782,21 +5021,38 @@ async function saveStockLogNote(id){
     );
 
 
-    const {error} =
-      await APP.sb
-        .from('stock_logs')
+    const log=
+      APP.logs.find(
+        x=>x.id===id
+      );
+
+    if(!log){
+      throw new Error('找不到这条流水');
+    }
+
+    const table=
+      log._source_table ||
+      'stock_logs';
+
+    let query=
+      APP.sb
+        .from(table)
         .update({
           note:note
         })
         .eq(
           'id',
           id
-        )
-        .eq(
-          'warehouse_id',
-          APP.warehouse.id
         );
 
+    if(table==='stock_logs'){
+      query=query.eq(
+        'warehouse_id',
+        APP.warehouse.id
+      );
+    }
+
+    const {error}=await query;
 
     if(error){
       throw error;
@@ -4866,19 +5122,27 @@ async function deleteStockLog(id){
     );
 
 
-    const {error} =
-      await APP.sb
-        .from('stock_logs')
+    const table=
+      log._source_table ||
+      'stock_logs';
+
+    let query=
+      APP.sb
+        .from(table)
         .delete()
         .eq(
           'id',
           id
-        )
-        .eq(
-          'warehouse_id',
-          APP.warehouse.id
         );
 
+    if(table==='stock_logs'){
+      query=query.eq(
+        'warehouse_id',
+        APP.warehouse.id
+      );
+    }
+
+    const {error}=await query;
 
     if(error){
       throw error;
@@ -8391,6 +8655,9 @@ async function loadShippingWorkspace(silent=false){
     renderPackingQueue();
     updateShippingCloudSummary();
 
+    // 云端同步只能更新数据，不能抢走用户正在看的页面。
+    enforceCurrentPageVisibility();
+
     // 批次历史即使加载失败，也不能影响当前订单工作区。
     try{
       await loadShippingBatchHistory(true);
@@ -8513,6 +8780,7 @@ async function loadShippingBatchHistory(silent=true){
     APP.shippingHistoryLabels=labels;
 
     renderShippingBatchHistory();
+    enforceCurrentPageVisibility();
 
   }catch(error){
 
@@ -9202,7 +9470,9 @@ async function runOrderImport(){
     APP.pickingOrderDate=$('pickOrderDate')?.value || shippingDateToday();
 
     await loadShippingWorkspace(true);
-    showPage('picking');
+
+    // V6.1：导入完成只更新数据，不强制切换用户当前页面。
+    enforceCurrentPageVisibility();
 
     const suffix=errors.length ? `，另有 ${errors.length} 行被跳过` : '';
 
