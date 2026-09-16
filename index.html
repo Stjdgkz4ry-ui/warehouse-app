@@ -1007,7 +1007,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V8.7 · Cloud Warehouse
+          版本 V8.8 · Cloud Warehouse
         </div>
 
       </div>
@@ -1137,7 +1137,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V8.7-20260916-IMPORT-RESTORE-ARCHIVE-RPC';
+const APP_VERSION = 'V8.8-20260916-SAFE-INVENTORY-REIMPORT';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -5725,6 +5725,10 @@ async function runImport(type){
     }
 
 
+    /*
+     * 只读取第一个工作表。
+     * 这样导入模板后面即使有“需确认/参考”等工作表，也不会误导入。
+     */
     const sheetName =
       workbook.SheetNames[0];
 
@@ -5825,7 +5829,9 @@ async function runImport(type){
           'location'
         ]
       );
-const noteIndex =
+
+
+    const noteIndex =
       findHeader(
         headers,
         [
@@ -5837,30 +5843,33 @@ const noteIndex =
         ]
       );
 
-    /*
-     * V8.1：批量导入只要包含正库存，就属于增加库存。
-     * 整次导入只验证一次管理员密码。
-     */
-    const importAddsStock=
-      qtyIndex>=0 &&
-      rows.slice(1).some(row=>
-        importNumber(row[qtyIndex])>0
-      );
 
+    /*
+     * V8.8：批量导入改成“安全覆盖模式”。
+     * 只要 Excel 里带“数量/库存”列，就可能增加或减少现有库存，
+     * 所以整次导入必须先验证一次管理员密码。
+     */
     if(
-      importAddsStock &&
+      qtyIndex >= 0 &&
       !(await verifyWarehouseAdminPassword(
-        '批量导入并增加库存'
+        '批量导入并覆盖库存'
       ))
     ){
       return;
     }
 
-    let success = 0;
+
+    /*
+     * 先把 Excel 行整理成唯一的 SKU + 库位。
+     * 同一个文件里如果重复出现同一 SKU + 库位，最后一行生效，
+     * 防止同一次导入里自己撞重复键。
+     */
+    const preparedMap =
+      new Map();
 
     let skipped = 0;
 
-    const errors = [];
+    const prepareErrors = [];
 
 
     for(
@@ -5869,13 +5878,8 @@ const noteIndex =
       i++
     ){
 
-      const row =
-        rows[i];
-
-
-      const line =
-        i + 1;
-
+      const row = rows[i];
+      const line = i + 1;
 
       const sku =
         String(
@@ -5884,15 +5888,11 @@ const noteIndex =
 
 
       if(!sku){
-
         skipped++;
-
-        errors.push(
+        prepareErrors.push(
           `第${line}行：SKU为空`
         );
-
         continue;
-
       }
 
 
@@ -5911,8 +5911,11 @@ const noteIndex =
 
       const qty =
         qtyIndex >= 0
-        ? importNumber(
-            row[qtyIndex]
+        ? Math.max(
+            0,
+            importNumber(
+              row[qtyIndex]
+            )
           )
         : 0;
 
@@ -5922,10 +5925,13 @@ const noteIndex =
         String(
           row[alertIndex] ?? ''
         ).trim() !== ''
-        ? importNumber(
-            row[alertIndex]
+        ? Math.max(
+            0,
+            importNumber(
+              row[alertIndex]
+            )
           )
-        : 10;
+        : null;
 
 
       const bin =
@@ -5934,60 +5940,322 @@ const noteIndex =
             row[binIndex] ?? ''
           ).trim()
         : '';
-const note =
+
+
+      const note =
         noteIndex >= 0
         ? String(
             row[noteIndex] ?? ''
           ).trim()
         : '';
 
+
+      const key =
+        `${sku.toLowerCase()}\u0000${bin.toLowerCase()}`;
+
+
+      preparedMap.set(
+        key,
+        {
+          line,
+          sku,
+          name,
+          qty,
+          alert,
+          bin,
+          note
+        }
+      );
+
+    }
+
+
+    const prepared =
+      Array.from(
+        preparedMap.values()
+      );
+
+
+    if(!prepared.length){
+      throw new Error(
+        '没有可导入的有效 SKU'
+      );
+    }
+
+
+    showInfo(
+      `正在安全导入 ${prepared.length} 条...`
+    );
+
+
+    /*
+     * 导入前重新读取一次云端库存，避免手机页面上的旧缓存造成误判。
+     * APP.inventory 包含正常商品和已下架商品。
+     */
+    await loadInventory();
+
+
+    const existingMap =
+      new Map();
+
+
+    (APP.inventory || [])
+      .forEach(item=>{
+
+        const key =
+          `${String(item.sku || '').trim().toLowerCase()}\u0000${String(item.bin || '').trim().toLowerCase()}`;
+
+        const old =
+          existingMap.get(key);
+
+        /*
+         * 理论上数据库有 SKU+库位唯一约束，不应存在重复。
+         * 万一旧数据重复，优先选正常（未下架）的那条。
+         */
+        if(
+          !old ||
+          (
+            old.is_active === false &&
+            item.is_active !== false
+          )
+        ){
+          existingMap.set(
+            key,
+            item
+          );
+        }
+
+      });
+
+
+    let created = 0;
+    let overwritten = 0;
+    let unchanged = 0;
+    let restored = 0;
+
+    const errors = [
+      ...prepareErrors
+    ];
+
+
+    for(
+      let i=0;
+      i<prepared.length;
+      i++
+    ){
+
+      const entry =
+        prepared[i];
+
+      const {
+        line,
+        sku,
+        name,
+        qty,
+        alert,
+        bin,
+        note
+      } = entry;
+
+      const key =
+        `${sku.toLowerCase()}\u0000${bin.toLowerCase()}`;
+
+
       try{
 
-        const {data, error} =
-          await APP.sb.rpc(
-            'create_inventory',
-            {
-              p_warehouse_id:
-                APP.warehouse.id,
+        const existing =
+          existingMap.get(key);
 
-              p_name:name,
 
-              p_sku:sku,
+        if(existing){
 
-              p_qty:
-                Math.max(
-                  0,
-                  qty
-                ),
+          /* 已下架的同 SKU + 同库位先恢复，避免新建撞唯一键。 */
+          if(existing.is_active === false){
 
-              p_alert:
-                Math.max(
-                  0,
-                  alert
-                ),
+            const {error:restoreError} =
+              await APP.sb.rpc(
+                'restore_inventory',
+                {
+                  p_inventory_id:
+                    existing.id
+                }
+              );
 
-           p_bin:bin,
-              p_note:note
-              
+            if(restoreError){
+              throw restoreError;
             }
-          );
+
+            existing.is_active = true;
+            restored++;
+          }
 
 
-        if(error){
-  throw new Error(
-    `第${i + 1}行导入失败：SKU=[${sku}] 货位=[${bin}] 原因：${error.message}`
-  );
-}
-        
+          const oldQty =
+            Math.max(
+              0,
+              safeNumber(
+                existing.qty,
+                0
+              )
+            );
+
+          const targetQty =
+            qtyIndex >= 0
+            ? qty
+            : oldQty;
+
+          const targetAlert =
+            alert === null
+            ? Math.max(
+                0,
+                safeNumber(
+                  existing.alert ?? existing.alert_qty,
+                  10
+                )
+              )
+            : alert;
+
+          const diff =
+            targetQty - oldQty;
 
 
-        success++;
+          /*
+           * 元数据覆盖：名称 / SKU / 库位 / 预警 / 备注。
+           */
+          const {error:infoError} =
+            await APP.sb.rpc(
+              'update_inventory_info',
+              {
+                p_inventory_id:
+                  existing.id,
+                p_name:name,
+                p_sku:sku,
+                p_alert:targetAlert,
+                p_note:note,
+                p_bin:bin
+              }
+            );
+
+          if(infoError){
+            throw infoError;
+          }
+
+
+          /*
+           * 备注兼容旧数据库函数：再直接同步一次 note。
+           */
+          const {error:noteSyncError} =
+            await APP.sb
+              .from('inventory')
+              .update({note:note})
+              .eq('id',existing.id)
+              .eq(
+                'warehouse_id',
+                APP.warehouse.id
+              );
+
+          if(noteSyncError){
+            console.warn(
+              '批量导入备注同步失败：',
+              noteSyncError
+            );
+          }
+
+
+          /*
+           * 核心：不是“再加一次”，而是把最终库存调到 Excel 数量。
+           * 例如数据库 30、Excel 50，只入库 20；
+           * 数据库 80、Excel 50，只出库 30。
+           */
+          if(diff !== 0){
+
+            const {error:stockError} =
+              await APP.sb.rpc(
+                'adjust_inventory',
+                {
+                  p_inventory_id:
+                    existing.id,
+                  p_type:
+                    diff > 0
+                    ? 'in'
+                    : 'out',
+                  p_qty:
+                    Math.abs(diff),
+                  p_note:
+                    'Excel安全重复导入：覆盖到目标库存'
+                }
+              );
+
+            if(stockError){
+              throw stockError;
+            }
+
+            existing.qty =
+              targetQty;
+
+            overwritten++;
+
+          }else{
+
+            unchanged++;
+
+          }
+
+
+          existing.name = name;
+          existing.sku = sku;
+          existing.bin = bin;
+          existing.note = note;
+          existing.alert = targetAlert;
+
+
+        }else{
+
+          /*
+           * SKU + 库位不存在才真正新建。
+           */
+          const {error:createError} =
+            await APP.sb.rpc(
+              'create_inventory',
+              {
+                p_warehouse_id:
+                  APP.warehouse.id,
+                p_name:name,
+                p_sku:sku,
+                p_qty:
+                  qtyIndex >= 0
+                  ? qty
+                  : 0,
+                p_alert:
+                  alert === null
+                  ? 10
+                  : alert,
+                p_bin:bin,
+                p_note:note
+              }
+            );
+
+
+          if(createError){
+            throw createError;
+          }
+
+
+          created++;
+
+        }
 
 
       }catch(error){
 
+        console.error(
+          '批量导入失败',
+          entry,
+          error
+        );
+
         errors.push(
-          `第${line}行：${
+          `第${line}行：SKU=[${sku}] 货位=[${bin}] 原因：${
             error?.message ||
             '导入失败'
           }`
@@ -5995,15 +6263,35 @@ const note =
 
       }
 
+
+      /*
+       * 大文件导入时偶尔让出主线程，降低 iPhone Safari 假死概率。
+       */
+      if(
+        i > 0 &&
+        i % 50 === 0
+      ){
+        await new Promise(
+          resolve=>setTimeout(resolve,0)
+        );
+      }
+
     }
 
 
     await loadInventory();
 
-
     renderInventoryList();
-
     renderHome();
+
+    await loadLogs({silent:true});
+    renderLogs();
+
+
+    const success =
+      created +
+      overwritten +
+      unchanged;
 
 
     let html = `
@@ -6011,11 +6299,23 @@ const note =
       <div class="bg-green-50 rounded-xl p-3">
 
         <div class="font-bold text-green-700">
-          导入完成
+          安全导入完成
         </div>
 
         <div class="mt-2">
-          成功：${success}
+          新建：${created}
+        </div>
+
+        <div>
+          覆盖库存：${overwritten}
+        </div>
+
+        <div>
+          数量原本一致：${unchanged}
+        </div>
+
+        <div>
+          恢复已下架：${restored}
         </div>
 
         <div>
@@ -6024,6 +6324,10 @@ const note =
 
         <div>
           错误：${errors.length}
+        </div>
+
+        <div class="small mt-2 text-green-800">
+          同一个 SKU + 同一个库位重复导入时，以 Excel 里的数量为最终库存，不会再次累加。
         </div>
 
       </div>
@@ -6070,7 +6374,7 @@ const note =
 
 
     showOk(
-      `导入完成，成功 ${success} 条`
+      `导入完成：新建 ${created}，覆盖 ${overwritten}，一致 ${unchanged}`
     );
 
 
