@@ -750,15 +750,9 @@ th{
     <section id="pagePicking" class="hidden">
 
       <div class="flex items-center justify-between mb-3">
-
         <div>
-     <h1 class="text-2xl font-bold">
-  📦 出货中心
-</h1>
-
-          <div class="small">
-            导入订单后自动匹配 SKU 和库位
-          </div>
+          <h1 class="text-2xl font-bold">📦 出货中心</h1>
+          <div class="small">导入订单后自动匹配 SKU 和库位</div>
         </div>
 
         <button
@@ -766,224 +760,130 @@ th{
           onclick="openOrderImport()">
           📥 导入订单
         </button>
-
       </div>
-
 
       <div class="card p-4 mb-3">
-
-        <h2 class="font-bold mb-3">
-          订单信息
-        </h2>
+        <h2 class="font-bold mb-3">订单信息</h2>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-
           <div>
-            <label class="block text-sm font-semibold mb-2">
-              订单号
-            </label>
-
-            <input
-              id="pickOrderNo"
-              placeholder="例如：ORDER-10001">
+            <label class="block text-sm font-semibold mb-2">订单号</label>
+            <input id="pickOrderNo" placeholder="例如：ORDER-10001">
           </div>
 
           <div>
-            <label class="block text-sm font-semibold mb-2">
-              拣货日期
-            </label>
-
-            <input
-              id="pickOrderDate"
-              type="date">
+            <label class="block text-sm font-semibold mb-2">拣货日期</label>
+            <input id="pickOrderDate" type="date">
           </div>
-
         </div>
-
       </div>
 
-
       <div id="pickingEmpty" class="card p-8 text-center">
-
-        <div class="text-5xl mb-3">
-          📋
-        </div>
-
-        <div class="font-bold text-lg">
-          还没有订单
-        </div>
-
+        <div class="text-5xl mb-3">📋</div>
+        <div class="font-bold text-lg">还没有订单</div>
         <div class="small mt-2">
           点击右上角“导入订单”，上传 Excel / CSV / TXT
         </div>
 
         <div class="bg-blue-50 rounded-xl p-4 mt-5 text-left text-sm">
-
-          <div class="font-bold mb-2">
-            推荐订单格式：
-          </div>
-
-          <div class="font-mono text-xs">
-            SKU　数量
-          </div>
-
-          <div class="font-mono text-xs mt-2">
-            ABC123　5
-          </div>
-
-          <div class="font-mono text-xs mt-1">
-            XYZ456　2
-          </div>
-
+          <div class="font-bold mb-2">推荐订单格式：</div>
+          <div class="font-mono text-xs">SKU　数量</div>
+          <div class="font-mono text-xs mt-2">ABC123　5</div>
+          <div class="font-mono text-xs mt-1">XYZ456　2</div>
         </div>
-
       </div>
-
 
       <div id="pickingResult" class="hidden">
 
         <div class="order-summary mb-3">
-
           <div class="order-stat">
-            <div class="small">
-              SKU 行数
-            </div>
-
-            <div
-              id="pickStatRows"
-              class="text-2xl font-bold mt-1">
-              0
-            </div>
+            <div class="small">SKU 行数</div>
+            <div id="pickStatRows" class="text-2xl font-bold mt-1">0</div>
           </div>
 
           <div class="order-stat">
-            <div class="small">
-              总件数
-            </div>
-
-            <div
-              id="pickStatQty"
-              class="text-2xl font-bold mt-1">
-              0
-            </div>
+            <div class="small">总件数</div>
+            <div id="pickStatQty" class="text-2xl font-bold mt-1">0</div>
           </div>
 
           <div class="order-stat">
-            <div class="small">
-              可拣
-            </div>
-
-            <div
-              id="pickStatOk"
-              class="text-2xl font-bold text-green-600 mt-1">
-              0
-            </div>
+            <div class="small">可拣</div>
+            <div id="pickStatOk" class="text-2xl font-bold text-green-600 mt-1">0</div>
           </div>
 
           <div class="order-stat">
-            <div class="small">
-              异常
-            </div>
-
-            <div
-              id="pickStatBad"
-              class="text-2xl font-bold text-red-600 mt-1">
-              0
-            </div>
+            <div class="small">异常</div>
+            <div id="pickStatBad" class="text-2xl font-bold text-red-600 mt-1">0</div>
           </div>
-
         </div>
 
-
         <div class="card p-3 mb-3">
-
           <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-
-            <button
-              class="btn btn-blue"
-              onclick="printPickingList()">
+            <button class="btn btn-blue" onclick="printPickingList()">
               🖨️ 打印拣货单
             </button>
 
-            <button
-              class="btn btn-gray"
-              onclick="exportPickingList()">
+            <button class="btn btn-gray" onclick="exportPickingList()">
               📥 导出 Excel
             </button>
 
-            <button
-              class="btn btn-red"
-              onclick="clearPickingList()">
-              🗑️ 清空订单
+            <button class="btn btn-red" onclick="clearPickingList()">
+              🗑️ 清空出货订单
             </button>
-
           </div>
-
         </div>
 
-
         <div class="card p-3 mb-3">
-
           <input
             id="pickingSearch"
             placeholder="搜索库位 / SKU / 商品名称"
             oninput="renderPickingList()">
-</div>
-
-
-<div class="card p-3 mb-3">
-
-  <button
-    class="btn btn-blue w-full"
-    onclick="renderWavePicking()">
-    📦 波次集中拣货
-  </button>
-
-  <div class="small mt-2">
-    按库位合并相同 SKU，减少重复走库位
-  </div>
-
-</div>
-
-
-<div class="card p-4 mb-3">
-
-  <div class="flex items-center justify-between gap-3">
-    <div>
-      <div class="font-bold text-lg">☁️ 云端订单工作流</div>
-      <div class="small mt-1">订单、面单、拣货进度可在同一仓库的手机之间共享</div>
-    </div>
-    <span id="shippingCloudBadge" class="badge badge-gray">未检查</span>
-  </div>
-
-  <div class="grid grid-cols-2 gap-2 mt-3">
-    <button class="btn btn-purple" onclick="openLabelUpload()">📄 上传面单 PDF</button>
-    <button class="btn btn-gray" onclick="loadShippingWorkspace(true)">🔄 云端同步</button>
-    <button class="btn btn-green" onclick="openPickScanner()">📷 扫码拣货</button>
-    <button class="btn btn-blue" onclick="openPackingScanner()">🖨️ 扫码贴单</button>
-    <button class="btn btn-yellow" onclick="openShippingPickAudit()">📋 配货表校验</button>
-    <button class="btn btn-gray" onclick="openProductionPreflight()">✅ 开工前检查</button>
-  </div>
-
-  <div class="small mt-3 text-gray-500">
-    🔒 订单、拣货进度和面单以云端为准；刷新不删数据，后台同步也不会自动切换页面。
-  </div>
-
-  <div id="shippingCloudSummary" class="small mt-2">
-    导入订单后会自动保存到当前仓库。
-  </div>
-
-</div>
-
-<div id="packingQueue" class="mb-3"></div>
-
-<div id="shippingBatchHistory" class="mb-3"></div>
-
-<div id="pickingListLegacyDuplicate" class="hidden"></div>
-
-</div>
         </div>
 
+        <div class="card p-3 mb-3">
+          <button
+            class="btn btn-blue w-full"
+            onclick="renderWavePicking()">
+            📦 波次集中拣货
+          </button>
+
+          <div class="small mt-2">
+            按库位合并相同 SKU，减少重复走库位
+          </div>
+        </div>
+
+        <div class="card p-4 mb-3">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <div class="font-bold text-lg">☁️ 云端订单工作流</div>
+              <div class="small mt-1">
+                订单、面单、拣货进度可在同一仓库的手机之间共享
+              </div>
+            </div>
+            <span id="shippingCloudBadge" class="badge badge-gray">未检查</span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 mt-3">
+            <button class="btn btn-purple" onclick="openLabelUpload()">📄 上传面单 PDF</button>
+            <button class="btn btn-gray" onclick="loadShippingWorkspace(true)">🔄 云端同步</button>
+            <button class="btn btn-green" onclick="openPickScanner()">📷 扫码拣货</button>
+            <button class="btn btn-blue" onclick="openPackingScanner()">🖨️ 扫码贴单</button>
+            <button class="btn btn-yellow" onclick="openShippingPickAudit()">📋 配货表校验</button>
+            <button class="btn btn-gray" onclick="openProductionPreflight()">✅ 开工前检查</button>
+          </div>
+
+          <div class="small mt-3 text-gray-500">
+            🔒 订单、拣货进度和面单以云端为准；刷新不删数据，后台同步也不会自动切换页面。
+          </div>
+
+          <div id="shippingCloudSummary" class="small mt-2">
+            导入订单后会自动保存到当前仓库。
+          </div>
+        </div>
+
+        <div id="packingQueue" class="mb-3"></div>
+        <div id="shippingBatchHistory" class="mb-3"></div>
+        <div id="pickingListLegacyDuplicate" class="hidden"></div>
 
         <div id="pickingList"></div>
 
@@ -1105,7 +1005,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V6.3 · Cloud Warehouse
+          版本 V6.4 · Cloud Warehouse
         </div>
 
       </div>
@@ -1234,7 +1134,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V6.3-20260915-LOGS-AUTHORITATIVE';
+const APP_VERSION = 'V6.4-20260915-PAGE-SCOPE-CLEAR-ALL';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -7727,84 +7627,150 @@ function renderWavePicking(){
 
 async function clearPickingList(){
 
-  const hasLocal = APP.pickingRows.length > 0;
-  const hasCloud = APP.shippingCloudReady === true && APP.shippingOrders.length > 0;
-  const activeSource=APP.shippingActiveBatchSource;
-
-  if(!hasLocal && !hasCloud){
-    return showError('目前没有订单');
+  if(!APP.warehouse){
+    return showError('请先选择仓库');
   }
 
-  const batchName=shippingActiveBatchName() || '当前批次';
-
-  const ok = confirm(
-    hasCloud
-      ? `确定清空【${batchName}】吗？\n\n只删除当前批次 ${APP.shippingOrders.length} 个未出库订单、拣货进度和对应面单。\n不会删除其他批次，也不会删除库存。`
-      : '确定清空当前订单拣货单吗？'
+  const ok=confirm(
+    '确定清空当前仓库【全部待处理出货订单】吗？\n\n' +
+    '会删除：所有未出库订单、对应拣货进度、对应面单。\n' +
+    '不会删除：库存、库存流水、已经完成出库的历史记录。'
   );
 
   if(!ok) return;
 
   try{
-    showInfo('正在清空当前批次...');
 
-    if(hasCloud){
+    showInfo('正在清空全部待处理出货订单...');
 
-      const storagePaths = (APP.shippingLabels || [])
-        .map(x => String(x.storage_path || '').trim())
-        .filter(Boolean);
+    /*
+     * 先查当前仓库所有未出库订单。
+     * 不是只清当前 batch，避免旧测试批次/旧面单自动建单残留。
+     */
+    const {data:orders,error:orderError}=await APP.sb
+      .from('shipping_orders')
+      .select('id')
+      .eq('warehouse_id',APP.warehouse.id)
+      .neq('status','shipped');
 
-      if(storagePaths.length){
-        const {error:storageError} = await APP.sb.storage
-          .from('shipping-labels')
-          .remove(storagePaths);
+    if(orderError) throw orderError;
 
-        if(storageError){
-          console.warn('清理旧面单文件失败，继续清理订单：', storageError);
-        }
-      }
+    const orderIds=(orders||[]).map(x=>x.id);
 
-      if(!activeSource){
-        throw new Error('没有识别到当前批次，已停止删除，避免误删其他订单');
-      }
+    /*
+     * 删除 Storage 里的对应面单文件。
+     * 分块读取，避免大量订单 .in() 太长。
+     */
+    const storagePaths=[];
 
-      const {error:deleteError} = await APP.sb
-        .from('shipping_orders')
-        .delete()
-        .eq('warehouse_id',APP.warehouse.id)
-        .eq('source_file',activeSource)
-        .neq('status','shipped');
+    for(let i=0;i<orderIds.length;i+=50){
 
-      if(deleteError) throw deleteError;
+      const ids=orderIds.slice(i,i+50);
+
+      if(!ids.length) continue;
+
+      const {data:labels,error:labelError}=await APP.sb
+        .from('shipping_labels')
+        .select('storage_path')
+        .in('order_id',ids);
+
+      if(labelError) throw labelError;
+
+      (labels||[]).forEach(x=>{
+        const p=String(x.storage_path||'').trim();
+        if(p) storagePaths.push(p);
+      });
     }
 
-    APP.pickingRows = [];
-    APP.pickingFileName = '';
-    APP.pickingOrderNo = '';
-    APP.pickingOrderDate = '';
-    APP.shippingOrders = [];
-    APP.shippingItems = [];
-    APP.shippingLabels = [];
+    for(let i=0;i<storagePaths.length;i+=100){
+
+      const paths=storagePaths.slice(i,i+100);
+
+      const {error:storageError}=await APP.sb.storage
+        .from('shipping-labels')
+        .remove(paths);
+
+      if(storageError){
+        console.warn(
+          '部分面单文件清理失败，但继续清理订单：',
+          storageError
+        );
+      }
+    }
+
+    /*
+     * 删除全部未出库 shipping_orders。
+     * shipping_order_items / shipping_labels 依赖数据库级联关系清理。
+     */
+    const {error:deleteError}=await APP.sb
+      .from('shipping_orders')
+      .delete()
+      .eq('warehouse_id',APP.warehouse.id)
+      .neq('status','shipped');
+
+    if(deleteError) throw deleteError;
+
+    APP.pickingRows=[];
+    APP.pickingFileName='';
+    APP.pickingOrderNo='';
+    APP.pickingOrderDate='';
+    APP.shippingOrders=[];
+    APP.shippingItems=[];
+    APP.shippingLabels=[];
     APP.shippingPickAudit=null;
+    APP.shippingImportExpectedOrders=0;
+    APP.shippingImportExpectedPieces=0;
 
     setShippingActiveBatch('');
 
-    if($('pickOrderNo')) $('pickOrderNo').value = '';
-    if($('pickingSearch')) $('pickingSearch').value = '';
+    try{
+      localStorage.removeItem(
+        packPoolStorageKey()
+      );
+    }catch(e){}
 
-    const today = new Date().toISOString().slice(0,10);
-    if($('pickOrderDate')) $('pickOrderDate').value = today;
+    APP.packPool={};
 
-    updateShippingCloudSummary();
-    renderPackingQueue();
+    if($('pickOrderNo')){
+      $('pickOrderNo').value='';
+    }
+
+    if($('pickingSearch')){
+      $('pickingSearch').value='';
+    }
+
+    const today=
+      new Date()
+        .toISOString()
+        .slice(0,10);
+
+    if($('pickOrderDate')){
+      $('pickOrderDate').value=today;
+    }
+
     renderPickingEmpty();
+    renderPackingQueue();
+    updateShippingCloudSummary();
+
     await loadShippingBatchHistory(true);
 
-    showOk('当前批次已清空；库存和其他批次未动');
+    enforceCurrentPageVisibility();
+
+    showOk(
+      `已清空 ${orderIds.length} 个待处理出货订单；库存和已出库历史未动`
+    );
 
   }catch(error){
-    console.error('清空订单失败:', error);
-    showError('清空订单失败：' + (error.message || '请检查网络后重试'));
+
+    console.error(
+      '清空出货订单失败：',
+      error
+    );
+
+    showError(
+      '清空出货订单失败：' +
+      (error.message || '请检查网络后重试')
+    );
   }
 }
 
@@ -8859,7 +8825,7 @@ function renderShippingBatchHistory(){
       <div class="flex items-center justify-between mb-3">
         <div>
           <div class="font-bold text-lg">📚 订单批次记录</div>
-          <div class="small mt-1">每次上传订单都会单独记录，可查看已完成 / 未完成。</div>
+          <div class="small mt-1">这里显示当前仓库的出货批次；“清空出货订单”只保留已经完成出库的历史。</div>
         </div>
         <button class="btn btn-gray btn-small" onclick="loadShippingBatchHistory(false)">刷新</button>
       </div>
