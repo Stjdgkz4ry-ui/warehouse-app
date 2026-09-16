@@ -1006,7 +1006,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V7.5 · Cloud Warehouse
+          版本 V7.6 · Cloud Warehouse
         </div>
 
       </div>
@@ -1135,7 +1135,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V7.5-20260915-LABEL-REVIEW-WORKBENCH-LAYOUT';
+const APP_VERSION = 'V7.6-20260915-YANWEN-LINE-SKU-PARSER';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -10064,24 +10064,27 @@ function cleanLabelSkuCandidate(value){
     .trim();
 
   /*
-   * V7.2 / V7.3 面单前缀清理：
+   * 面单 PDF 的文字层经常会把“不是 SKU 的字段”
+   * 和真正 SKU 拼到同一行。
    *
-   * GOFO 文字层可能把：
-   *   分区代码 + Tracking + SKU
-   * 拼在同一行，例如：
-   *   DL2 GFUS01073035087683 HFheige 55CM*1;
+   * 例如 Yanwen：
+   * FC2609152627640 JFK HF60017yahei*1;
+   * FC2609152628126 ORD PV100*1;
+   * FC2609152627161 0.15KG 60023heihua2HF*1;
    *
-   * Yanwen 文字层可能把：
-   *   Ref2 + 重量 + SKU
-   * 拼在同一行，例如：
-   *   FC2609152627161 0.15KG 60023heihua2HF*1;
-   *
-   * 这些前缀都不是 SKU，必须先剥掉。
+   * GOFO：
+   * DL2 GFUS01073035087683 HFheige 55CM*1;
    */
+
+  // 去掉 Ref2: / Ref: 字样
+  t=t.replace(
+    /^(?:Ref2?|REF2?)\s*:\s*/i,
+    ''
+  );
 
   // GOFO / SwiftX / Yanwen：分区代码 + Tracking
   t=t.replace(
-    /^(?:[A-Z0-9-]{1,8}\s+)?(?:GFUS|YWE|SWX)\d{8,}\s+/i,
+    /^(?:[A-Z0-9-]{1,10}\s+)?(?:GFUS|YWE|SWX)\d{8,}\s+/i,
     ''
   );
 
@@ -10091,15 +10094,24 @@ function cleanLabelSkuCandidate(value){
     ''
   );
 
-  // Yanwen：Ref2(FC...) + 重量，例如 0.15KG / 1.5KG
+  /*
+   * Yanwen Ref2：
+   * FC号码后面可能跟重量，也可能跟 JFK / ORD 等路由代码。
+   */
   t=t.replace(
-    /^FC\d{8,}\s+\d+(?:\.\d+)?\s*KG\s+/i,
+    /^FC\d{8,}\s+(?:\d+(?:\.\d+)?\s*KG\s+)?(?:JFK|ORD|EWR|ATL|DFW|LAX|SFO|MIA|SEA)?\s*/i,
     ''
   );
 
-  // 极少数 PDF 只把重量粘到 SKU 前面
+  // 只有重量被粘在 SKU 前面
   t=t.replace(
     /^\d+(?:\.\d+)?\s*KG\s+/i,
+    ''
+  );
+
+  // 偶尔残留单独路由代码
+  t=t.replace(
+    /^(?:JFK|ORD|EWR|ATL|DFW|LAX|SFO|MIA|SEA)\s+/i,
     ''
   );
 
@@ -10127,68 +10139,153 @@ function parseLabelSkuToken(token){
 }
 
 function extractLabelSkuItems(rawText){
-  const raw=String(rawText||'');
-  const tail=raw.slice(-700);
-  /*
-   * V7.0：
-   * 真实 GOFO 面单会出现带空格的 SKU，例如：
-   *   HFheige 55CM*1;
-   *   laohua - xiaobeibao*2;
-   *
-   * 旧正则不允许 SKU 内出现空格，因此只会截取最后一段：
-   *   HFheige 55CM*1  ->  55CM*1
-   *
-   * 这里允许“同一行”里的普通空格，但不跨换行，
-   * 从而完整保留 SKU 前缀，同时避免把地址/Ref 等上一行文字吞进来。
-   */
-  const matches=[
-    ...tail.matchAll(
-      /([A-Za-z0-9._+\-* ]+(?:\s*,\s*[A-Za-z0-9._+\-* ]+)*)\s*;/g
-    )
-  ];
-  if(!matches.length) return [];
 
-  // 面单的 SKU 组合通常是页面最底部最后一个以 ; 结尾的字段。
+  const raw=
+    String(rawText||'')
+      .replace(/\r/g,'');
+
+  /*
+   * V7.6：
+   * 先按“行”找 SKU，而不是在页面最后 700 字符里用大正则乱抓。
+   *
+   * Yanwen / GOFO 真正 SKU 基本都位于页面底部，
+   * 并且以 ; 结束。
+   * 这样可以避免把 Ref2、重量、路由代码一起当成 SKU。
+   */
+
+  const lines=
+    raw.split('\n')
+      .map(x=>String(x||'').trim())
+      .filter(Boolean);
+
   let candidate='';
-  for(let i=matches.length-1;i>=0;i--){
-    const c=String(matches[i][1]||'').trim();
-    if(/\*\d+$/.test(c)){
-      candidate=c;
+
+  // 第一优先：从页面底部往上找最后一个以 ; 结尾、并且带 *数量 的行。
+  for(let i=lines.length-1;i>=0;i--){
+
+    const line=lines[i];
+
+    if(
+      /;\s*$/.test(line) &&
+      /\*\d+\s*;\s*$/.test(line)
+    ){
+      candidate=line;
       break;
     }
   }
-  if(!candidate) return [];
-
-  // V7.2：先清理 GOFO 等面单把“分区代码 + Tracking”粘到 SKU 前面的情况。
-  candidate=cleanLabelSkuCandidate(candidate);
 
   /*
-   * V5.7：兼容今天真实客户面单的一票多件格式。
-   *
-   * 例：
-   * 60023heihua2HF*2, M60223laohuaHF*2*1;
-   * HF30cmhei*3, HF25CMlaohua*3*1;
-   *
-   * 这里最后的 *1 是整组组合标记，不是最后一个 SKU 的数量。
-   * 正确结果应为：
-   * A ×2 + B ×2
-   * A ×3 + B ×3
-   *
-   * 只在“多 SKU + 整串最后为 *1”时去掉最后的组合 *1。
-   * 单 SKU 如 CMCAX-black*2 仍保持数量 2。
+   * 某些 PDF.js 会把一条超长 SKU 行拆成两段。
+   * 如果最后一段只有结尾，向上一行拼接一次。
    */
-  if(candidate.includes(',') && /\*1\s*$/.test(candidate)){
-    candidate=candidate.replace(/\*1\s*$/,'');
+  if(candidate){
+
+    const candidateIndex=
+      lines.lastIndexOf(candidate);
+
+    if(
+      candidateIndex>0 &&
+      candidate.length<8
+    ){
+      candidate=
+        `${lines[candidateIndex-1]} ${candidate}`;
+    }
+  }
+
+  // 第二优先：保留旧方法作为其他快递格式的兜底。
+  if(!candidate){
+
+    const tail=raw.slice(-1000);
+
+    const matches=[
+      ...tail.matchAll(
+        /([A-Za-z0-9._+\-* ]+(?:\s*,\s*[A-Za-z0-9._+\-* ]+)*)\s*;/g
+      )
+    ];
+
+    for(let i=matches.length-1;i>=0;i--){
+
+      const c=
+        String(matches[i][1]||'').trim();
+
+      if(/\*\d+$/.test(c)){
+        candidate=c;
+        break;
+      }
+    }
+  }
+
+  if(!candidate){
+    return [];
+  }
+
+  candidate=
+    cleanLabelSkuCandidate(candidate)
+      .replace(/;\s*$/,'');
+
+  if(!candidate){
+    return [];
+  }
+
+  /*
+   * 客户部分多 SKU 面单使用：
+   * A*2, B*2*1;
+   *
+   * 最后的 *1 是整组标记。
+   * 只在“多 SKU 且最后一个 token 有双星数量结构”时去掉整组 *1。
+   *
+   * 普通：
+   * A, B, C, D*1;
+   * 最后这个 *1 是 D 自己的数量，不能删。
+   */
+  const rawParts=
+    candidate
+      .split(',')
+      .map(x=>x.trim())
+      .filter(Boolean);
+
+  if(
+    rawParts.length>1 &&
+    /\*\d+\*1\s*$/.test(
+      rawParts[rawParts.length-1]
+    )
+  ){
+    rawParts[rawParts.length-1]=
+      rawParts[rawParts.length-1]
+        .replace(/\*1\s*$/,'');
   }
 
   const out=[];
-  candidate.split(',').forEach(part=>{
-    const parsed=parseLabelSkuToken(part);
-    if(!parsed) return;
-    const existing=out.find(x=>normalizeShippingKey(x.sku)===normalizeShippingKey(parsed.sku));
-    if(existing) existing.qty+=parsed.qty;
-    else out.push(parsed);
+
+  rawParts.forEach(part=>{
+
+    const parsed=
+      parseLabelSkuToken(
+        cleanLabelSkuCandidate(part)
+      );
+
+    if(!parsed){
+      return;
+    }
+
+    const key=
+      normalizeSkuMatchKey(
+        parsed.sku
+      );
+
+    const existing=
+      out.find(
+        x=>
+          normalizeSkuMatchKey(x.sku)===key
+      );
+
+    if(existing){
+      existing.qty+=parsed.qty;
+    }else{
+      out.push(parsed);
+    }
   });
+
   return out;
 }
 
