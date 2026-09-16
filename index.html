@@ -1007,7 +1007,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V8.9 · Cloud Warehouse
+          版本 V9.0 · Cloud Warehouse
         </div>
 
       </div>
@@ -2598,29 +2598,60 @@ async function loadInventory(){
 
   try{
 
-    const {data,error} =
-      await APP.sb
-        .from('inventory')
-        .select('*')
-        .eq(
-          'warehouse_id',
-          APP.warehouse.id
-        )
-        .order(
-          'created_at',
-          {
-            ascending:false
-          }
-        );
+    /*
+     * V9.0：Supabase / PostgREST 单次查询通常最多返回 1000 行。
+     * 仓库库存超过 1000 条后，如果不分页，前端只会看到前 1000 条，
+     * 从而导致首页统计不完整、批量导入误判“SKU+库位不存在”。
+     * 这里按 1000 条一页循环读取，直到把当前仓库全部库存拉完。
+     */
+    const pageSize = 1000;
+    let from = 0;
+    const allRows = [];
 
 
-    if(error){
-      throw error;
+    while(true){
+
+      const {data,error} =
+        await APP.sb
+          .from('inventory')
+          .select('*')
+          .eq(
+            'warehouse_id',
+            APP.warehouse.id
+          )
+          .order(
+            'created_at',
+            {
+              ascending:false
+            }
+          )
+          .range(
+            from,
+            from + pageSize - 1
+          );
+
+
+      if(error){
+        throw error;
+      }
+
+
+      const pageRows = data || [];
+
+      allRows.push(...pageRows);
+
+
+      if(pageRows.length < pageSize){
+        break;
+      }
+
+
+      from += pageSize;
+
     }
 
 
-    APP.inventory =
-      data || [];
+    APP.inventory = allRows;
 
 
   }catch(error){
