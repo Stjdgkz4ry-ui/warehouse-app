@@ -820,11 +820,11 @@ th{
         <div class="card p-3 mb-3">
           <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
             <button class="btn btn-blue" onclick="printPickingList()">
-              🖨️ 打印拣货单
+              🖨️ 按快递公司打印拣货单
             </button>
 
             <button class="btn btn-gray" onclick="exportPickingList()">
-              📥 导出 Excel
+              📥 导出快递分表 Excel
             </button>
 
             <button class="btn btn-red" onclick="clearPickingList()">
@@ -848,7 +848,7 @@ th{
           </button>
 
           <div class="small mt-2">
-            按库位合并相同 SKU，减少重复走库位
+            手机拣货固定按库位 A→B→C、1→2→3→10 自然排序；同一 SKU 仍按快递公司分开
           </div>
         </div>
 
@@ -1006,7 +1006,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V8.4 · Cloud Warehouse
+          版本 V8.6 · Cloud Warehouse
         </div>
 
       </div>
@@ -1099,6 +1099,7 @@ th{
     <thead>
       <tr>
         <th>序号</th>
+        <th>快递公司</th>
         <th>库位</th>
         <th>SKU</th>
         <th>商品名称</th>
@@ -1135,7 +1136,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V8.4-20260916-ARCHIVE-PERMANENT-DELETE';
+const APP_VERSION = 'V8.6-20260916-ARCHIVE-VISIBLE-FIX';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -7159,7 +7160,7 @@ function renderPickingList(){
 
 
   const filtered =
-    APP.pickingRows.filter(
+    getPickingSortedRows().filter(
       row => {
 
         if(!search){
@@ -7173,7 +7174,9 @@ function renderPickingList(){
 
           row.sku,
 
-          row.name
+          row.name,
+
+          row.carrier
 
         ]
         .filter(Boolean)
@@ -7311,6 +7314,12 @@ function renderPickingList(){
                   第 ${index + 1} 项
                 </div>
 
+                <div class="mt-1">
+                  <span class="badge badge-blue">
+                    🚚 ${escapeHtml(row.carrier||'待识别快递')}
+                  </span>
+                </div>
+
 
                 <div class="pick-bin mt-1">
                   📍 ${
@@ -7436,7 +7445,15 @@ function renderWavePicking(){
     const sku =
       String(row.sku || '').trim();
 
+    const carrier=
+      String(
+        row.carrier||
+        '待识别快递'
+      ).trim();
+
     const key =
+      carrier.toLowerCase() +
+      '|' +
       bin.toLowerCase() +
       '|' +
       sku.toLowerCase();
@@ -7444,6 +7461,8 @@ function renderWavePicking(){
     if(!waveMap.has(key)){
 
       waveMap.set(key, {
+
+        carrier: carrier,
 
         bin: bin,
 
@@ -7498,6 +7517,16 @@ function renderWavePicking(){
 
     if(binCompare !== 0){
       return binCompare;
+    }
+
+    const carrierCompare=
+      naturalCompare(
+        a.carrier||'',
+        b.carrier||''
+      );
+
+    if(carrierCompare!==0){
+      return carrierCompare;
     }
 
     return naturalCompare(
@@ -7602,6 +7631,12 @@ function renderWavePicking(){
 
               <div class="small">
                 第 ${index + 1} 个拣货项目
+              </div>
+
+              <div class="mt-1">
+                <span class="badge badge-blue">
+                  🚚 ${escapeHtml(row.carrier||'待识别快递')}
+                </span>
               </div>
 
               <div class="pick-bin mt-1">
@@ -7891,61 +7926,46 @@ async function clearPickingList(){
 function getPickingSortedRows(){
 
   return [...APP.pickingRows]
-    .sort(
-      (a,b) => {
+    .sort((a,b)=>{
 
-        const abin =
-          String(
-            a.bin || ''
-          ).trim();
+      const abin=
+        String(
+          a.bin||''
+        ).trim();
 
+      const bbin=
+        String(
+          b.bin||''
+        ).trim();
 
-        const bbin =
-          String(
-            b.bin || ''
-          ).trim();
+      if(!abin && bbin) return 1;
+      if(abin && !bbin) return -1;
 
-
-        if(!abin && !bbin){
-
-          return naturalCompare(
-            a.sku,
-            b.sku
-          );
-
-        }
-
-
-        if(!abin){
-          return 1;
-        }
-
-
-        if(!bbin){
-          return -1;
-        }
-
-
-        const compare =
-          naturalCompare(
-            abin,
-            bbin
-          );
-
-
-        if(compare !== 0){
-          return compare;
-        }
-
-
-        return naturalCompare(
-          a.sku,
-          b.sku
+      const binCompare=
+        naturalCompare(
+          abin,
+          bbin
         );
 
+      if(binCompare!==0){
+        return binCompare;
       }
-    );
 
+      const carrierCompare=
+        naturalCompare(
+          a.carrier||'',
+          b.carrier||''
+        );
+
+      if(carrierCompare!==0){
+        return carrierCompare;
+      }
+
+      return naturalCompare(
+        a.sku||'',
+        b.sku||''
+      );
+    });
 }
 
 
@@ -7968,140 +7988,108 @@ function buildPrintTable(){
 
   updatePickingMeta();
 
+  const groups=
+    getPickingCarrierGroups();
 
-  const rows =
-    getPickingSortedRows();
-
-
-  const tbody =
+  const tbody=
     $('printTableBody');
-
 
   if(!tbody){
     return;
   }
 
+  let sequence=0;
 
-  tbody.innerHTML =
-    rows.map(
-      (row,index) => {
+  tbody.innerHTML=
+    groups.map(group=>{
 
-        let status;
+      const groupQty=
+        group.rows.reduce(
+          (s,row)=>
+            s+
+            safeNumber(
+              row.orderQty,
+              0
+            ),
+          0
+        );
 
+      const heading=`
+        <tr>
+          <td colspan="8" style="font-weight:800;font-size:15px;background:#eef2ff;">
+            🚚 ${escapeHtml(group.carrier)}
+            &nbsp;&nbsp;
+            ${group.rows.length} 个拣货项目
+            &nbsp;&nbsp;
+            ${groupQty} 件
+          </td>
+        </tr>
+      `;
 
-        if(row.status === 'ok'){
+      const rows=
+        group.rows.map(row=>{
 
-          status =
-            '可拣';
+          sequence++;
 
-        }else if(
-          row.status === 'short'
-        ){
+          let status;
 
-          status =
-            `库存不足，缺 ${row.shortage}`;
+          if(row.status==='ok'){
+            status='可拣';
+          }else if(row.status==='short'){
+            status=`库存不足，缺 ${row.shortage}`;
+          }else{
+            status='找不到SKU';
+          }
 
-        }else{
+          return `
+            <tr>
+              <td>${sequence}</td>
+              <td><b>${escapeHtml(group.carrier)}</b></td>
+              <td>${escapeHtml(row.bin||'未设置')}</td>
+              <td>${escapeHtml(row.sku)}</td>
+              <td>${escapeHtml(row.name)}</td>
+              <td>${row.orderQty}</td>
+              <td>${row.stockQty}</td>
+              <td>${escapeHtml(status)}</td>
+            </tr>
+          `;
+        }).join('');
 
-          status =
-            '找不到SKU';
+      return heading+rows;
 
-        }
+    }).join('');
 
-
-        return `
-
-          <tr>
-
-            <td>
-              ${index + 1}
-            </td>
-
-            <td>
-              ${
-                escapeHtml(
-                  row.bin ||
-                  '未设置'
-                )
-              }
-            </td>
-
-            <td>
-              ${escapeHtml(
-                row.sku
-              )}
-            </td>
-
-            <td>
-              ${escapeHtml(
-                row.name
-              )}
-            </td>
-
-            <td>
-              ${row.orderQty}
-            </td>
-
-            <td>
-              ${row.stockQty}
-            </td>
-
-            <td>
-              ${escapeHtml(
-                status
-              )}
-            </td>
-
-          </tr>
-
-        `;
-
-      }
-    ).join('');
-
-
-  const warehouseName =
-    APP.warehouse?.name ||
+  const warehouseName=
+    APP.warehouse?.name||
     '—';
 
-
-  const orderNo =
-    APP.pickingOrderNo ||
+  const orderNo=
+    APP.pickingOrderNo||
     '—';
 
-
-  const date =
-    APP.pickingOrderDate ||
+  const date=
+    APP.pickingOrderDate||
     new Date()
       .toISOString()
       .slice(0,10);
 
+  const rowCount=
+    groups.reduce(
+      (s,g)=>s+g.rows.length,
+      0
+    );
 
-  $('printMeta')
-    .innerHTML = `
-
-      仓库：${escapeHtml(
-        warehouseName
-      )}
-
-      &nbsp;&nbsp;
-
-      订单号：${escapeHtml(
-        orderNo
-      )}
-
-      &nbsp;&nbsp;
-
-      日期：${escapeHtml(
-        date
-      )}
-
-      &nbsp;&nbsp;
-
-      SKU数：${rows.length}
-
-    `;
-
+  $('printMeta').innerHTML=`
+    仓库：${escapeHtml(warehouseName)}
+    &nbsp;&nbsp;
+    订单号：${escapeHtml(orderNo)}
+    &nbsp;&nbsp;
+    日期：${escapeHtml(date)}
+    &nbsp;&nbsp;
+    快递公司：${groups.length}
+    &nbsp;&nbsp;
+    拣货项目：${rowCount}
+  `;
 }
 
 
@@ -8138,111 +8126,140 @@ function printPickingList(){
 
 function exportPickingList(){
 
-  if(
-    !APP.pickingRows.length
-  ){
-
+  if(!APP.pickingRows.length){
     return showError(
       '目前没有拣货数据'
     );
-
   }
-
 
   updatePickingMeta();
 
+  const groups=
+    getPickingCarrierGroups();
 
-  const rows =
-    getPickingSortedRows();
+  const makeRows=
+    rows=>
+      rows.map(
+        (row,index)=>{
 
+          let status;
 
-  const data =
-    rows.map(
-      (row,index) => {
+          if(row.status==='ok'){
+            status='可拣';
+          }else if(row.status==='short'){
+            status=`库存不足，缺${row.shortage}`;
+          }else{
+            status='找不到SKU';
+          }
 
-        let status;
-
-
-        if(row.status === 'ok'){
-
-          status =
-            '可拣';
-
-        }else if(
-          row.status === 'short'
-        ){
-
-          status =
-            `库存不足，缺${row.shortage}`;
-
-        }else{
-
-          status =
-            '找不到SKU';
-
+          return {
+            序号:index+1,
+            快递公司:row.carrier||'待识别快递',
+            库位:row.bin||'未设置',
+            SKU:row.sku,
+            商品名称:row.name,
+            拣货数量:row.orderQty,
+            当前库存:row.stockQty,
+            状态:status
+          };
         }
+      );
 
-
-        return {
-
-          序号:
-            index + 1,
-
-          库位:
-            row.bin || '未设置',
-
-          SKU:
-            row.sku,
-
-          商品名称:
-            row.name,
-
-          拣货数量:
-            row.orderQty,
-
-          当前库存:
-            row.stockQty,
-
-          状态:
-            status
-
-        };
-
-      }
-    );
-
-
-  const ws =
-    XLSX.utils.json_to_sheet(
-      data
-    );
-
-
-  const wb =
+  const wb=
     XLSX.utils.book_new();
 
+  const allRows=
+    [];
+
+  groups.forEach(group=>{
+
+    group.rows.forEach(row=>{
+      allRows.push({
+        ...row,
+        carrier:group.carrier
+      });
+    });
+
+    const ws=
+      XLSX.utils.json_to_sheet(
+        makeRows(
+          group.rows.map(row=>({
+            ...row,
+            carrier:group.carrier
+          }))
+        )
+      );
+
+    let sheetName=
+      String(group.carrier||'待识别快递')
+        .replace(/[\\\/\?\*\[\]:]/g,' ')
+        .trim()
+        .slice(0,31) ||
+      '快递';
+
+    let candidate=sheetName;
+    let n=2;
+
+    while(
+      wb.SheetNames.includes(candidate)
+    ){
+      const suffix=`_${n++}`;
+      candidate=
+        sheetName
+          .slice(
+            0,
+            Math.max(
+              1,
+              31-suffix.length
+            )
+          )+
+        suffix;
+    }
+
+    XLSX.utils.book_append_sheet(
+      wb,
+      ws,
+      candidate
+    );
+  });
+
+  const allWs=
+    XLSX.utils.json_to_sheet(
+      makeRows(allRows)
+    );
+
+  /*
+   * “全部拣货”放第一张。
+   */
+  const allBook=
+    XLSX.utils.book_new();
 
   XLSX.utils.book_append_sheet(
-    wb,
-    ws,
-    '拣货单'
+    allBook,
+    allWs,
+    '全部拣货'
   );
 
+  wb.SheetNames.forEach(name=>{
+    XLSX.utils.book_append_sheet(
+      allBook,
+      wb.Sheets[name],
+      name
+    );
+  });
 
-  const output =
+  const output=
     XLSX.write(
-      wb,
+      allBook,
       {
         bookType:'xlsx',
         type:'array'
       }
     );
 
-
-  const orderNo =
-    APP.pickingOrderNo ||
+  const orderNo=
+    APP.pickingOrderNo||
     '订单';
-
 
   downloadBlob(
     new Blob(
@@ -8252,14 +8269,12 @@ function exportPickingList(){
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       }
     ),
-    `拣货单_${orderNo}_${new Date().toISOString().slice(0,10)}.xlsx`
+    `按快递公司拣货单_${orderNo}_${new Date().toISOString().slice(0,10)}.xlsx`
   );
-
 
   showOk(
-    '拣货单 Excel 已生成'
+    `拣货单已生成：全部 + ${groups.length} 个快递公司分表`
   );
-
 }
 
 
@@ -8796,7 +8811,43 @@ function updateShippingCloudSummary(){
       )
     : '';
 
-  const batchName=shippingActiveBatchName();
+  const batchName=
+    shippingActiveBatchName();
+
+  const carrierCountMap=
+    new Map();
+
+  (APP.shippingOrders||[])
+    .forEach(order=>{
+
+      const carrier=
+        shippingCarrierName(order);
+
+      carrierCountMap.set(
+        carrier,
+        (
+          carrierCountMap.get(carrier)||
+          0
+        )+1
+      );
+    });
+
+  const carrierSummary=
+    Array.from(
+      carrierCountMap.entries()
+    )
+    .sort(
+      (a,b)=>
+        naturalCompare(
+          a[0],
+          b[0]
+        )
+    )
+    .map(
+      ([name,count])=>
+        `${escapeHtml(name)} <b>${count}</b>单`
+    )
+    .join(' · ');
 
   el.innerHTML =
     `${batchName?`当前批次 <b>${escapeHtml(batchName)}</b><br>`:''}`+
@@ -8806,7 +8857,8 @@ function updateShippingCloudSummary(){
     `一票多件 <b>${stats.multiPieceOrders}</b> 单 · `+
     `面单 <b>${stats.labels}/${stats.orderCount}</b>`+
     busyText+
-    auditText;
+    auditText+
+    `${carrierSummary?`<br>🚚 快递：${carrierSummary}`:''}`;
 }
 
 
@@ -8895,7 +8947,15 @@ function buildShippingBatchHistory(){
       completed:safeNumber(row.completed_count,0),
       shipped:safeNumber(row.shipped_count,0),
       archivedCount:safeNumber(row.archived_count,0),
-      status:row.status||'active'
+      status:(
+        safeNumber(row.archived_count,0)>0 &&
+        (
+          safeNumber(row.archived_count,0)+
+          safeNumber(row.shipped_count,0)
+        )>=safeNumber(row.order_count,0)
+      )
+        ? 'archived'
+        : (row.status||'active')
     }));
 }
 
@@ -9072,8 +9132,13 @@ function renderShippingBatchHistory(){
           <div>
             <div class="font-bold text-lg">📦 历史 / 已归档批次</div>
             <div class="small mt-1">
-              归档不会删除。这里长期保留历史批次，可随时查看；确定不再需要时，可在批次详情里用管理员密码永久删除。
+              归档不会删除。只要这个批次的订单已经全部“出库或归档”，这里就会显示为历史/已归档，可随时查看；确定永远不需要时，再用管理员密码永久删除。
             </div>
+            <button
+              class="btn btn-gray mt-2"
+              onclick="loadShippingBatchHistory(false)">
+              🔄 刷新历史批次
+            </button>
           </div>
 
           <span class="badge badge-gray">
@@ -9406,84 +9471,355 @@ function activeShippingItems(){
 
 function buildCloudPickingRows(){
 
-  if(!APP.shippingCloudReady || !APP.shippingOrders.length){
+  if(
+    !APP.shippingCloudReady ||
+    !APP.shippingOrders.length
+  ){
     return;
   }
 
-  const demand = new Map();
+  const orderMap=
+    new Map(
+      APP.shippingOrders
+        .map(
+          x=>[x.id,x]
+        )
+    );
 
-  activeShippingItems().forEach(item=>{
-    const remain = Math.max(0,safeNumber(item.qty,0)-safeNumber(item.picked_qty,0));
-    if(remain <= 0) return;
-    const key = normalizeShippingKey(item.sku);
-    if(!key) return;
+  /*
+   * 需求按【快递公司 + SKU】拆开。
+   * 同一个 SKU 如果同时属于 YANWEN 和 GOFO，
+   * 手机/打印拣货单会显示成两条，不会混在一起。
+   */
+  const demand=new Map();
+  const skuDemandTotal=new Map();
 
-    if(!demand.has(key)){
-      demand.set(key,{
-        sku:String(item.sku || '').trim(),
-        name:String(item.name || item.sku || '').trim(),
-        remaining:0,
-        itemIds:[]
-      });
-    }
-    const d=demand.get(key);
-    d.remaining += remain;
-    d.itemIds.push(item.id);
-  });
+  activeShippingItems()
+    .forEach(item=>{
+
+      const remain=
+        Math.max(
+          0,
+          safeNumber(item.qty,0)-
+          safeNumber(item.picked_qty,0)
+        );
+
+      if(remain<=0){
+        return;
+      }
+
+      const skuKey=
+        normalizeShippingKey(
+          item.sku
+        );
+
+      if(!skuKey){
+        return;
+      }
+
+      const order=
+        orderMap.get(
+          item.order_id
+        );
+
+      const carrier=
+        shippingCarrierName(
+          order
+        ) ||
+        '待识别快递';
+
+      const key=
+        `${carrier.toLowerCase()}|${skuKey}`;
+
+      if(!demand.has(key)){
+
+        demand.set(
+          key,
+          {
+            carrier,
+            sku:String(item.sku||'').trim(),
+            name:String(item.name||item.sku||'').trim(),
+            remaining:0,
+            itemIds:[]
+          }
+        );
+      }
+
+      const d=
+        demand.get(key);
+
+      d.remaining+=remain;
+      d.itemIds.push(item.id);
+
+      skuDemandTotal.set(
+        skuKey,
+        (
+          skuDemandTotal.get(skuKey)||
+          0
+        )+remain
+      );
+    });
+
+  const inventoryBySku=new Map();
+
+  activeInventory()
+    .forEach(inv=>{
+
+      const key=
+        normalizeShippingKey(
+          inv.sku
+        );
+
+      if(!key){
+        return;
+      }
+
+      if(!inventoryBySku.has(key)){
+        inventoryBySku.set(key,[]);
+      }
+
+      inventoryBySku
+        .get(key)
+        .push(inv);
+    });
+
+  inventoryBySku
+    .forEach(rows=>{
+
+      rows.sort(
+        (a,b)=>
+          naturalCompare(
+            a.bin||'',
+            b.bin||''
+          )
+      );
+    });
+
+  /*
+   * 虚拟库存：
+   * 一个库位的库存只允许分配一次，
+   * 防止不同快递公司的同一个 SKU 重复计算同一批库存。
+   */
+  const virtualStock=new Map();
+
+  activeInventory()
+    .forEach(inv=>{
+
+      virtualStock.set(
+        inv.id,
+        Math.max(
+          0,
+          safeNumber(inv.qty,0)
+        )
+      );
+    });
 
   const result=[];
 
-  demand.forEach(d=>{
-    const invRows = activeInventory()
-      .filter(x=>normalizeShippingKey(x.sku)===normalizeShippingKey(d.sku))
-      .sort((a,b)=>naturalCompare(a.bin||'',b.bin||''));
+  const groups=
+    Array.from(
+      demand.values()
+    )
+    .sort((a,b)=>{
+
+      const c=
+        naturalCompare(
+          a.carrier,
+          b.carrier
+        );
+
+      if(c!==0){
+        return c;
+      }
+
+      return naturalCompare(
+        a.sku,
+        b.sku
+      );
+    });
+
+  groups.forEach(d=>{
+
+    const skuKey=
+      normalizeShippingKey(
+        d.sku
+      );
+
+    const invRows=
+      inventoryBySku.get(skuKey)||
+      [];
 
     if(!invRows.length){
+
       result.push({
-        sku:d.sku,name:d.name,bin:'',orderQty:d.remaining,pickedQty:0,
-        stockQty:0,status:'missing',statusText:'❌ 找不到SKU',shortage:d.remaining,
-        inventoryId:null,duplicateSku:false,cloud:true
+        carrier:d.carrier,
+        sku:d.sku,
+        name:d.name,
+        bin:'',
+        orderQty:d.remaining,
+        pickedQty:0,
+        stockQty:0,
+        status:'missing',
+        statusText:'❌ 找不到SKU',
+        shortage:d.remaining,
+        inventoryId:null,
+        duplicateSku:false,
+        cloud:true
       });
+
       return;
     }
 
-    let need=d.remaining;
-    const totalStock=invRows.reduce((sum,x)=>sum+safeNumber(x.qty,0),0);
+    const totalStock=
+      invRows.reduce(
+        (sum,x)=>
+          sum+
+          Math.max(
+            0,
+            safeNumber(x.qty,0)
+          ),
+        0
+      );
 
-    invRows.forEach((inv,index)=>{
-      if(need<=0) return;
-      const stock=Math.max(0,safeNumber(inv.qty,0));
-      const take=Math.min(need,stock);
-      if(take<=0 && index<invRows.length-1) return;
-      const qty = take>0 ? take : need;
+    const totalSkuDemand=
+      safeNumber(
+        skuDemandTotal.get(skuKey),
+        0
+      );
+
+    const skuShort=
+      totalStock<totalSkuDemand;
+
+    let need=d.remaining;
+
+    invRows.forEach(inv=>{
+
+      if(need<=0){
+        return;
+      }
+
+      const available=
+        Math.max(
+          0,
+          safeNumber(
+            virtualStock.get(inv.id),
+            0
+          )
+        );
+
+      if(available<=0){
+        return;
+      }
+
+      const take=
+        Math.min(
+          need,
+          available
+        );
+
+      if(take<=0){
+        return;
+      }
+
       result.push({
+        carrier:d.carrier,
         sku:String(inv.sku||d.sku),
         name:getItemName(inv),
         bin:String(inv.bin||'').trim(),
-        orderQty:qty,
+        orderQty:take,
         pickedQty:0,
-        stockQty:stock,
-        status: totalStock>=d.remaining ? 'ok' : 'short',
-        statusText: totalStock>=d.remaining ? '✅ 可拣' : '⚠️ 库存不足',
-        shortage:Math.max(0,d.remaining-totalStock),
+        stockQty:Math.max(
+          0,
+          safeNumber(inv.qty,0)
+        ),
+        status:skuShort?'short':'ok',
+        statusText:
+          skuShort
+          ? '⚠️ 库存不足'
+          : '✅ 可拣',
+        shortage:
+          Math.max(
+            0,
+            totalSkuDemand-totalStock
+          ),
         inventoryId:inv.id,
         duplicateSku:invRows.length>1,
         cloud:true
       });
-      need-=qty;
+
+      virtualStock.set(
+        inv.id,
+        available-take
+      );
+
+      need-=take;
     });
+
+    if(need>0){
+
+      result.push({
+        carrier:d.carrier,
+        sku:d.sku,
+        name:d.name,
+        bin:'',
+        orderQty:need,
+        pickedQty:0,
+        stockQty:0,
+        status:'short',
+        statusText:'⚠️ 库存不足',
+        shortage:
+          Math.max(
+            need,
+            totalSkuDemand-totalStock
+          ),
+        inventoryId:null,
+        duplicateSku:invRows.length>1,
+        cloud:true
+      });
+    }
   });
 
+  /*
+   * 手机拣货顺序：
+   * 不按快递公司先后走，而是严格按库位自然顺序走。
+   * A -> B -> C；1 -> 2 -> 3 -> 10。
+   * 同一库位内再按快递公司、SKU 排。
+   */
   result.sort((a,b)=>{
+
     if(!a.bin && b.bin) return 1;
     if(a.bin && !b.bin) return -1;
-    const c=naturalCompare(a.bin||'',b.bin||'');
-    return c!==0 ? c : naturalCompare(a.sku||'',b.sku||'');
+
+    const binCompare=
+      naturalCompare(
+        a.bin||'',
+        b.bin||''
+      );
+
+    if(binCompare!==0){
+      return binCompare;
+    }
+
+    const carrierCompare=
+      naturalCompare(
+        a.carrier||'',
+        b.carrier||''
+      );
+
+    if(carrierCompare!==0){
+      return carrierCompare;
+    }
+
+    return naturalCompare(
+      a.sku||'',
+      b.sku||''
+    );
   });
 
   APP.pickingRows=result;
   APP.pickingFileName='云端订单';
-  APP.pickingOrderDate=shippingDateToday();
+  APP.pickingOrderDate=
+    shippingDateToday();
 
   if(result.length){
     renderPickingList();
@@ -9924,18 +10260,200 @@ async function runOrderImport(){
 }
 
 
+function normalizeCarrierName(value){
+
+  const raw=String(value||'').trim();
+
+  if(!raw){
+    return '';
+  }
+
+  const t=raw.toUpperCase();
+
+  if(t==='YWE' || t.includes('YANWEN')) return 'YANWEN';
+  if(t.includes('SWIFTX') || t==='SWX') return 'SWIFTX';
+  if(t==='GOFO') return 'GOFO';
+  if(t==='ECO') return 'ECO';
+  if(t.includes('GOFO/ECO')) return 'GOFO/ECO';
+  if(t.includes('USPS')) return 'USPS';
+  if(t==='UPS' || t.includes('UNITED PARCEL')) return 'UPS';
+  if(t.includes('FEDEX') || t.includes('FEDERAL EXPRESS')) return 'FEDEX';
+  if(t.includes('DHL')) return 'DHL';
+  if(t.includes('ONTRAC') || t.includes('LASERSHIP')) return 'ONTRAC';
+  if(t.includes('UNIUNI') || t.includes('UNI UNI')) return 'UNIUNI';
+  if(t.includes('JFK-CBS') || t.includes('JFK CBS')) return 'JFK-CBS';
+
+  return raw;
+}
+
+
+function detectShippingCarrier(info={},fileName='',order=null){
+
+  const raw=[
+    info?.rawText||'',
+    info?.flatText||'',
+    info?.service||'',
+    fileName||'',
+    order?.carrier||''
+  ].join(' ');
+
+  const upper=raw.toUpperCase();
+
+  /*
+   * 优先使用面单文字 / PDF 文件名。
+   * 客户通常已经按快递公司分好 PDF，因此文件名也是很强的辅助信号。
+   */
+  if(/\bGOFO\b/.test(upper)) return 'GOFO';
+  if(/\bECO\b/.test(upper) && !/\bGOFO\b/.test(upper)) return 'ECO';
+  if(/YANWEN|QIANYTK/.test(upper)) return 'YANWEN';
+  if(/SWIFTX/.test(upper)) return 'SWIFTX';
+  if(/USPS|UNITED STATES POSTAL/.test(upper)) return 'USPS';
+  if(/\bFEDEX\b|FEDERAL EXPRESS/.test(upper)) return 'FEDEX';
+  if(/\bDHL\b/.test(upper)) return 'DHL';
+  if(/\bUPS\b|UNITED PARCEL SERVICE/.test(upper)) return 'UPS';
+  if(/ONTRAC|LASERSHIP/.test(upper)) return 'ONTRAC';
+  if(/UNIUNI|UNI UNI/.test(upper)) return 'UNIUNI';
+  if(/JFK\s*-?\s*CBS/.test(upper)) return 'JFK-CBS';
+
+  const tracking=
+    normalizeTrackingValue(
+      info?.tracking ||
+      order?.tracking_no ||
+      ''
+    ).toUpperCase();
+
+  /*
+   * Tracking 前缀可以明确识别的才自动判断。
+   * 纯数字 Tracking 不再一律猜 USPS，避免把其他快递误分。
+   */
+  if(/^YWE\d{8,}$/.test(tracking)) return 'YANWEN';
+  if(/^SWX\d{8,}$/.test(tracking)) return 'SWIFTX';
+  if(/^GFUS\d{8,}$/.test(tracking)) return 'GOFO/ECO';
+  if(/^1Z[0-9A-Z]{16}$/.test(tracking)) return 'UPS';
+
+  const service=
+    normalizeCarrierName(
+      info?.service||''
+    );
+
+  if(service){
+    return service;
+  }
+
+  return '待识别快递';
+}
+
+
 function shippingCarrierName(order){
 
-  const t=normalizeTrackingValue(
-    order?.tracking_no || ''
+  const direct=
+    normalizeCarrierName(
+      order?.carrier||''
+    );
+
+  if(direct){
+    return direct;
+  }
+
+  const label=
+    (APP.shippingLabels||[])
+      .find(
+        x=>x.order_id===order?.id
+      );
+
+  const labelCarrier=
+    normalizeCarrierName(
+      label?.carrier||''
+    );
+
+  if(labelCarrier){
+    return labelCarrier;
+  }
+
+  return detectShippingCarrier(
+    {
+      tracking:
+        order?.tracking_no||''
+    },
+    label?.file_name||'',
+    order
   );
+}
 
-  if(/^SWX/i.test(t)) return 'SWIFTX';
-  if(/^YWE/i.test(t)) return 'YWE';
-  if(/^GFUS/i.test(t)) return 'GOFO/ECO';
-  if(/^\d{20,22}$/.test(t)) return 'USPS';
 
-  return t ? '其他' : '无Tracking';
+function shippingOrderCarrierById(orderId){
+
+  const order=
+    (APP.shippingOrders||[])
+      .find(
+        x=>x.id===orderId
+      );
+
+  return shippingCarrierName(order);
+}
+
+
+function getPickingCarrierGroups(){
+
+  const map=new Map();
+
+  (APP.pickingRows||[])
+    .forEach(row=>{
+
+      const carrier=
+        normalizeCarrierName(
+          row.carrier||''
+        ) ||
+        '待识别快递';
+
+      if(!map.has(carrier)){
+        map.set(carrier,[]);
+      }
+
+      map.get(carrier)
+        .push(row);
+    });
+
+  return Array.from(
+    map.entries()
+  )
+  .map(([carrier,rows])=>({
+
+    carrier,
+
+    rows:[...rows]
+      .sort((a,b)=>{
+
+        if(!a.bin && b.bin) return 1;
+        if(a.bin && !b.bin) return -1;
+
+        const c=
+          naturalCompare(
+            a.bin||'',
+            b.bin||''
+          );
+
+        if(c!==0){
+          return c;
+        }
+
+        return naturalCompare(
+          a.sku||'',
+          b.sku||''
+        );
+      })
+
+  }))
+  .sort((a,b)=>{
+
+    if(a.carrier==='待识别快递') return 1;
+    if(b.carrier==='待识别快递') return -1;
+
+    return naturalCompare(
+      a.carrier,
+      b.carrier
+    );
+  });
 }
 
 
@@ -11010,7 +11528,17 @@ async function uploadOneShippingLabelPage(order,page,fileName){
     .upload(path,page.blob,{contentType:'application/pdf',upsert:false});
   if(uploadError) throw uploadError;
 
-  const detectedTracking=page.info?.tracking || order.tracking_no || null;
+  const detectedTracking=
+    page.info?.tracking ||
+    order.tracking_no ||
+    null;
+
+  const detectedCarrier=
+    detectShippingCarrier(
+      page.info||{},
+      fileName,
+      order
+    );
 
   const {error:labelError}=await APP.sb
     .from('shipping_labels')
@@ -11020,17 +11548,58 @@ async function uploadOneShippingLabelPage(order,page,fileName){
       file_name:fileName,
       storage_path:path,
       tracking_no:detectedTracking,
+      carrier:detectedCarrier,
       uploaded_by:APP.user.id
     },{onConflict:'order_id'});
-  if(labelError) throw labelError;
 
-  // Excel 没有 Tracking，但面单识别到了，就自动补到订单上，后续扫码可以直接扫 USPS 条码。
-  if(page.info?.tracking && !order.tracking_no){
-    const {error:updateError}=await APP.sb
-      .from('shipping_orders')
-      .update({tracking_no:page.info.tracking})
-      .eq('id',order.id);
-    if(!updateError) order.tracking_no=page.info.tracking;
+  if(labelError){
+    throw labelError;
+  }
+
+  /*
+   * 把 Tracking + 快递公司同步到订单。
+   * 以后刷新、换手机、打印拣货单，都可以直接按快递公司分类。
+   */
+  const orderPatch={};
+
+  if(
+    page.info?.tracking &&
+    !order.tracking_no
+  ){
+    orderPatch.tracking_no=
+      page.info.tracking;
+  }
+
+  if(
+    detectedCarrier &&
+    detectedCarrier!=='待识别快递'
+  ){
+    orderPatch.carrier=
+      detectedCarrier;
+  }
+
+  if(
+    Object.keys(orderPatch).length
+  ){
+
+    const {error:updateError}=
+      await APP.sb
+        .from('shipping_orders')
+        .update(orderPatch)
+        .eq('id',order.id);
+
+    if(!updateError){
+
+      if(orderPatch.tracking_no){
+        order.tracking_no=
+          orderPatch.tracking_no;
+      }
+
+      if(orderPatch.carrier){
+        order.carrier=
+          orderPatch.carrier;
+      }
+    }
   }
 
   return path;
@@ -11919,14 +12488,45 @@ function nextCloudPickRow(){
 }
 
 function renderNextPickHint(){
+
   const el=$('pickScanNext');
-  if(!el) return;
-  const row=nextCloudPickRow();
-  if(!row){
-    el.innerHTML='<div class="font-bold text-green-700">✅ 当前订单已经全部拣完</div>';
+
+  if(!el){
     return;
   }
-  el.innerHTML=`<div class="small">下一项</div><div class="text-xl font-bold mt-1">📍 ${escapeHtml(row.bin||'未设置库位')}</div><div class="font-bold mt-1">SKU：${escapeHtml(row.sku)}</div><div class="mt-1">还要拣：<b>${row.orderQty}</b></div>`;
+
+  const row=
+    nextCloudPickRow();
+
+  if(!row){
+
+    el.innerHTML=
+      '<div class="font-bold text-green-700">✅ 当前订单已经全部拣完</div>';
+
+    return;
+  }
+
+  el.innerHTML=`
+    <div class="small">下一项 · 已按库位自然顺序排列</div>
+
+    <div class="mt-1">
+      <span class="badge badge-blue">
+        🚚 ${escapeHtml(row.carrier||'待识别快递')}
+      </span>
+    </div>
+
+    <div class="text-xl font-bold mt-2">
+      📍 ${escapeHtml(row.bin||'未设置库位')}
+    </div>
+
+    <div class="font-bold mt-1">
+      SKU：${escapeHtml(row.sku)}
+    </div>
+
+    <div class="mt-1">
+      还要拣：<b>${row.orderQty}</b>
+    </div>
+  `;
 }
 
 async function startCustomScanner(onDecode){
@@ -11978,12 +12578,30 @@ async function handlePickScan(code){
   }
 
   try{
-    // 把 1 件分配到该 SKU 最早的未完成订单。
+    /*
+     * 把 1 件只分配给【当前快递公司 + 当前 SKU】的订单。
+     * 这样同一个 SKU 同时属于 YANWEN / GOFO 时，不会串单。
+     */
     const item=[...activeShippingItems()]
-      .filter(x=>normalizeShippingKey(x.sku)===normalizeShippingKey(sku) && safeNumber(x.picked_qty,0)<safeNumber(x.qty,0))
-      .sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')))[0];
+      .filter(x=>
+        normalizeShippingKey(x.sku)===normalizeShippingKey(sku) &&
+        safeNumber(x.picked_qty,0)<safeNumber(x.qty,0) &&
+        shippingOrderCarrierById(x.order_id)===
+          (next.carrier||'待识别快递')
+      )
+      .sort(
+        (a,b)=>
+          String(a.created_at||'')
+            .localeCompare(
+              String(b.created_at||'')
+            )
+      )[0];
 
-    if(!item) return showError('这个 SKU 已经拣够了');
+    if(!item){
+      return showError(
+        `这个快递分组的 SKU 已经拣够了：${next.carrier||'待识别快递'} / ${sku}`
+      );
+    }
 
     const nextQty=safeNumber(item.picked_qty,0)+1;
     const {error}=await APP.sb
@@ -12000,7 +12618,9 @@ async function handlePickScan(code){
     updateShippingCloudSummary();
 
     if(navigator.vibrate) navigator.vibrate(50);
-    showOk(`✅ ${sku} +1`);
+    showOk(
+      `✅ ${next.carrier||'待识别快递'} · ${sku} +1`
+    );
 
     const manual=$('pickManualCode');
     if(manual) manual.value='';
@@ -12045,6 +12665,7 @@ function saveShippingProgressSnapshot(){
         id:o.id,
         order_no:o.order_no,
         tracking_no:o.tracking_no,
+        carrier:o.carrier,
         status:o.status,
         source_file:o.source_file,
         created_at:o.created_at,
@@ -12062,6 +12683,7 @@ function saveShippingProgressSnapshot(){
         id:x.id,
         order_id:x.order_id,
         tracking_no:x.tracking_no,
+        carrier:x.carrier,
         storage_path:x.storage_path,
         file_name:x.file_name
       }))
