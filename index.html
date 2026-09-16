@@ -1005,7 +1005,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V6.8 · Cloud Warehouse
+          版本 V7.1 · Cloud Warehouse
         </div>
 
       </div>
@@ -1134,7 +1134,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V6.8-20260915-LOG-RLS-VERIFY';
+const APP_VERSION = 'V7.1-20260915-MULTIPIECE-LABEL-GUARD';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1194,6 +1194,7 @@ const APP = {
   currentPage:'home',
   logsLoading:false,
   logsLoadedOnce:false,
+  shippingManualLabelPages:new Map(),
 
   shippingHistoryOrders:[],
 
@@ -9993,7 +9994,7 @@ function openLabelUpload(){
 
     <div class="bg-blue-50 rounded-xl p-3 text-sm mb-4">
       <div class="font-bold mb-1">支持多页面单自动识别</div>
-      <div>系统会逐页读取 PDF，并自动识别订单号 / Tracking No. / 面单中的 SKU。</div>
+      <div>系统会逐页读取 PDF，并自动识别订单号 / Tracking No. / 面单中的 SKU。自动识别失败时，可对该页进行人工确认绑定。V7.1 对一票多件订单会强制核对 SKU 数、总件数和数量组合；只靠订单号/Tracking 命中也不会自动放行。</div>
       <div class="mt-1">像 <b>JFK-CBS 12195-82*1</b> 会识别为 SKU <b>12195-82</b>、数量 <b>1</b>，多页面单会自动拆成一页一个 PDF 保存。</div>
     </div>
 
@@ -10010,7 +10011,12 @@ function normalizeTrackingValue(value){
 }
 
 function parseLabelSkuToken(token){
-  let t=String(token||'').trim().replace(/^[,;\s]+|[,;\s]+$/g,'');
+  let t=String(token||'')
+    .replace(/\u00a0/g,' ')
+    .trim()
+    .replace(/^[,;\s]+|[,;\s]+$/g,'')
+    .replace(/[ \t]+/g,' ');
+
   if(!t) return null;
 
   // 只把最后一个 *数字 当数量。这样像 HFZMbaige2*2*1 会解析成
@@ -10028,7 +10034,23 @@ function parseLabelSkuToken(token){
 function extractLabelSkuItems(rawText){
   const raw=String(rawText||'');
   const tail=raw.slice(-700);
-  const matches=[...tail.matchAll(/([A-Za-z0-9._+\-*]+(?:\s*,\s*[A-Za-z0-9._+\-*]+)*)\s*;/g)];
+  /*
+   * V7.0：
+   * 真实 GOFO 面单会出现带空格的 SKU，例如：
+   *   HFheige 55CM*1;
+   *   laohua - xiaobeibao*2;
+   *
+   * 旧正则不允许 SKU 内出现空格，因此只会截取最后一段：
+   *   HFheige 55CM*1  ->  55CM*1
+   *
+   * 这里允许“同一行”里的普通空格，但不跨换行，
+   * 从而完整保留 SKU 前缀，同时避免把地址/Ref 等上一行文字吞进来。
+   */
+  const matches=[
+    ...tail.matchAll(
+      /([A-Za-z0-9._+\-* ]+(?:\s*,\s*[A-Za-z0-9._+\-* ]+)*)\s*;/g
+    )
+  ];
   if(!matches.length) return [];
 
   // 面单的 SKU 组合通常是页面最底部最后一个以 ; 结尾的字段。
@@ -10156,10 +10178,22 @@ function labelItemsForDisplay(info){
   return items.map(x=>`${x.sku} ×${x.qty}`).join(' + ');
 }
 
+
+function normalizeSkuMatchKey(value){
+
+  return String(value??'')
+    .replace(/\u00a0/g,' ')
+    .replace(/[‐‑‒–—]/g,'-')
+    .trim()
+    .toLowerCase()
+    .replace(/[ \t]+/g,' ')
+    .replace(/\s*-\s*/g,'-');
+}
+
 function orderItemMap(orderId){
   const map=new Map();
   APP.shippingItems.filter(x=>x.order_id===orderId).forEach(x=>{
-    const k=normalizeShippingKey(x.sku);
+    const k=normalizeSkuMatchKey(x.sku);
     map.set(k,(map.get(k)||0)+safeNumber(x.qty,0));
   });
   return map;
@@ -10170,7 +10204,7 @@ function labelItemsMatchOrder(orderId,items){
   const a=orderItemMap(orderId);
   const b=new Map();
   items.forEach(x=>{
-    const k=normalizeShippingKey(x.sku);
+    const k=normalizeSkuMatchKey(x.sku);
     b.set(k,(b.get(k)||0)+safeNumber(x.qty,0));
   });
   if(a.size!==b.size) return false;
@@ -10422,12 +10456,381 @@ async function uploadOneShippingLabelPage(order,page,fileName){
   return path;
 }
 
+
+function storeManualLabelPage(file,page,reason){
+
+  const id=
+    `manual_${Date.now()}_${Math.random().toString(36).slice(2,9)}`;
+
+  APP.shippingManualLabelPages.set(
+    id,
+    {
+      id,
+      fileName:file.name,
+      pageNo:page.pageNo,
+      page,
+      info:page.info || {},
+      reason:String(reason||'').trim()
+    }
+  );
+
+  return id;
+}
+
+
+function describeOrderForManualBind(order){
+
+  if(!order){
+    return '';
+  }
+
+  return [
+    order.order_no || '',
+    order.tracking_no || '',
+    describeOrderRequirement(order.id) || ''
+  ]
+  .filter(Boolean)
+  .join(' · ');
+}
+
+
+function openManualLabelBind(id){
+
+  const entry=
+    APP.shippingManualLabelPages.get(id);
+
+  if(!entry){
+    return showError(
+      '这张未匹配面单已经失效，请重新上传该 PDF 后再人工确认'
+    );
+  }
+
+  const info=entry.info || {};
+
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h2 class="text-xl font-bold">🧑‍💼 人工确认面单</h2>
+        <div class="small mt-1">
+          ${escapeHtml(entry.fileName)} · 第 ${entry.pageNo} 页
+        </div>
+      </div>
+      <button onclick="closeModal()" class="text-gray-400 text-2xl">×</button>
+    </div>
+
+    <div class="bg-yellow-50 rounded-xl p-3 text-sm">
+      <div><b>识别订单：</b>${escapeHtml(info.orderNo || '未识别')}</div>
+      <div class="mt-1"><b>Tracking：</b>${escapeHtml(info.tracking || '未识别')}</div>
+      <div class="mt-1"><b>面单 SKU：</b>${escapeHtml(labelItemsForDisplay(info))}</div>
+      <div class="mt-1 text-red-700"><b>自动匹配失败原因：</b>${escapeHtml(entry.reason || '未识别')}</div>
+    </div>
+
+    <button
+      class="btn btn-gray w-full mt-3"
+      onclick="previewManualLabelPage('${id}')">
+      👁️ 预览这一页面单
+    </button>
+
+    <div class="mt-4">
+      <label class="block font-bold mb-2">
+        搜索当前批次订单
+      </label>
+      <input
+        id="manualLabelOrderSearch"
+        placeholder="输入订单号 / Tracking / SKU"
+        oninput="renderManualLabelOrderChoices('${id}')">
+    </div>
+
+    <div id="manualLabelOrderChoices" class="mt-3"></div>
+
+    <div class="bg-red-50 text-red-700 rounded-xl p-3 text-sm mt-3">
+      ⚠️ 人工确认会把这一页 PDF 直接绑定到你选择的订单。请先核对收件地址/Tracking/商品，再确认。
+    </div>
+  `);
+
+  setTimeout(
+    ()=>renderManualLabelOrderChoices(id),
+    0
+  );
+}
+
+
+function renderManualLabelOrderChoices(id){
+
+  const container=
+    $('manualLabelOrderChoices');
+
+  if(!container){
+    return;
+  }
+
+  const q=
+    String(
+      $('manualLabelOrderSearch')?.value || ''
+    )
+    .trim()
+    .toLowerCase();
+
+  let orders=
+    (APP.shippingOrders||[])
+      .filter(order=>{
+
+        if(!q){
+          return true;
+        }
+
+        const text=
+          describeOrderForManualBind(order)
+            .toLowerCase();
+
+        return text.includes(q);
+      });
+
+  // 搜索为空时只显示前 30 条，避免 344 单全部绘制卡手机。
+  orders=
+    orders.slice(
+      0,
+      q ? 80 : 30
+    );
+
+  if(!orders.length){
+
+    container.innerHTML=`
+      <div class="bg-gray-50 rounded-xl p-4 text-center text-sm">
+        没有找到当前批次订单
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML=
+    orders.map(order=>{
+
+      const hasLabel=
+        (APP.shippingLabels||[])
+          .some(
+            x=>x.order_id===order.id
+          );
+
+      return `
+        <div class="border rounded-xl p-3 mb-2">
+          <div class="font-bold break-all">
+            ${escapeHtml(order.order_no || '无订单号')}
+          </div>
+
+          <div class="small mt-1 break-all">
+            Tracking：
+            ${escapeHtml(order.tracking_no || '—')}
+          </div>
+
+          <div class="small mt-1 break-all">
+            商品：
+            ${escapeHtml(describeOrderRequirement(order.id) || '—')}
+          </div>
+
+          ${
+            hasLabel
+            ? `<div class="text-xs text-orange-600 mt-1">⚠️ 这个订单已经有面单，确认后会替换</div>`
+            : ''
+          }
+
+          <button
+            class="btn btn-blue w-full mt-2"
+            onclick="confirmManualLabelBind('${id}','${order.id}')">
+            ✅ 人工确认绑定此订单
+          </button>
+        </div>
+      `;
+    }).join('');
+}
+
+
+function previewManualLabelPage(id){
+
+  const entry=
+    APP.shippingManualLabelPages.get(id);
+
+  if(!entry?.page?.blob){
+    return showError('这一页面单预览已失效，请重新上传 PDF');
+  }
+
+  const url=
+    URL.createObjectURL(
+      entry.page.blob
+    );
+
+  window.open(
+    url,
+    '_blank'
+  );
+
+  setTimeout(
+    ()=>URL.revokeObjectURL(url),
+    60000
+  );
+}
+
+
+async function confirmManualLabelBind(id,orderId){
+
+  const entry=
+    APP.shippingManualLabelPages.get(id);
+
+  if(!entry){
+    return showError(
+      '这张面单已失效，请重新上传 PDF'
+    );
+  }
+
+  const order=
+    (APP.shippingOrders||[])
+      .find(
+        x=>x.id===orderId
+      );
+
+  if(!order){
+    return showError(
+      '当前批次找不到这个订单'
+    );
+  }
+
+  const existingLabel=
+    (APP.shippingLabels||[])
+      .find(
+        x=>x.order_id===order.id
+      );
+
+  const warning=
+    existingLabel
+    ? '\n\n⚠️ 这个订单已经有面单，继续会替换原面单。'
+    : '';
+
+  const ok=
+    confirm(
+      `确认把【${entry.fileName} 第${entry.pageNo}页】\n`+
+      `人工绑定到订单【${order.order_no}】吗？\n\n`+
+      `订单商品：${describeOrderRequirement(order.id) || '—'}\n`+
+      `面单识别：${labelItemsForDisplay(entry.info)}`+
+      warning
+    );
+
+  if(!ok){
+    return;
+  }
+
+  try{
+
+    showInfo(
+      '正在人工绑定面单...'
+    );
+
+    const fileName=
+      entry.fileName.replace(/\.pdf$/i,'')+
+      `_P${entry.pageNo}_MANUAL_${order.order_no}.pdf`;
+
+    await uploadOneShippingLabelPage(
+      order,
+      entry.page,
+      fileName
+    );
+
+    // 记录人工操作流水；如果 audit 表不可用，不影响面单绑定。
+    try{
+      await writeWarehouseAuditLog(
+        '人工绑定面单',
+        {
+          id:null,
+          sku:'',
+          name:order.order_no,
+          bin:''
+        },
+        {
+          qty:1,
+          note:
+            `${entry.fileName} 第${entry.pageNo}页 → 订单 ${order.order_no}`+
+            `；原因：${entry.reason || '自动识别失败'}`
+        }
+      );
+    }catch(e){
+      console.warn(
+        '人工绑定面单流水记录失败：',
+        e
+      );
+    }
+
+    APP.shippingManualLabelPages.delete(id);
+
+    closeModal();
+
+    await loadShippingWorkspace(true);
+
+    showOk(
+      `人工绑定成功：${order.order_no}`
+    );
+
+  }catch(error){
+
+    console.error(error);
+
+    showError(
+      '人工绑定失败：'+
+      (error.message||'未知错误')
+    );
+  }
+}
+
+
+function orderRequirementStats(orderId){
+
+  const items=
+    (APP.shippingItems||[])
+      .filter(x=>x.order_id===orderId);
+
+  const skuCount=
+    items.length;
+
+  const pieces=
+    items.reduce(
+      (sum,x)=>sum+safeNumber(x.qty,0),
+      0
+    );
+
+  return {
+    skuCount,
+    pieces
+  };
+}
+
+
+function labelRequirementStats(items){
+
+  const rows=
+    (items||[])
+      .filter(
+        x=>
+          String(x.sku||'').trim() &&
+          safeNumber(x.qty,0)>0
+      );
+
+  return {
+    skuCount:rows.length,
+    pieces:
+      rows.reduce(
+        (sum,x)=>sum+safeNumber(x.qty,0),
+        0
+      )
+  };
+}
+
 async function uploadShippingLabels(){
   const input=$('shippingLabelFiles');
   const files=Array.from(input?.files||[]);
   if(!files.length) return showError('请先选择 PDF 面单');
 
   try{
+    // 每次新上传一组 PDF，清掉上一次尚未人工确认的临时页。
+    APP.shippingManualLabelPages.clear();
+
     const ready=await checkShippingCloud();
     if(!ready) throw new Error('云端订单表尚未初始化');
     await loadShippingWorkspace(true);
@@ -10485,17 +10888,98 @@ async function uploadShippingLabels(){
 
         if(!order){
           unmatched++;
-          details.push(`❌ ${file.name} 第${page.pageNo}页：${orderText} · ${skuText} · ${trackText} · ${match.reason}`);
+
+          const manualId=
+            storeManualLabelPage(
+              file,
+              page,
+              match.reason
+            );
+
+          details.push({
+            kind:'manual',
+            text:`❌ ${file.name} 第${page.pageNo}页：${orderText} · ${skuText} · ${trackText} · ${match.reason}`,
+            manualId
+          });
+
           continue;
         }
 
-        // 如果订单表和面单都提供了 SKU 明细，必须核对一票多件结构。
-        // V5.7：只要明确识别出不一致，就禁止自动绑定，宁可停下来也不能贴错单。
-        const itemCheck=labelItemsMatchOrder(order.id,info.items);
-        if(itemCheck===false){
+        /*
+         * V7.1 多件订单安全锁：
+         *
+         * 订单号 / Tracking / Ref 精确命中，只说明“这是哪个订单”，
+         * 不能证明“这张面单上的商品组合正确”。
+         *
+         * 对一票多件 / 多SKU订单：
+         * - 面单SKU未识别 -> 禁止自动绑定
+         * - 识别件数少于订单 -> 禁止自动绑定
+         * - SKU或数量不一致 -> 禁止自动绑定
+         *
+         * 只能进入人工确认。
+         */
+        const itemCheck=
+          labelItemsMatchOrder(
+            order.id,
+            info.items
+          );
+
+        const orderStats=
+          orderRequirementStats(
+            order.id
+          );
+
+        const labelStats=
+          labelRequirementStats(
+            info.items
+          );
+
+        const isMultiPiece=
+          orderStats.pieces>1 ||
+          orderStats.skuCount>1;
+
+        let manualReason='';
+
+        if(isMultiPiece){
+
+          if(!info.items?.length){
+            manualReason=
+              `订单 ${order.order_no} 是一票多件（订单表 ${orderStats.skuCount} 个SKU / ${orderStats.pieces} 件），但面单SKU未完整识别`;
+          }else if(labelStats.pieces!==orderStats.pieces){
+            manualReason=
+              `订单 ${order.order_no} 订单表共 ${orderStats.pieces} 件，但面单只识别到 ${labelStats.pieces} 件`;
+          }else if(labelStats.skuCount!==orderStats.skuCount){
+            manualReason=
+              `订单 ${order.order_no} 订单表有 ${orderStats.skuCount} 个SKU，但面单只识别到 ${labelStats.skuCount} 个SKU`;
+          }else if(itemCheck!==true){
+            manualReason=
+              `订单 ${order.order_no} 的面单SKU「${skuText}」与订单表「${describeOrderRequirement(order.id)}」不一致`;
+          }
+
+        }else if(itemCheck===false){
+
+          manualReason=
+            `订单 ${order.order_no} 的面单SKU「${skuText}」与订单表「${describeOrderRequirement(order.id)}」不一致`;
+        }
+
+        if(manualReason){
+
           mismatch++;
           unmatched++;
-          details.push(`❌ ${file.name} 第${page.pageNo}页：订单 ${order.order_no} 的面单SKU「${skuText}」与订单表「${describeOrderRequirement(order.id)}」不一致，已阻止绑定`);
+
+          const manualId=
+            storeManualLabelPage(
+              file,
+              page,
+              manualReason
+            );
+
+          details.push({
+            kind:'manual',
+            text:`❌ ${file.name} 第${page.pageNo}页：${manualReason}，已阻止自动绑定`,
+            manualId
+          });
+
           continue;
         }
 
@@ -10509,23 +10993,49 @@ async function uploadShippingLabels(){
             x=>x.order_id===order.id
           );
 
-        details.push(
-          `✅ ${file.name} 第${page.pageNo}页：${orderText} · ${skuText} → ${
-            createdFromLabel
-              ? '新建'
-              : hadOldLabel
-                ? '重新绑定/替换面单'
-                : '匹配'
-          }订单 ${order.order_no}`
-        );
+        details.push({
+          kind:'ok',
+          text:
+            `✅ ${file.name} 第${page.pageNo}页：${orderText} · ${skuText} → ${
+              createdFromLabel
+                ? '新建'
+                : hadOldLabel
+                  ? '重新绑定/替换面单'
+                  : '匹配'
+            }订单 ${order.order_no}`
+        });
       }
     }
 
     if(resultEl){
       resultEl.innerHTML=`
-        <div class="font-bold">共 ${totalPages} 页 · 已绑定 ${matched} · 未匹配 ${unmatched}${mismatch?` · SKU不一致并拦截 ${mismatch}`:''}</div>
-        <div class="mt-2 small leading-6">${details.map(escapeHtml).join('<br>')}</div>
-        ${unmatched?'<div class="mt-3 bg-yellow-50 rounded-xl p-3 text-sm">⚠️ 未匹配页面不会上传。V5.8 只允许匹配当前订单批次；其他日期、其他客户、测试面单即使格式完全正确，也不会自动建单或进入贴单池。</div>':''}
+        <div class="font-bold">共 ${totalPages} 页 · 已绑定 ${matched} · 未匹配 ${unmatched}${mismatch?` · 需人工确认 ${mismatch}`:''}</div>
+
+        <div class="mt-2 small leading-6">
+          ${details.map(d=>{
+            const obj=
+              typeof d==='string'
+              ? {kind:'ok',text:d}
+              : d;
+
+            return `
+              <div class="${obj.kind==='manual'?'bg-red-50 rounded-xl p-2 mb-2':''}">
+                <div>${escapeHtml(obj.text||'')}</div>
+                ${
+                  obj.kind==='manual'
+                  ? `<button
+                       class="btn btn-yellow btn-small mt-2"
+                       onclick="openManualLabelBind('${obj.manualId}')">
+                       🧑‍💼 人工确认绑定
+                     </button>`
+                  : ''
+                }
+              </div>
+            `;
+          }).join('')}
+        </div>
+
+        ${unmatched?'<div class="mt-3 bg-yellow-50 rounded-xl p-3 text-sm">⚠️ 未匹配页面不会自动进入贴单池。确认是正确面单时，可点“人工确认绑定”，手动选择当前批次订单；系统会记录这次人工操作。</div>':''}
       `;
     }
 
