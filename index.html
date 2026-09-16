@@ -903,7 +903,7 @@ th{
           </h1>
 
           <div class="small">
-            当前仓库入库 / 出库记录
+            当前仓库入库 / 出库记录（实时读取 stock_logs）
           </div>
         </div>
 
@@ -1005,7 +1005,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V6.4 · Cloud Warehouse
+          版本 V6.5 · Cloud Warehouse
         </div>
 
       </div>
@@ -1134,7 +1134,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V6.4-20260915-PAGE-SCOPE-CLEAR-ALL';
+const APP_VERSION = 'V6.5-20260915-STOCK-LOGS-FIX';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -3688,59 +3688,6 @@ const note = $('itemNote').value.trim();
 
       }
 
-      /*
-       * V6.3：找到刚创建的 inventory.id，
-       * 保证“初始库存”在流水里可追踪。
-       */
-      let createdQuery=
-        APP.sb
-          .from('inventory')
-          .select('id,sku,bin,qty')
-          .eq(
-            'warehouse_id',
-            APP.warehouse.id
-          )
-          .eq(
-            'sku',
-            sku
-          )
-          .order(
-            'created_at',
-            {ascending:false}
-          )
-          .limit(1);
-
-      if(bin){
-        createdQuery=createdQuery.eq(
-          'bin',
-          bin
-        );
-      }
-
-      const {
-        data:createdRows,
-        error:createdLookupError
-      }=await createdQuery;
-
-      if(createdLookupError){
-        console.warn(
-          '查找新商品用于流水记录失败：',
-          createdLookupError
-        );
-      }else{
-
-        const createdItem=
-          (createdRows||[])[0];
-
-        if(createdItem){
-          await ensureInitialInventoryTransaction(
-            createdItem.id,
-            qty,
-            '新建商品初始库存'
-          );
-        }
-      }
-
       closeModal();
 
       await loadInventory();
@@ -3770,67 +3717,6 @@ const note = $('itemNote').value.trim();
     
 
 
-async function ensureInitialInventoryTransaction(inventoryId,qty,note){
-
-  const initialQty=Math.floor(
-    safeNumber(qty,0)
-  );
-
-  if(!inventoryId || initialQty<=0){
-    return;
-  }
-
-  /*
-   * create_inventory 在不同旧数据库版本里，
-   * 有的会自动写 inventory_transactions，
-   * 有的不会。
-   *
-   * 所以先查有没有“刚创建后的流水”：
-   * 有就不重复写；
-   * 没有才补一条入库流水。
-   */
-  const {data:existing,error:existingError}=
-    await APP.sb
-      .from('inventory_transactions')
-      .select('id,type,qty,created_at')
-      .eq('inventory_id',inventoryId)
-      .order(
-        'created_at',
-        {ascending:false}
-      )
-      .limit(1);
-
-  if(existingError){
-    console.warn(
-      '检查新商品初始流水失败：',
-      existingError
-    );
-    return;
-  }
-
-  if((existing||[]).length){
-    return;
-  }
-
-  const {error:insertError}=
-    await APP.sb
-      .from('inventory_transactions')
-      .insert({
-        inventory_id:inventoryId,
-        type:'in',
-        qty:initialQty,
-        note:
-          String(note||'').trim() ||
-          '新建商品初始库存'
-      });
-
-  if(insertError){
-    console.warn(
-      '补写新商品初始流水失败：',
-      insertError
-    );
-  }
-}
 
 /* =========================================================
    入库 / 出库
@@ -4420,112 +4306,47 @@ async function loadLogs(options={}){
   try{
 
     /*
-     * V6.3：流水只认一套“权威来源”
+     * V6.5：真正的库存流水来源是 stock_logs。
      *
-     * inventory_transactions
+     * 证据：
+     * 现有系统的 realtime 订阅本来就监听 stock_logs，
+     * 并且 stock_logs 本身有 warehouse_id。
      *
-     * 并且必须通过当前仓库 inventory.id 过滤。
-     * 不再把 stock_logs 混进来，避免显示其他仓库/旧测试数据。
+     * 所以流水页面只读取：
+     * 当前仓库 warehouse_id 对应的 stock_logs。
+     *
+     * 不再读取 inventory_transactions，
+     * 避免“新商品/入库已有流水，但页面永远显示空”的问题。
      */
-
-    const {data:inventoryData,error:inventoryError}=
+    const {data,error}=
       await APP.sb
-        .from('inventory')
-        .select(
-          'id,name,sku,bin,warehouse_id,note'
-        )
+        .from('stock_logs')
+        .select('*')
         .eq(
           'warehouse_id',
           APP.warehouse.id
-        );
+        )
+        .order(
+          'created_at',
+          {ascending:false}
+        )
+        .limit(2000);
 
-    if(inventoryError){
-      throw inventoryError;
-    }
-
-    const inventoryRows=inventoryData||[];
-
-    const inventoryMap=
-      new Map(
-        inventoryRows.map(item=>[
-          item.id,
-          item
-        ])
-      );
-
-    const inventoryIds=
-      inventoryRows.map(x=>x.id);
-
-    const rows=[];
-
-    for(
-      let i=0;
-      i<inventoryIds.length;
-      i+=50
-    ){
-
-      const ids=
-        inventoryIds.slice(
-          i,
-          i+50
-        );
-
-      if(!ids.length) continue;
-
-      const {data,error}=
-        await APP.sb
-          .from('inventory_transactions')
-          .select(`
-            id,
-            inventory_id,
-            type,
-            qty,
-            note,
-            created_at
-          `)
-          .in(
-            'inventory_id',
-            ids
-          )
-          .order(
-            'created_at',
-            {ascending:false}
-          )
-          .limit(1000);
-
-      if(error){
-        throw error;
-      }
-
-      (data||[]).forEach(log=>{
-
-        const item=
-          inventoryMap.get(
-            log.inventory_id
-          );
-
-        if(!item){
-          return;
-        }
-
-        rows.push({
-          ...log,
-          _source_table:'inventory_transactions',
-          name:item.name||'',
-          sku:item.sku||'',
-          bin:item.bin||'',
-          item_note:item.note||''
-        });
-
-      });
+    if(error){
+      throw error;
     }
 
     APP.logs=
-      rows.sort(
-        (a,b)=>
-          new Date(b.created_at||0) -
-          new Date(a.created_at||0)
-      );
+      (data||[])
+        .map(log=>({
+          ...log,
+          _source_table:'stock_logs'
+        }))
+        .sort(
+          (a,b)=>
+            new Date(b.created_at||0) -
+            new Date(a.created_at||0)
+        );
 
     APP.logsLoadedOnce=true;
 
@@ -4923,18 +4744,14 @@ function editStockLog(id){
 
 async function saveStockLogNote(id){
 
-  const note =
+  const note=
     $('editLogNote')
       .value
       .trim();
 
-
   try{
 
-    showInfo(
-      '正在保存...'
-    );
-
+    showInfo('正在保存...');
 
     const log=
       APP.logs.find(
@@ -4947,32 +4764,28 @@ async function saveStockLogNote(id){
 
     const {error}=
       await APP.sb
-        .from('inventory_transactions')
+        .from('stock_logs')
         .update({
           note:note
         })
         .eq(
           'id',
           id
+        )
+        .eq(
+          'warehouse_id',
+          APP.warehouse.id
         );
 
     if(error){
       throw error;
     }
 
-
     closeModal();
-
 
     await loadLogs();
 
-    renderLogs();
-
-
-    showOk(
-      '备注已更新'
-    );
-
+    showOk('备注已更新');
 
   }catch(error){
 
@@ -4985,19 +4798,16 @@ async function saveStockLogNote(id){
         '请检查数据库权限'
       )
     );
-
   }
-
 }
 
 
 async function deleteStockLog(id){
 
-  const log =
+  const log=
     APP.logs.find(
-      x => x.id === id
+      x=>x.id===id
     );
-
 
   if(!log){
     return showError(
@@ -5005,49 +4815,39 @@ async function deleteStockLog(id){
     );
   }
 
-
-  const ok =
+  const ok=
     confirm(
       '确定删除这条库存流水吗？\n\n注意：删除流水不会自动恢复库存数量。'
     );
-
 
   if(!ok){
     return;
   }
 
-
   try{
 
-    showInfo(
-      '正在删除...'
-    );
-
+    showInfo('正在删除...');
 
     const {error}=
       await APP.sb
-        .from('inventory_transactions')
+        .from('stock_logs')
         .delete()
         .eq(
           'id',
           id
+        )
+        .eq(
+          'warehouse_id',
+          APP.warehouse.id
         );
 
     if(error){
       throw error;
     }
 
-
     await loadLogs();
 
-
-    renderLogs();
-
-
-    showOk(
-      '流水记录已删除'
-    );
-
+    showOk('流水记录已删除');
 
   }catch(error){
 
@@ -5060,9 +4860,7 @@ async function deleteStockLog(id){
         '请检查数据库权限'
       )
     );
-
   }
-
 }
 
 
