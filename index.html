@@ -903,7 +903,7 @@ th{
           </h1>
 
           <div class="small">
-            当前仓库入库 / 出库记录（实时读取 stock_logs）
+            当前仓库完整操作流水：入库 / 出库 / 新建 / 编辑 / 下架 / 删除
           </div>
         </div>
 
@@ -1005,7 +1005,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V6.5 · Cloud Warehouse
+          版本 V6.6 · Cloud Warehouse
         </div>
 
       </div>
@@ -1134,7 +1134,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V6.5-20260915-STOCK-LOGS-FIX';
+const APP_VERSION = 'V6.6-20260915-FULL-AUDIT-LOG';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -3629,6 +3629,22 @@ const note = $('itemNote').value.trim();
         }
       }
 
+      await writeWarehouseAuditLog(
+        '编辑商品',
+        {
+          id,
+          sku,
+          name:finalName,
+          bin
+        },
+        {
+          qty:diff,
+          note:
+            `库存 ${oldQty} → ${qty}` +
+            (note ? `；备注：${note}` : '')
+        }
+      );
+
       closeModal();
 
       await loadInventory();
@@ -3687,6 +3703,21 @@ const note = $('itemNote').value.trim();
         }
 
       }
+
+      await writeWarehouseAuditLog(
+        '新建商品',
+        {
+          sku,
+          name:finalName,
+          bin
+        },
+        {
+          qty,
+          note:
+            `初始库存 ${qty}` +
+            (note ? `；备注：${note}` : '')
+        }
+      );
 
       closeModal();
 
@@ -3996,12 +4027,23 @@ async function archiveInventory(id){
     }
 
 
+    await writeWarehouseAuditLog(
+      '下架商品',
+      item,
+      {
+        qty:item.qty,
+        note:'商品下架'
+      }
+    );
+
     await loadInventory();
 
 
     renderInventoryList();
 
     renderHome();
+
+    await loadLogs({silent:true});
 
 
     showOk(
@@ -4242,6 +4284,15 @@ async function deleteInventory(id){
     }
 
 
+    await writeWarehouseAuditLog(
+      '删除商品',
+      item,
+      {
+        qty:item.qty,
+        note:'永久删除商品'
+      }
+    );
+
     closeModal();
 
 
@@ -4251,6 +4302,8 @@ async function deleteInventory(id){
     renderInventoryList();
 
     renderHome();
+
+    await loadLogs({silent:true});
 
 
     showOk(
@@ -4278,6 +4331,41 @@ async function deleteInventory(id){
 /* =========================================================
    Logs
 ========================================================= */
+
+async function writeWarehouseAuditLog(action,item,options={}){
+
+  if(!APP.warehouse?.id){
+    return;
+  }
+
+  const payload={
+    warehouse_id:APP.warehouse.id,
+    inventory_id:item?.id || null,
+    sku:String(item?.sku || options.sku || '').trim() || null,
+    name:String(item?.name || options.name || '').trim() || null,
+    bin:String(item?.bin || options.bin || '').trim() || null,
+    action:String(action || '').trim(),
+    qty:
+      options.qty===null || options.qty===undefined
+      ? null
+      : safeNumber(options.qty,0),
+    note:String(options.note || '').trim() || null,
+    user_id:APP.user?.id || null,
+    user_email:APP.user?.email || null
+  };
+
+  const {error}=await APP.sb
+    .from('warehouse_audit_logs')
+    .insert(payload);
+
+  if(error){
+    console.warn(
+      '写入操作流水失败：',
+      error
+    );
+  }
+}
+
 async function loadLogs(options={}){
 
   if(!APP.warehouse){
@@ -4306,20 +4394,18 @@ async function loadLogs(options={}){
   try{
 
     /*
-     * V6.5：真正的库存流水来源是 stock_logs。
+     * V6.6：
+     * stock_logs = 真正库存数量变化（入库 / 出库）
+     * warehouse_audit_logs = 新建 / 编辑 / 下架 / 删除 / 恢复
      *
-     * 证据：
-     * 现有系统的 realtime 订阅本来就监听 stock_logs，
-     * 并且 stock_logs 本身有 warehouse_id。
-     *
-     * 所以流水页面只读取：
-     * 当前仓库 warehouse_id 对应的 stock_logs。
-     *
-     * 不再读取 inventory_transactions，
-     * 避免“新商品/入库已有流水，但页面永远显示空”的问题。
+     * 两张表合并后才是“完整操作流水”。
      */
-    const {data,error}=
-      await APP.sb
+    const [
+      stockResult,
+      auditResult
+    ]=await Promise.all([
+
+      APP.sb
         .from('stock_logs')
         .select('*')
         .eq(
@@ -4330,26 +4416,59 @@ async function loadLogs(options={}){
           'created_at',
           {ascending:false}
         )
-        .limit(2000);
+        .limit(2000),
 
-    if(error){
-      throw error;
+      APP.sb
+        .from('warehouse_audit_logs')
+        .select('*')
+        .eq(
+          'warehouse_id',
+          APP.warehouse.id
+        )
+        .order(
+          'created_at',
+          {ascending:false}
+        )
+        .limit(2000)
+
+    ]);
+
+    if(stockResult.error){
+      throw stockResult.error;
     }
 
-    APP.logs=
-      (data||[])
+    if(auditResult.error){
+      throw new Error(
+        '操作流水扩展表还没有建立。请先运行 V6.6 的 warehouse_audit_logs SQL。'
+      );
+    }
+
+    const stockRows=
+      (stockResult.data||[])
         .map(log=>({
           ...log,
-          _source_table:'stock_logs'
-        }))
-        .sort(
-          (a,b)=>
-            new Date(b.created_at||0) -
-            new Date(a.created_at||0)
-        );
+          _source_table:'stock_logs',
+          _log_kind:'stock'
+        }));
+
+    const auditRows=
+      (auditResult.data||[])
+        .map(log=>({
+          ...log,
+          _source_table:'warehouse_audit_logs',
+          _log_kind:'audit'
+        }));
+
+    APP.logs=[
+      ...stockRows,
+      ...auditRows
+    ].sort(
+      (a,b)=>
+        new Date(b.created_at||0) -
+        new Date(a.created_at||0)
+    );
 
     APP.logsLoadedOnce=true;
-
     renderLogs();
 
   }catch(error){
@@ -4362,8 +4481,7 @@ async function loadLogs(options={}){
     if(options.silent!==true){
       showError(
         '流水同步失败：' +
-        (error.message||'未知错误') +
-        '。不会影响库存、订单或其他页面。'
+        (error.message||'未知错误')
       );
     }
 
@@ -4386,48 +4504,91 @@ async function loadLogs(options={}){
 
 function getLogType(log){
 
-  const type =
+  const raw=
     String(
-      log.type ||
       log.action ||
+      log.type ||
       ''
     ).toLowerCase();
 
+  if(
+    raw.includes('新建') ||
+    raw.includes('create')
+  ){
+    return {
+      label:'新建',
+      cls:'badge-green'
+    };
+  }
 
   if(
-    type.includes('in') ||
-    type.includes('入')
+    raw.includes('编辑') ||
+    raw.includes('update')
   ){
+    return {
+      label:'编辑',
+      cls:'badge-gray'
+    };
+  }
 
+  if(
+    raw.includes('下架') ||
+    raw.includes('archive')
+  ){
+    return {
+      label:'下架',
+      cls:'badge-yellow'
+    };
+  }
+
+  if(
+    raw.includes('恢复') ||
+    raw.includes('上架') ||
+    raw.includes('restore')
+  ){
+    return {
+      label:'恢复',
+      cls:'badge-green'
+    };
+  }
+
+  if(
+    raw.includes('删除') ||
+    raw.includes('delete')
+  ){
+    return {
+      label:'删除',
+      cls:'badge-red'
+    };
+  }
+
+  if(
+    raw.includes('in') ||
+    raw.includes('入')
+  ){
     return {
       label:'入库',
       cls:'badge-green'
     };
-
   }
 
-
   if(
-    type.includes('out') ||
-    type.includes('出')
+    raw.includes('out') ||
+    raw.includes('出')
   ){
-
     return {
       label:'出库',
       cls:'badge-yellow'
     };
-
   }
-
 
   return {
     label:
-      log.type ||
       log.action ||
+      log.type ||
       '操作',
     cls:'badge-gray'
   };
-
 }
 
 
@@ -4652,21 +4813,31 @@ function renderLogs(){
 
           </div>
 
-          <div class="flex gap-2 mt-3">
+          ${
+            log._log_kind==='stock'
+            ? `
+              <div class="flex gap-2 mt-3">
 
-            <button
-              class="btn btn-gray btn-small"
-              onclick="editStockLog('${log.id}')">
-              ✏️ 编辑备注
-            </button>
+                <button
+                  class="btn btn-gray btn-small"
+                  onclick="editStockLog('${log.id}')">
+                  ✏️ 编辑备注
+                </button>
 
-            <button
-              class="btn btn-red btn-small"
-              onclick="deleteStockLog('${log.id}')">
-              🗑️ 删除记录
-            </button>
+                <button
+                  class="btn btn-red btn-small"
+                  onclick="deleteStockLog('${log.id}')">
+                  🗑️ 删除记录
+                </button>
 
-          </div>
+              </div>
+            `
+            : `
+              <div class="small mt-3 text-gray-400">
+                系统操作记录
+              </div>
+            `
+          }
 
         </div>
       `;
