@@ -1007,7 +1007,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V9.0 · Cloud Warehouse
+          版本 V9.1 · Cloud Warehouse
         </div>
 
       </div>
@@ -1137,7 +1137,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V8.8-20260916-SAFE-INVENTORY-REIMPORT';
+const APP_VERSION = 'V9.1-20260916-PACKING-PROGRESS-AUTO-OUTBOUND';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1211,7 +1211,11 @@ const APP = {
 
   pickScanMode:false,
 
-  packScanMode:false
+  packScanMode:false,
+
+  /* V9.1：扫码贴单会话管理员授权 + 贴单进度缓存 */
+  packingAdminAuthorized:false,
+  packingProgressData:null
 
 };
 
@@ -14447,6 +14451,9 @@ function deactivateHardwareScanner(){
 
 async function closePackingScanner(){
 
+  APP.packingAdminAuthorized=false;
+  APP.packingProgressData=null;
+
   deactivateHardwareScanner();
 
   if(APP.scannerRunning){
@@ -14460,8 +14467,256 @@ async function closePackingScanner(){
   closeModal();
 }
 
-function openPackingScanner(){
+
+/* =========================================================
+   V9.1 贴单进度中心
+   - 直接读取当前批次的全部云端订单（包括已出库）
+   - 不依赖当前页面内存，因此最后剩 1 单也能明确查到
+   - 只读查询，不删除、不重置任何订单/面单/库存数据
+========================================================= */
+
+function shippingLabelPageNo(label){
+  const text=String(label?.storage_path||'');
+  const m=text.match(/label_P(\d+)_/i);
+  return m ? Number(m[1]) : null;
+}
+
+function packingProgressOrderItems(orderId){
+  const cached=APP.packingProgressData?.items||[];
+  return cached
+    .filter(x=>x.order_id===orderId)
+    .map(x=>`${x.sku}×${safeNumber(x.qty,0)}`)
+    .join(' + ');
+}
+
+async function loadPackingProgressData(){
+  if(!APP.warehouse || !APP.shippingCloudReady){
+    return null;
+  }
+
+  const source=
+    APP.shippingActiveBatchSource ||
+    getStoredShippingActiveBatch();
+
+  if(!source){
+    return {
+      source:'',
+      orders:[],
+      items:[],
+      labels:[]
+    };
+  }
+
+  const {data:orders,error:orderError}=await APP.sb
+    .from('shipping_orders')
+    .select('*')
+    .eq('warehouse_id',APP.warehouse.id)
+    .eq('source_file',source)
+    .order('created_at',{ascending:true});
+
+  if(orderError) throw orderError;
+
+  const orderIds=(orders||[]).map(x=>x.id);
+
+  const items=await shippingFetchByOrderIds(
+    'shipping_order_items',
+    orderIds,
+    {select:'*',orderColumn:'created_at',ascending:true}
+  );
+
+  const labels=await shippingFetchByOrderIds(
+    'shipping_labels',
+    orderIds,
+    {select:'*',orderColumn:'created_at',ascending:true}
+  );
+
+  APP.packingProgressData={
+    source,
+    orders:orders||[],
+    items:items||[],
+    labels:labels||[]
+  };
+
+  return APP.packingProgressData;
+}
+
+function renderPackingProgressCenter(){
+  const el=$('packingProgressCenter');
+  if(!el) return;
+
+  const data=APP.packingProgressData;
+
+  if(!data){
+    el.innerHTML='<div class="bg-gray-50 rounded-xl p-3 text-sm">正在读取贴单进度...</div>';
+    return;
+  }
+
+  const orders=data.orders||[];
+  const labels=data.labels||[];
+  const labelMap=new Map(labels.map(x=>[x.order_id,x]));
+
+  const printed=orders.filter(o=>
+    safeNumber(o.print_count,0)>0 ||
+    o.status==='packed' ||
+    o.status==='shipped'
+  );
+
+  const shipped=orders.filter(o=>o.status==='shipped');
+
+  const pending=orders.filter(o=>
+    o.status!=='packed' &&
+    o.status!=='shipped' &&
+    o.status!=='cancelled' &&
+    labelMap.has(o.id)
+  );
+
+  const packedNotShipped=orders.filter(o=>o.status==='packed');
+  const missingLabel=orders.filter(o=>
+    o.status!=='cancelled' &&
+    !labelMap.has(o.id)
+  );
+
+  const visiblePending=pending.slice(0,12);
+
+  el.innerHTML=`
+    <div class="card p-3 border border-blue-100">
+      <div class="flex items-center justify-between gap-2">
+        <div class="font-bold">📊 当前批次贴单进度</div>
+        <button class="btn btn-gray btn-small" onclick="refreshPackingProgressCenter()">刷新</button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 mt-3 text-sm text-center">
+        <div class="bg-blue-50 rounded-lg p-2"><b>${orders.length}</b><br>订单总数</div>
+        <div class="bg-purple-50 rounded-lg p-2"><b>${labels.length}</b><br>已上传面单</div>
+        <div class="bg-yellow-50 rounded-lg p-2"><b>${printed.length}</b><br>已打印</div>
+        <div class="bg-green-50 rounded-lg p-2"><b>${shipped.length}</b><br>已完成/已扣库存</div>
+        <div class="bg-red-50 rounded-lg p-2"><b>${pending.length}</b><br>未贴单</div>
+        <div class="bg-orange-50 rounded-lg p-2"><b>${packedNotShipped.length}</b><br>已打印待扣库存</div>
+      </div>
+
+      ${missingLabel.length?`<div class="mt-2 text-red-600 text-sm">⚠️ 还有 ${missingLabel.length} 单没有绑定面单</div>`:''}
+
+      <div class="mt-3 font-bold text-red-700">🔴 未贴单明细 ${pending.length}</div>
+      ${visiblePending.length?visiblePending.map(o=>{
+        const label=labelMap.get(o.id);
+        const page=shippingLabelPageNo(label);
+        const req=packingProgressOrderItems(o.id)||'无商品明细';
+        return `
+          <div class="border-t py-2 text-sm">
+            <div class="font-bold break-all">${escapeHtml(o.order_no||'')}</div>
+            <div class="small break-all">SKU：${escapeHtml(req)}</div>
+            <div class="small break-all">Tracking：${escapeHtml(o.tracking_no||label?.tracking_no||'—')}</div>
+            <div class="small">快递：${escapeHtml(shippingCarrierName(o))}${page?` · 面单第 ${page} 页`:''}</div>
+          </div>`;
+      }).join(''):'<div class="bg-green-50 rounded-lg p-2 mt-2 text-green-700 text-sm">✅ 当前没有未贴单订单</div>'}
+
+      ${pending.length>12?`<div class="small mt-2">这里只显示前 12 单，点击下面按钮可搜索全部。</div>`:''}
+
+      <button class="btn btn-blue w-full mt-3" onclick="openPackingProgressSearch()">🔎 查询未贴 / 已完成订单</button>
+    </div>`;
+}
+
+async function refreshPackingProgressCenter(){
+  try{
+    await loadPackingProgressData();
+    renderPackingProgressCenter();
+  }catch(error){
+    console.error('读取贴单进度失败',error);
+    const el=$('packingProgressCenter');
+    if(el){
+      el.innerHTML=`<div class="bg-red-50 rounded-xl p-3 text-sm text-red-700">读取贴单进度失败：${escapeHtml(error.message||'未知错误')}。没有删除任何数据。</div>`;
+    }
+  }
+}
+
+async function openPackingProgressSearch(){
+  /* 打开查询页时先暂停扫码枪，避免查询过程中误扫商品。 */
+  deactivateHardwareScanner();
+
+  try{
+    await loadPackingProgressData();
+  }catch(error){
+    return showError('读取贴单进度失败：'+(error.message||''));
+  }
+
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-xl font-bold">🔎 贴单 / 完成查询</h2>
+      <button onclick="closeModal()" class="text-gray-400 text-2xl">×</button>
+    </div>
+
+    <input id="packingProgressSearchInput" placeholder="搜索订单号 / Tracking / SKU" oninput="renderPackingProgressSearchList()">
+
+    <div class="grid grid-cols-3 gap-2 mt-3">
+      <button class="btn btn-red btn-small" onclick="APP.packingProgressFilter='pending';renderPackingProgressSearchList()">未贴单</button>
+      <button class="btn btn-green btn-small" onclick="APP.packingProgressFilter='shipped';renderPackingProgressSearchList()">已完成</button>
+      <button class="btn btn-gray btn-small" onclick="APP.packingProgressFilter='all';renderPackingProgressSearchList()">全部</button>
+    </div>
+
+    <div id="packingProgressSearchList" class="mt-3"></div>
+  `);
+
+  APP.packingProgressFilter='pending';
+  renderPackingProgressSearchList();
+}
+
+function renderPackingProgressSearchList(){
+  const el=$('packingProgressSearchList');
+  if(!el) return;
+
+  const data=APP.packingProgressData||{orders:[],items:[],labels:[]};
+  const labelMap=new Map((data.labels||[]).map(x=>[x.order_id,x]));
+  const q=normalizeShippingKey($('packingProgressSearchInput')?.value||'');
+  const filter=APP.packingProgressFilter||'pending';
+
+  let rows=(data.orders||[]).filter(o=>{
+    if(filter==='pending'){
+      if(o.status==='packed'||o.status==='shipped'||o.status==='cancelled'||!labelMap.has(o.id)) return false;
+    }else if(filter==='shipped'){
+      if(o.status!=='shipped') return false;
+    }
+
+    if(!q) return true;
+
+    const req=packingProgressOrderItems(o.id);
+    return [o.order_no,o.tracking_no,req]
+      .some(v=>normalizeShippingKey(v).includes(q));
+  });
+
+  rows=rows.slice(0,200);
+
+  el.innerHTML=rows.length?rows.map(o=>{
+    const label=labelMap.get(o.id);
+    const page=shippingLabelPageNo(label);
+    const req=packingProgressOrderItems(o.id)||'无商品明细';
+    const status=o.status==='shipped'?'✅ 已完成 / 已扣库存':o.status==='packed'?'🟡 已打印待出库':'🔴 未贴单';
+    return `
+      <div class="card p-3 mb-2">
+        <div class="font-bold break-all">${escapeHtml(o.order_no||'')}</div>
+        <div class="small mt-1 break-all">${escapeHtml(req)}</div>
+        <div class="small mt-1 break-all">Tracking：${escapeHtml(o.tracking_no||label?.tracking_no||'—')}</div>
+        <div class="small mt-1">${escapeHtml(shippingCarrierName(o))}${page?` · 面单第 ${page} 页`:''}</div>
+        <div class="mt-2 font-bold">${status}</div>
+      </div>`;
+  }).join(''):'<div class="bg-gray-50 rounded-xl p-4 text-center text-gray-500">没有找到记录</div>';
+}
+
+async function openPackingScanner(){
   if(!APP.shippingCloudReady) return showError('请先同步云端订单');
+
+  /*
+   * V9.1：扫码贴单成功后会自动完成出库并扣库存。
+   * 因为库存变化属于管理员操作，所以每次打开贴单台先验证一次云端管理员密码。
+   * 本次弹窗会话内不重复询问；关闭后授权自动失效。
+   */
+  if(!APP.packingAdminAuthorized){
+    const ok=await verifyWarehouseAdminPassword(
+      '扫码贴单：打印成功后自动出库并扣减库存'
+    );
+    if(!ok) return;
+    APP.packingAdminAuthorized=true;
+  }
+
   loadPackPool();
 
   openModal(`
@@ -14486,6 +14741,10 @@ function openPackingScanner(){
 
     <div class="bg-blue-50 rounded-xl p-3 mb-3 text-sm">
       扫商品 SKU：单件订单扫 1 件即可出面单；一票多件会累计 SKU，全部满足后才出面单。也可以扫描订单号 / Tracking 直接查单。
+    </div>
+
+    <div id="packingProgressCenter" class="mb-3">
+      <div class="bg-gray-50 rounded-xl p-3 text-sm">正在读取贴单进度...</div>
     </div>
 
     <div id="packPoolStatus" class="mb-3"></div>
@@ -14520,6 +14779,7 @@ function openPackingScanner(){
   `);
 
   renderPackPoolStatus();
+  refreshPackingProgressCenter();
 
   /*
    * V5.0：
@@ -15223,17 +15483,58 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       order.status='packed';
       printToken=null;
 
+      /*
+       * V9.1：打印桥确认面单已经成功发送后，立即完成出库并扣减库存。
+       * 这里使用现有 complete_shipping_order RPC：云端会校验订单状态、库存并防重复。
+       * 如果扣库存失败，订单保留 packed（已打印待出库），绝不重复打印。
+       */
+      try{
+        const {error:outError}=await APP.sb.rpc(
+          'complete_shipping_order',
+          {p_order_id:order.id}
+        );
+
+        if(outError){
+          throw outError;
+        }
+
+        order.status='shipped';
+
+        await loadInventory();
+        await loadLogs();
+        renderHome();
+        renderInventoryList();
+        renderLogs();
+
+      }catch(outError){
+
+        console.error('面单已打印，但自动扣库存失败',outError);
+
+        playWarehouseTone('error');
+
+        showError(
+          `⚠️ ${order.order_no} 面单已经打印成功，但库存自动扣减失败：${outError.message||'未知错误'}。
+
+订单已保留为“已贴单待出库”，请不要重复打印，在贴单进度里处理。`
+        );
+      }
+
       renderPackingQueue();
       updateShippingCloudSummary();
       saveShippingProgressSnapshot();
 
       await syncShippingBatchSummaries();
       await loadShippingBatchHistory(true);
+      await refreshPackingProgressCenter();
     }
 
     const progress=getBatchProgressForOrder(order.id);
     if(markPacked && progress){
-      showOk(`✅ 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`);
+      showOk(
+        order.status==='shipped'
+        ? `✅ 面单已打印并扣库存 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
+        : `⚠️ 面单已打印，待人工完成出库 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
+      );
     }else{
       if(!silentPrinted){
 
