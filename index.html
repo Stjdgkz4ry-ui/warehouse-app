@@ -881,8 +881,9 @@ th{
           </div>
         </div>
 
-        <div id="packingQueue" class="mb-3"></div>
         <div id="shippingBatchHistory" class="mb-3"></div>
+        <div id="shippingLabelReviewPanel" class="mb-3"></div>
+        <div id="packingQueue" class="mb-3"></div>
         <div id="pickingListLegacyDuplicate" class="hidden"></div>
 
         <div id="pickingList"></div>
@@ -1005,7 +1006,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V7.4 · Cloud Warehouse
+          版本 V7.5 · Cloud Warehouse
         </div>
 
       </div>
@@ -1134,7 +1135,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V7.4-20260915-LABEL-UPLOAD-PROGRESS';
+const APP_VERSION = 'V7.5-20260915-LABEL-REVIEW-WORKBENCH-LAYOUT';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1195,6 +1196,7 @@ const APP = {
   logsLoading:false,
   logsLoadedOnce:false,
   shippingManualLabelPages:new Map(),
+  shippingLastLabelReport:null,
 
   shippingHistoryOrders:[],
 
@@ -7758,6 +7760,7 @@ async function clearPickingList(){
 
     renderPickingEmpty();
     renderPackingQueue();
+    renderShippingLabelReviewPanel();
     updateShippingCloudSummary();
 
     await loadShippingBatchHistory(true);
@@ -9999,6 +10002,7 @@ function openLabelUpload(){
       <div>3. 核对当前批次订单与一票多件数量</div>
       <div>4. 匹配成功后拆页并上传</div>
       <div>5. 无法自动确认的页面进入“人工确认”</div>
+      <div class="mt-1 font-semibold">处理完成后，异常页面会固定保留在出货中心，不会因为关闭弹窗消失。</div>
     </div>
 
     <input id="shippingLabelFiles" type="file" accept="application/pdf,.pdf" multiple>
@@ -10858,6 +10862,9 @@ async function confirmManualLabelBind(id,orderId){
 
     await loadShippingWorkspace(true);
 
+    // 即使上传弹窗被关闭，出货中心仍保留本次异常页面清单。
+    renderShippingLabelReviewPanel();
+
     showOk(
       `人工绑定成功：${order.order_no}`
     );
@@ -11277,6 +11284,32 @@ async function uploadShippingLabels(){
         });
       }
     }
+
+    APP.shippingLastLabelReport={
+      fileNames:files.map(x=>x.name).join('、'),
+      total:totalPages,
+      matched,
+      failed:failedPages,
+      issues:details
+        .filter(d=>d && typeof d!=='string' && d.kind==='manual')
+        .map(d=>{
+
+          const entry=
+            APP.shippingManualLabelPages.get(
+              d.manualId
+            );
+
+          return {
+            fileName:entry?.fileName || '',
+            pageNo:entry?.pageNo || '',
+            reason:entry?.reason || d.text || '',
+            manualId:d.manualId || ''
+          };
+        }),
+      createdAt:Date.now()
+    };
+
+    renderShippingLabelReviewPanel();
 
     if(resultEl){
       resultEl.innerHTML=`
@@ -11728,30 +11761,227 @@ function renderPackPoolStatus(){
     </div>`;
 }
 
+
+function renderShippingLabelReviewPanel(){
+
+  const el=$('shippingLabelReviewPanel');
+  if(!el) return;
+
+  const r=APP.shippingLastLabelReport;
+
+  if(!r){
+    el.innerHTML='';
+    return;
+  }
+
+  const issues=(r.issues||[]);
+
+  el.innerHTML=`
+    <div class="card p-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="font-bold text-lg">📄 最近一次面单处理结果</div>
+          <div class="small mt-1">
+            ${escapeHtml(r.fileNames||'')}
+          </div>
+        </div>
+
+        <span class="badge ${issues.length?'badge-yellow':'badge-green'}">
+          ${issues.length?'⚠️ 有待处理':'✅ 全部通过'}
+        </span>
+      </div>
+
+      <div class="grid grid-cols-4 gap-2 mt-3 text-center text-xs">
+        <div class="bg-gray-50 rounded-lg p-2">
+          <div class="font-bold">${r.total||0}</div>
+          <div>总页数</div>
+        </div>
+
+        <div class="bg-green-50 rounded-lg p-2">
+          <div class="font-bold text-green-700">${r.matched||0}</div>
+          <div>已绑定</div>
+        </div>
+
+        <div class="bg-yellow-50 rounded-lg p-2">
+          <div class="font-bold text-yellow-700">${issues.length}</div>
+          <div>待人工</div>
+        </div>
+
+        <div class="bg-red-50 rounded-lg p-2">
+          <div class="font-bold text-red-700">${r.failed||0}</div>
+          <div>失败</div>
+        </div>
+      </div>
+
+      ${
+        issues.length
+        ? `
+          <div class="mt-3">
+            <div class="font-bold mb-2">需要处理的页面</div>
+
+            ${issues.map(issue=>`
+              <div class="bg-red-50 rounded-xl p-3 mb-2">
+                <div class="font-semibold">
+                  ${escapeHtml(issue.fileName)} · 第 ${issue.pageNo} 页
+                </div>
+
+                <div class="small mt-1 break-all">
+                  ${escapeHtml(issue.reason||'无法自动确认')}
+                </div>
+
+                ${
+                  issue.manualId &&
+                  APP.shippingManualLabelPages.has(issue.manualId)
+                  ? `
+                    <button
+                      class="btn btn-yellow btn-small mt-2"
+                      onclick="openManualLabelBind('${issue.manualId}')">
+                      🧑‍💼 人工确认
+                    </button>
+                  `
+                  : `
+                    <div class="small text-gray-500 mt-2">
+                      如已刷新网页，请重新上传原 PDF 后再人工确认。
+                    </div>
+                  `
+                }
+              </div>
+            `).join('')}
+          </div>
+        `
+        : `
+          <div class="mt-3 bg-green-50 rounded-xl p-3 text-sm text-green-700">
+            本次面单全部自动核对通过。
+          </div>
+        `
+      }
+    </div>
+  `;
+}
+
+
 function renderPackingQueue(){
+
   const el=$('packingQueue');
   if(!el) return;
-  if(!APP.shippingCloudReady || !APP.shippingOrders.length){
+
+  if(
+    !APP.shippingCloudReady ||
+    !APP.shippingOrders.length
+  ){
     el.innerHTML='';
     return;
   }
 
-  const labelMap=new Map(APP.shippingLabels.map(x=>[x.order_id,x]));
-  const ready=APP.shippingOrders.filter(o=>
-    o.status==='packed' ||
-    isOrderPackingEligible(o)
-  );
-  if(!ready.length){
-    el.innerHTML='';
-    return;
-  }
+  const labelMap=
+    new Map(
+      APP.shippingLabels.map(
+        x=>[x.order_id,x]
+      )
+    );
 
-  el.innerHTML=`<div class="card p-4"><div class="font-bold mb-2">🖨️ 贴单工作台</div><div class="small mb-3">单件订单扫 1 件即可出面单；一票多件必须把该订单所有 SKU/数量扫齐。也可以人工确认后直接生成面单。</div>${ready.map(o=>{
-    const label=labelMap.get(o.id);
-    const req=describeOrderRequirement(o.id)||'无商品明细';
-    const done=o.status==='packed';
-    return `<div class="border-t py-3"><div class="flex items-center justify-between gap-2"><div class="min-w-0"><div class="font-bold break-all">${escapeHtml(o.order_no)}</div><div class="small mt-1">${escapeHtml(req)}</div><div class="small mt-1">${done?'✅ 已完成贴单':'⏳ 未完成'} · ${label?'✅ 已有面单':'❌ 缺面单'}</div></div><div class="flex flex-col gap-1">${label&&!done?`<button class="btn btn-small btn-yellow" onclick="manualConfirmPackOrder('${o.id}')">人工确认出面单</button>`:''}${label?`<button class="btn btn-small btn-blue" onclick="printShippingLabelByOrderId('${o.id}')">查看面单</button>`:''}<button class="btn btn-small btn-green" ${o.status==='packed'?`onclick="completePackedOrder('${o.id}')"`:'disabled'}>出库</button></div></div></div>`;
-  }).join('')}</div>`;
+  /*
+   * V7.5：
+   * 贴单工作台不再把“所有已经绑定面单但尚未扫码”的订单全部列出来。
+   * 正常订单通过“扫码贴单”入口处理即可。
+   *
+   * 工作台只显示真正需要人工关注的状态：
+   * 1. 已完成贴单、等待出库；
+   * 2. 已有面单但被人工标记/处理中的订单（以后可扩展）。
+   */
+  const awaitingOutbound=
+    APP.shippingOrders.filter(
+      o=>o.status==='packed'
+    );
+
+  const eligibleCount=
+    APP.shippingOrders.filter(
+      o=>
+        o.status!=='packed' &&
+        o.status!=='shipped' &&
+        o.status!=='cancelled' &&
+        labelMap.has(o.id)
+    ).length;
+
+  el.innerHTML=`
+    <div class="card p-4">
+
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="font-bold text-lg">🖨️ 贴单工作台</div>
+          <div class="small mt-1">
+            正常订单请使用上方“扫码贴单”。这里不再重复列出所有已绑定订单。
+          </div>
+        </div>
+
+        <span class="badge badge-gray">
+          可扫码 ${eligibleCount}
+        </span>
+      </div>
+
+      ${
+        awaitingOutbound.length
+        ? `
+          <div class="font-bold mt-4 mb-2">
+            已贴单 · 待出库 ${awaitingOutbound.length}
+          </div>
+
+          ${awaitingOutbound.map(o=>{
+
+            const label=labelMap.get(o.id);
+            const req=
+              describeOrderRequirement(o.id) ||
+              '无商品明细';
+
+            return `
+              <div class="border-t py-3">
+                <div class="flex items-center justify-between gap-2">
+
+                  <div class="min-w-0">
+                    <div class="font-bold break-all">
+                      ${escapeHtml(o.order_no)}
+                    </div>
+
+                    <div class="small mt-1 break-all">
+                      ${escapeHtml(req)}
+                    </div>
+
+                    <div class="small mt-1">
+                      ✅ 已完成贴单
+                    </div>
+                  </div>
+
+                  <div class="flex flex-col gap-1">
+                    ${
+                      label
+                      ? `<button
+                           class="btn btn-small btn-blue"
+                           onclick="printShippingLabelByOrderId('${o.id}')">
+                           查看面单
+                         </button>`
+                      : ''
+                    }
+
+                    <button
+                      class="btn btn-small btn-green"
+                      onclick="completePackedOrder('${o.id}')">
+                      出库
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+            `;
+          }).join('')}
+        `
+        : `
+          <div class="bg-gray-50 rounded-xl p-3 mt-3 text-sm">
+            当前没有“已贴单待出库”的订单。
+          </div>
+        `
+      }
+    </div>
+  `;
 }
 
 
