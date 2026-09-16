@@ -965,7 +965,11 @@ th{
     <button class="btn btn-gray" onclick="openProductionPreflight()">✅ 开工前检查</button>
   </div>
 
-  <div id="shippingCloudSummary" class="small mt-3">
+  <div class="small mt-3 text-gray-500">
+    🔒 订单、拣货进度和面单以云端为准；刷新页面不会主动删除数据。
+  </div>
+
+  <div id="shippingCloudSummary" class="small mt-2">
     导入订单后会自动保存到当前仓库。
   </div>
 
@@ -1101,7 +1105,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V5.7 · Cloud Warehouse
+          版本 V6.0 · Cloud Warehouse
         </div>
 
       </div>
@@ -1230,7 +1234,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V5.7-20260915-PRODUCTION-PREFLIGHT';
+const APP_VERSION = 'V6.0-20260915-REFRESH-SAFE';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1283,6 +1287,10 @@ const APP = {
 
   shippingLabels:[],
   shippingPickAudit:null,
+  shippingActiveBatchSource:'',
+  shippingImportBusy:false,
+  shippingImportExpectedOrders:0,
+  shippingImportExpectedPieces:0,
 
   shippingHistoryOrders:[],
 
@@ -5943,7 +5951,7 @@ function openOrderImport(){
 
     <button
       class="btn btn-gray w-full mt-2"
-      onclick="closeModal()">
+      onclick="APP.shippingImportBusy ? showError('订单正在导入，请等待完成') : closeModal()">
       取消
     </button>
 
@@ -6176,6 +6184,64 @@ function parseShippingBatchSource(value){
     token:raw
   };
 }
+
+
+function shippingActiveBatchStorageKey(){
+  return `warehouse_shipping_active_batch_${APP.warehouse?.id||'none'}`;
+}
+
+function setShippingActiveBatch(source){
+  APP.shippingActiveBatchSource=String(source||'').trim();
+  try{
+    if(APP.shippingActiveBatchSource){
+      localStorage.setItem(
+        shippingActiveBatchStorageKey(),
+        APP.shippingActiveBatchSource
+      );
+    }else{
+      localStorage.removeItem(
+        shippingActiveBatchStorageKey()
+      );
+    }
+  }catch(e){}
+}
+
+function getStoredShippingActiveBatch(){
+  try{
+    return String(
+      localStorage.getItem(
+        shippingActiveBatchStorageKey()
+      )||''
+    ).trim();
+  }catch(e){
+    return '';
+  }
+}
+
+function chooseLatestShippingBatchSource(orders){
+  const valid=(orders||[])
+    .filter(o=>{
+      const s=String(o.source_file||'').trim();
+      return s && !s.startsWith('LABEL:');
+    })
+    .sort(
+      (a,b)=>
+        String(b.created_at||'')
+          .localeCompare(
+            String(a.created_at||'')
+          )
+    );
+
+  return valid[0]?.source_file || '';
+}
+
+function shippingActiveBatchName(){
+  if(!APP.shippingActiveBatchSource) return '';
+  return parseShippingBatchSource(
+    APP.shippingActiveBatchSource
+  ).name;
+}
+
 
 
 function buildInventorySkuMap(){
@@ -7410,28 +7476,27 @@ async function clearPickingList(){
 
   const hasLocal = APP.pickingRows.length > 0;
   const hasCloud = APP.shippingCloudReady === true && APP.shippingOrders.length > 0;
+  const activeSource=APP.shippingActiveBatchSource;
 
   if(!hasLocal && !hasCloud){
     return showError('目前没有订单');
   }
 
+  const batchName=shippingActiveBatchName() || '当前批次';
+
   const ok = confirm(
     hasCloud
-      ? `确定清空当前未出库订单吗？\n\n云端 ${APP.shippingOrders.length} 个未出库订单、拣货进度和对应面单记录都会一起清除。\n已经完成出库的历史记录不会删除。`
+      ? `确定清空【${batchName}】吗？\n\n只删除当前批次 ${APP.shippingOrders.length} 个未出库订单、拣货进度和对应面单。\n不会删除其他批次，也不会删除库存。`
       : '确定清空当前订单拣货单吗？'
   );
 
   if(!ok) return;
 
   try{
-    showInfo('正在清空订单...');
+    showInfo('正在清空当前批次...');
 
-    /*
-     * V4.3：旧版本这里只清 APP.pickingRows，
-     * 云端 shipping_orders 仍然存在，所以页面一同步又会把订单显示回来。
-     * 现在同时删除当前仓库所有“未出库”云端订单。
-     */
     if(hasCloud){
+
       const storagePaths = (APP.shippingLabels || [])
         .map(x => String(x.storage_path || '').trim())
         .filter(Boolean);
@@ -7446,10 +7511,15 @@ async function clearPickingList(){
         }
       }
 
+      if(!activeSource){
+        throw new Error('没有识别到当前批次，已停止删除，避免误删其他订单');
+      }
+
       const {error:deleteError} = await APP.sb
         .from('shipping_orders')
         .delete()
         .eq('warehouse_id',APP.warehouse.id)
+        .eq('source_file',activeSource)
         .neq('status','shipped');
 
       if(deleteError) throw deleteError;
@@ -7462,6 +7532,9 @@ async function clearPickingList(){
     APP.shippingOrders = [];
     APP.shippingItems = [];
     APP.shippingLabels = [];
+    APP.shippingPickAudit=null;
+
+    setShippingActiveBatch('');
 
     if($('pickOrderNo')) $('pickOrderNo').value = '';
     if($('pickingSearch')) $('pickingSearch').value = '';
@@ -7472,8 +7545,9 @@ async function clearPickingList(){
     updateShippingCloudSummary();
     renderPackingQueue();
     renderPickingEmpty();
+    await loadShippingBatchHistory(true);
 
-    showOk(hasCloud ? '当前未出库订单已从云端清空' : '订单拣货单已清空');
+    showOk('当前批次已清空；库存和其他批次未动');
 
   }catch(error){
     console.error('清空订单失败:', error);
@@ -8182,6 +8256,41 @@ function shippingOrderStatusText(status){
   return map[status] || status || '待处理';
 }
 
+
+async function shippingFetchByOrderIds(tableName,orderIds,options={}){
+
+  const ids=(orderIds||[]).filter(Boolean);
+  if(!ids.length) return [];
+
+  const size=50;
+  const rows=[];
+
+  for(let i=0;i<ids.length;i+=size){
+
+    const part=ids.slice(i,i+size);
+
+    let q=APP.sb
+      .from(tableName)
+      .select(options.select || '*')
+      .in('order_id',part);
+
+    if(options.orderColumn){
+      q=q.order(
+        options.orderColumn,
+        {ascending:options.ascending!==false}
+      );
+    }
+
+    const {data,error}=await q;
+
+    if(error) throw error;
+
+    rows.push(...(data||[]));
+  }
+
+  return rows;
+}
+
 async function loadShippingWorkspace(silent=false){
 
   if(!APP.warehouse) return;
@@ -8189,20 +8298,30 @@ async function loadShippingWorkspace(silent=false){
   const ready = await checkShippingCloud();
 
   if(!ready){
-    APP.shippingOrders = [];
-    APP.shippingItems = [];
-    APP.shippingLabels = [];
-    renderPackingQueue();
+    /*
+     * 云端不可用时，不主动删除当前内存里的工作数据。
+     * 刷新后内存本来为空，会显示“同步失败”，但绝不写删除数据库。
+     */
     if(!silent){
-      showError('云端订单表还没有建立。先执行我提供的 shipping_setup.sql，一次即可。');
+      showError('云端订单暂时无法连接。没有删除任何订单或进度，请检查网络后点“云端同步”。');
     }
     return;
   }
 
   try{
-    if(!silent) showInfo('正在同步云端订单...');
 
-    const {data:orders,error:orderError} = await APP.sb
+    if(!silent){
+      showInfo('正在从云端恢复当前订单批次...');
+    }
+
+    /*
+     * V6.0 刷新安全：
+     * 1. 先从 shipping_orders 找到仓库所有订单。
+     * 2. 恢复 localStorage 记录的当前批次；若本机没有，则选择最新批次。
+     * 3. 商品明细/面单按 50 个 order_id 分块读取，避免 300~500 单时 URL 过长出现 Bad Request。
+     * 4. 整个过程只读，不会因为同步失败删除任何云端订单。
+     */
+    const {data:allOrders,error:orderError} = await APP.sb
       .from('shipping_orders')
       .select('*')
       .eq('warehouse_id',APP.warehouse.id)
@@ -8211,43 +8330,103 @@ async function loadShippingWorkspace(silent=false){
 
     if(orderError) throw orderError;
 
-    const orderIds = (orders || []).map(x => x.id);
-    let items = [];
-    let labels = [];
+    const all=allOrders||[];
 
-    if(orderIds.length){
-      const {data:itemData,error:itemError} = await APP.sb
-        .from('shipping_order_items')
-        .select('*')
-        .in('order_id',orderIds)
-        .order('created_at',{ascending:true});
-      if(itemError) throw itemError;
-      items = itemData || [];
+    let active=
+      APP.shippingActiveBatchSource ||
+      getStoredShippingActiveBatch();
 
-      const {data:labelData,error:labelError} = await APP.sb
-        .from('shipping_labels')
-        .select('*')
-        .in('order_id',orderIds)
-        .order('created_at',{ascending:false});
-      if(labelError) throw labelError;
-      labels = labelData || [];
+    if(
+      active &&
+      !all.some(
+        o=>String(o.source_file||'')===active
+      )
+    ){
+      active='';
     }
 
-    APP.shippingOrders = orders || [];
-    APP.shippingItems = items;
-    APP.shippingLabels = labels;
-    loadPackPool();
+    if(!active){
+      active=chooseLatestShippingBatchSource(all);
+    }
 
+    setShippingActiveBatch(active);
+
+    const orders=
+      active
+      ? all.filter(
+          o=>String(o.source_file||'')===active
+        )
+      : [];
+
+    const orderIds=orders.map(x=>x.id);
+
+    const items=
+      await shippingFetchByOrderIds(
+        'shipping_order_items',
+        orderIds,
+        {
+          select:'*',
+          orderColumn:'created_at',
+          ascending:true
+        }
+      );
+
+    const labels=
+      await shippingFetchByOrderIds(
+        'shipping_labels',
+        orderIds,
+        {
+          select:'*',
+          orderColumn:'created_at',
+          ascending:false
+        }
+      );
+
+    APP.shippingOrders=orders;
+    APP.shippingItems=items;
+    APP.shippingLabels=labels;
+
+    loadPackPool();
     buildCloudPickingRows();
     renderPackingQueue();
     updateShippingCloudSummary();
-    await loadShippingBatchHistory(true);
 
-    if(!silent) showOk('云端订单已同步');
+    // 批次历史即使加载失败，也不能影响当前订单工作区。
+    try{
+      await loadShippingBatchHistory(true);
+    }catch(historyError){
+      console.warn(
+        '批次历史加载失败，不影响当前订单：',
+        historyError
+      );
+    }
+
+    if(!silent){
+      showOk(
+        active
+        ? `已从云端恢复：${shippingActiveBatchName()} · ${orders.length} 单`
+        : '当前没有可处理订单批次'
+      );
+    }
 
   }catch(error){
-    console.error(error);
-    showError('同步云端订单失败：' + (error.message || '未知错误'));
+
+    console.error(
+      '同步云端订单失败：',
+      error
+    );
+
+    /*
+     * 最重要的安全规则：
+     * 同步失败 = 只提示。
+     * 绝不能删除 shipping_orders / items / labels，
+     * 也不清掉已经加载到页面的进度。
+     */
+    showError(
+      '同步云端订单失败：' +
+      (error.message || '未知错误') +
+      '。数据没有被删除，请检查网络后重新点“云端同步”。'
+    );
   }
 }
 
@@ -8264,6 +8443,11 @@ function updateShippingCloudSummary(){
     0
   );
 
+  const busyText=
+    APP.shippingImportBusy
+    ? ' · ⏳ 订单导入中'
+    : '';
+
   const audit=APP.shippingPickAudit;
   const auditText=
     audit
@@ -8276,12 +8460,16 @@ function updateShippingCloudSummary(){
       )
     : '';
 
+  const batchName=shippingActiveBatchName();
+
   el.innerHTML =
+    `${batchName?`当前批次 <b>${escapeHtml(batchName)}</b><br>`:''}`+
     `订单 <b>${stats.orderCount}</b> 个 · `+
     `SKU <b>${stats.skuCount}</b> 个 · `+
     `商品 <b>${pickedItems}/${stats.pieces}</b> 件已拣 · `+
     `一票多件 <b>${stats.multiPieceOrders}</b> 单 · `+
     `面单 <b>${stats.labels}/${stats.orderCount}</b>`+
+    busyText+
     auditText;
 }
 
@@ -8289,14 +8477,12 @@ function updateShippingCloudSummary(){
 async function loadShippingBatchHistory(silent=true){
 
   if(!APP.warehouse || !APP.shippingCloudReady){
-    APP.shippingHistoryOrders=[];
-    APP.shippingHistoryItems=[];
-    APP.shippingHistoryLabels=[];
     renderShippingBatchHistory();
     return;
   }
 
   try{
+
     const {data:orders,error:orderError}=await APP.sb
       .from('shipping_orders')
       .select('*')
@@ -8307,36 +8493,46 @@ async function loadShippingBatchHistory(silent=true){
     if(orderError) throw orderError;
 
     const ids=(orders||[]).map(x=>x.id);
-    let items=[];
-    let labels=[];
 
-    if(ids.length){
-      const {data:itemData,error:itemError}=await APP.sb
-        .from('shipping_order_items')
-        .select('*')
-        .in('order_id',ids);
-      if(itemError) throw itemError;
-      items=itemData||[];
+    const items=
+      await shippingFetchByOrderIds(
+        'shipping_order_items',
+        ids,
+        {select:'*'}
+      );
 
-      const {data:labelData,error:labelError}=await APP.sb
-        .from('shipping_labels')
-        .select('*')
-        .in('order_id',ids);
-      if(labelError) throw labelError;
-      labels=labelData||[];
-    }
+    const labels=
+      await shippingFetchByOrderIds(
+        'shipping_labels',
+        ids,
+        {select:'*'}
+      );
 
     APP.shippingHistoryOrders=orders||[];
     APP.shippingHistoryItems=items;
     APP.shippingHistoryLabels=labels;
+
     renderShippingBatchHistory();
 
   }catch(error){
-    console.error(error);
-    if(!silent) showError('加载订单记录失败：'+(error.message||''));
+
+    console.error(
+      '加载订单记录失败：',
+      error
+    );
+
+    /*
+     * 历史记录失败也不清空已有历史缓存，
+     * 更不能影响当前订单。
+     */
+    if(!silent){
+      showError(
+        '加载订单记录失败：'+
+        (error.message||'')
+      );
+    }
   }
 }
-
 
 function buildShippingBatchHistory(){
 
@@ -8622,6 +8818,39 @@ function buildCloudPickingRows(){
   }
 }
 
+
+function chunkArray(arr,size){
+  const out=[];
+  for(let i=0;i<arr.length;i+=size){
+    out.push(arr.slice(i,i+size));
+  }
+  return out;
+}
+
+function renderShippingImportProgress(current,total,label){
+  const el=$('orderImportResult');
+  if(!el) return;
+
+  const pct=
+    total>0
+      ? Math.min(100,Math.round(current/total*100))
+      : 0;
+
+  el.innerHTML=`
+    <div class="bg-blue-50 rounded-xl p-3 text-sm">
+      <div class="font-bold">${escapeHtml(label||'正在导入')}</div>
+      <div class="mt-2">${current}/${total}（${pct}%）</div>
+      <div class="h-2 bg-blue-100 rounded-full mt-2 overflow-hidden">
+        <div class="h-full bg-blue-600" style="width:${pct}%"></div>
+      </div>
+      <div class="text-xs text-gray-500 mt-2">
+        完成前不要重复点击，也不要上传面单。
+      </div>
+    </div>
+  `;
+}
+
+
 async function saveImportedOrdersToCloud(parsedOrders, sourceFile){
 
   const ready = await checkShippingCloud();
@@ -8629,60 +8858,231 @@ async function saveImportedOrdersToCloud(parsedOrders, sourceFile){
     throw new Error('云端订单表尚未初始化');
   }
 
-  for(const order of parsedOrders){
-
-    const payload={
-      warehouse_id:APP.warehouse.id,
-      order_no:order.orderNo,
-      order_date:$('pickOrderDate')?.value || shippingDateToday(),
-      status:'pending',
-      source_file:sourceFile || '',
-      tracking_no:order.trackingNo || null,
-      created_by:APP.user.id
-    };
-
-    const {data:orderRow,error:orderError}=await APP.sb
-      .from('shipping_orders')
-      .upsert(payload,{onConflict:'warehouse_id,order_no'})
-      .select('*')
-      .single();
-
-    if(orderError) throw orderError;
-
-    // 重新导入同一订单时，只在尚未拣货的情况下刷新明细，避免重复累计。
-    const {data:oldItems,error:oldError}=await APP.sb
-      .from('shipping_order_items')
-      .select('id,picked_qty')
-      .eq('order_id',orderRow.id);
-    if(oldError) throw oldError;
-
-    const hasPicked=(oldItems||[]).some(x=>safeNumber(x.picked_qty,0)>0);
-    if(hasPicked){
-      continue;
-    }
-
-    const {error:deleteError}=await APP.sb
-      .from('shipping_order_items')
-      .delete()
-      .eq('order_id',orderRow.id);
-    if(deleteError) throw deleteError;
-
-    const rows=order.items.map(item=>({
-      order_id:orderRow.id,
-      warehouse_id:APP.warehouse.id,
-      sku:item.sku,
-      name:item.name || item.sku,
-      qty:item.qty,
-      picked_qty:0
-    }));
-
-    if(rows.length){
-      const {error:itemError}=await APP.sb
-        .from('shipping_order_items')
-        .insert(rows);
-      if(itemError) throw itemError;
-    }
+  if(!APP.warehouse?.id){
+    throw new Error('请先选择仓库');
   }
+
+  const orders=(parsedOrders||[])
+    .filter(x=>String(x.orderNo||'').trim());
+
+  if(!orders.length){
+    throw new Error('没有可导入订单');
+  }
+
+  const warehouseId=APP.warehouse.id;
+  const orderDate=$('pickOrderDate')?.value || shippingDateToday();
+
+  /*
+   * V5.9 稳定批量导入：
+   * - 不再一单一单网络请求
+   * - 一个文件只生成一个批次
+   * - 订单批量保存，商品明细批量保存
+   * - 最后核验订单数和总件数
+   * - 任何一步失败，调用方会清理本批残留
+   */
+
+  renderShippingImportProgress(
+    0,
+    orders.length,
+    '正在检查订单'
+  );
+
+  // 安全检查：如果相同订单号已经存在于别的未出库批次，直接停下来。
+  // 不自动覆盖旧订单，避免把历史批次改成今天的批次。
+  const orderNos=orders.map(x=>String(x.orderNo||'').trim());
+  const existingConflicts=[];
+
+  for(const chunk of chunkArray(orderNos,100)){
+    const {data,error}=await APP.sb
+      .from('shipping_orders')
+      .select('order_no,source_file,status')
+      .eq('warehouse_id',warehouseId)
+      .in('order_no',chunk)
+      .neq('status','shipped');
+
+    if(error) throw error;
+
+    (data||[]).forEach(row=>{
+      if(String(row.source_file||'')!==String(sourceFile||'')){
+        existingConflicts.push(row);
+      }
+    });
+  }
+
+  if(existingConflicts.length){
+    throw new Error(
+      `发现 ${existingConflicts.length} 个订单号已存在于其他未完成批次。为防止混单，已停止导入。请先清理旧测试批次。`
+    );
+  }
+
+  // V6.0：禁止导入流程自动删除任何已有批次数据。
+  // 若发现异常，由用户明确点击“清空当前批次”处理。
+
+  const orderPayload=orders.map(order=>({
+    warehouse_id:warehouseId,
+    order_no:String(order.orderNo||'').trim(),
+    order_date:orderDate,
+    status:'pending',
+    source_file:sourceFile || '',
+    tracking_no:String(order.trackingNo||'').trim() || null,
+    created_by:APP.user.id
+  }));
+
+  let insertedOrders=[];
+
+  const orderChunks=chunkArray(orderPayload,80);
+
+  for(let i=0;i<orderChunks.length;i++){
+
+    const {data,error}=await APP.sb
+      .from('shipping_orders')
+      .insert(orderChunks[i])
+      .select('id,order_no,source_file');
+
+    if(error) throw error;
+
+    insertedOrders.push(...(data||[]));
+
+    renderShippingImportProgress(
+      Math.min((i+1)*80,orders.length),
+      orders.length,
+      '正在批量保存订单'
+    );
+  }
+
+  if(insertedOrders.length!==orders.length){
+    throw new Error(
+      `订单保存不完整：应有 ${orders.length} 单，实际保存 ${insertedOrders.length} 单`
+    );
+  }
+
+  const idMap=new Map(
+    insertedOrders.map(x=>[
+      normalizeShippingKey(x.order_no),
+      x.id
+    ])
+  );
+
+  const itemPayload=[];
+
+  orders.forEach(order=>{
+    const orderId=idMap.get(
+      normalizeShippingKey(order.orderNo)
+    );
+
+    if(!orderId){
+      throw new Error(
+        `订单 ${order.orderNo} 没有取得云端ID`
+      );
+    }
+
+    (order.items||[]).forEach(item=>{
+      const sku=String(item.sku||'').trim();
+      const qty=Math.floor(safeNumber(item.qty,0));
+
+      if(!sku || qty<=0) return;
+
+      itemPayload.push({
+        order_id:orderId,
+        warehouse_id:warehouseId,
+        sku,
+        name:String(item.name||sku),
+        qty,
+        picked_qty:0
+      });
+    });
+  });
+
+  let savedItemRows=0;
+  const itemChunks=chunkArray(itemPayload,250);
+
+  for(let i=0;i<itemChunks.length;i++){
+
+    const {data,error}=await APP.sb
+      .from('shipping_order_items')
+      .insert(itemChunks[i])
+      .select('id');
+
+    if(error) throw error;
+
+    savedItemRows+=(data||[]).length;
+
+    renderShippingImportProgress(
+      Math.round(
+        ((i+1)/Math.max(itemChunks.length,1))*
+        orders.length
+      ),
+      orders.length,
+      '正在批量保存商品明细'
+    );
+  }
+
+  if(savedItemRows!==itemPayload.length){
+    throw new Error(
+      `商品明细保存不完整：应有 ${itemPayload.length} 行，实际 ${savedItemRows} 行`
+    );
+  }
+
+  // 最终核验：只认数据库实际结果。
+  const {data:verifyOrders,error:vOrderErr}=await APP.sb
+    .from('shipping_orders')
+    .select('id,order_no')
+    .eq('warehouse_id',warehouseId)
+    .eq('source_file',sourceFile)
+    .neq('status','shipped');
+
+  if(vOrderErr) throw vOrderErr;
+
+  if((verifyOrders||[]).length!==orders.length){
+    throw new Error(
+      `最终核验失败：应有 ${orders.length} 单，云端实际 ${(verifyOrders||[]).length} 单`
+    );
+  }
+
+  const verifyIds=(verifyOrders||[]).map(x=>x.id);
+
+  let verifyItems=[];
+
+  for(const chunk of chunkArray(verifyIds,50)){
+    if(!chunk.length) continue;
+
+    const {data,error}=await APP.sb
+      .from('shipping_order_items')
+      .select('qty')
+      .in('order_id',chunk);
+
+    if(error) throw error;
+
+    verifyItems.push(...(data||[]));
+  }
+
+  const expectedPieces=itemPayload.reduce(
+    (s,x)=>s+safeNumber(x.qty,0),
+    0
+  );
+
+  const actualPieces=verifyItems.reduce(
+    (s,x)=>s+safeNumber(x.qty,0),
+    0
+  );
+
+  if(actualPieces!==expectedPieces){
+    throw new Error(
+      `最终核验失败：应有 ${expectedPieces} 件，云端实际 ${actualPieces} 件`
+    );
+  }
+
+  renderShippingImportProgress(
+    orders.length,
+    orders.length,
+    '✅ 导入完成并核验通过'
+  );
+
+  return {
+    orderCount:orders.length,
+    pieces:expectedPieces,
+    itemRows:itemPayload.length
+  };
 }
 
 // V3 覆盖旧订单导入：支持一个文件内多个订单，并同步到 Supabase。
@@ -8691,6 +9091,22 @@ async function runOrderImport(){
   const file=$('orderImportFile')?.files?.[0];
   if(!file) return showError('请先选择订单文件');
   if(!APP.warehouse) return showError('请先选择仓库');
+
+  if(APP.shippingImportBusy){
+    return showError('订单正在导入，请不要重复点击');
+  }
+
+  APP.shippingImportBusy=true;
+
+  const importBtn=
+    document.querySelector(
+      '#modal button[onclick="runOrderImport()"]'
+    );
+
+  if(importBtn){
+    importBtn.disabled=true;
+    importBtn.textContent='⏳ 正在导入，请勿重复点击';
+  }
 
   try{
     showInfo('正在读取订单并保存云端...');
@@ -8759,21 +9175,72 @@ async function runOrderImport(){
     if(!orders.length) throw new Error('没有找到有效订单商品');
 
     const batchSource=makeShippingBatchSource(file.name);
-    await saveImportedOrdersToCloud(orders,batchSource);
+
+    // 从导入开始就锁定当前批次；后续面单只能匹配这一批订单。
+    setShippingActiveBatch(batchSource);
+
+    APP.shippingImportExpectedOrders=orders.length;
+    APP.shippingImportExpectedPieces=
+      orders.reduce(
+        (sum,o)=>
+          sum+
+          (o.items||[]).reduce(
+            (s,x)=>s+safeNumber(x.qty,0),
+            0
+          ),
+        0
+      );
+
+    const importResult=
+      await saveImportedOrdersToCloud(
+        orders,
+        batchSource
+      );
+
     APP.pickingFileName=file.name;
     APP.pickingOrderNo=orders.length===1 ? orders[0].orderNo : `共${orders.length}个订单`;
     APP.pickingOrderDate=$('pickOrderDate')?.value || shippingDateToday();
 
-    closeModal();
     await loadShippingWorkspace(true);
     showPage('picking');
 
     const suffix=errors.length ? `，另有 ${errors.length} 行被跳过` : '';
-    showOk(`导入成功：${orders.length} 个订单${suffix}`);
+
+    closeModal();
+
+    showOk(
+      `导入完成并核验通过：${importResult.orderCount} 单 / ${importResult.pieces} 件${suffix}`
+    );
 
   }catch(error){
     console.error(error);
-    showError('订单导入失败：' + (error.message || '未知错误'));
+
+    /*
+     * V6.0 数据保护：
+     * 导入/核验失败时绝不自动删除云端订单。
+     * 这样即使手机刷新、Safari中断、网络瞬断，
+     * 已经保存的订单/拣货进度/面单都仍在云端。
+     */
+    showError(
+      '订单导入或核验中断：' +
+      (error.message || '未知错误') +
+      '。已写入云端的数据不会自动删除。请先点“云端同步”检查，再决定是否清空当前批次重来。'
+    );
+
+    try{
+      await loadShippingWorkspace(true);
+    }catch(syncError){
+      console.warn(
+        '导入失败后的恢复同步也失败：',
+        syncError
+      );
+    }
+  }finally{
+    APP.shippingImportBusy=false;
+    if(importBtn){
+      importBtn.disabled=false;
+      importBtn.textContent='🔎 导入并匹配库存';
+    }
   }
 }
 
@@ -9213,7 +9680,7 @@ function openProductionPreflight(){
   openModal(`
     <div class="flex items-center justify-between mb-3">
       <div>
-        <h2 class="text-xl font-bold">✅ 正式开工前检查</h2>
+        <h2 class="text-xl font-bold">✅ 当前批次开工前检查</h2>
         <div class="small mt-1">
           开始拣货/贴单前先看这里。红色项目必须处理。
         </div>
@@ -9733,6 +10200,14 @@ async function uploadShippingLabels(){
     if(!ready) throw new Error('云端订单表尚未初始化');
     await loadShippingWorkspace(true);
 
+    if(APP.shippingImportBusy){
+      throw new Error('订单仍在导入中，请等待完整核验通过后再上传面单。');
+    }
+
+    if(!APP.shippingActiveBatchSource || !APP.shippingOrders.length){
+      throw new Error('请先导入正确的客户订单清单，再上传面单。面单不能自动创建订单。');
+    }
+
     const resultEl=$('labelUploadResult');
     if(resultEl) resultEl.innerHTML='<div class="font-bold">正在逐页识别订单号、Tracking、SKU组合并匹配，请稍候...</div>';
 
@@ -9762,15 +10237,14 @@ async function uploadShippingLabels(){
         let order=match.order;
         let createdFromLabel=false;
 
-        // 没有客户详细订单表也没关系：只要面单本身能识别订单号/Tracking + SKU组合，
-        // 系统就直接从这一页创建真实订单。
-        if(!order && info.items?.length && (info.orderNo || info.referenceNo || info.tracking)){
-          order=await createOrRefreshOrderFromLabel(info,file.name);
-          if(order){
-            createdFromLabel=true;
-            created++;
-            match={order,reason:'由面单自动生成订单',confidence:'high'};
-          }
+        /*
+         * V5.8 生产锁：
+         * 面单永远不能创建订单。
+         * 当前批次必须先由客户订单 Excel 建立。
+         * 不属于当前批次的面单直接判定“未匹配”，绝不写入数据库。
+         */
+        if(!order){
+          createdFromLabel=false;
         }
 
         const skuText=labelItemsForDisplay(info);
@@ -9817,9 +10291,9 @@ async function uploadShippingLabels(){
 
     if(resultEl){
       resultEl.innerHTML=`
-        <div class="font-bold">共 ${totalPages} 页 · 已绑定 ${matched} · 面单自动建单 ${created} · 未匹配 ${unmatched}${mismatch?` · SKU不一致并拦截 ${mismatch}`:''}</div>
+        <div class="font-bold">共 ${totalPages} 页 · 已绑定 ${matched} · 未匹配 ${unmatched}${mismatch?` · SKU不一致并拦截 ${mismatch}`:''}</div>
         <div class="mt-2 small leading-6">${details.map(escapeHtml).join('<br>')}</div>
-        ${unmatched?'<div class="mt-3 bg-yellow-50 rounded-xl p-3 text-sm">⚠️ 未匹配页面不会上传，避免贴错地址。已有订单只要订单号或 Tracking 能精确匹配，即使这一页暂时没识别出 SKU，也允许重新绑定/替换面单；只有既匹配不到订单号/Tracking、又无法从 SKU 安全确定订单时才会保留为未匹配。</div>':''}
+        ${unmatched?'<div class="mt-3 bg-yellow-50 rounded-xl p-3 text-sm">⚠️ 未匹配页面不会上传。V5.8 只允许匹配当前订单批次；其他日期、其他客户、测试面单即使格式完全正确，也不会自动建单或进入贴单池。</div>':''}
       `;
     }
 
