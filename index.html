@@ -1005,7 +1005,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V7.1 · Cloud Warehouse
+          版本 V7.3 · Cloud Warehouse
         </div>
 
       </div>
@@ -1134,7 +1134,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V7.1-20260915-MULTIPIECE-LABEL-GUARD';
+const APP_VERSION = 'V7.3-20260915-YANWEN-SKU-PREFIX-FIX';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -9994,7 +9994,7 @@ function openLabelUpload(){
 
     <div class="bg-blue-50 rounded-xl p-3 text-sm mb-4">
       <div class="font-bold mb-1">支持多页面单自动识别</div>
-      <div>系统会逐页读取 PDF，并自动识别订单号 / Tracking No. / 面单中的 SKU。自动识别失败时，可对该页进行人工确认绑定。V7.1 对一票多件订单会强制核对 SKU 数、总件数和数量组合；只靠订单号/Tracking 命中也不会自动放行。</div>
+      <div>系统会逐页读取 PDF，并自动识别订单号 / Tracking No. / 面单中的 SKU。自动识别失败时，可对该页进行人工确认绑定。V7.3 已修复 GOFO 的分区代码/Tracking，以及 Yanwen 的 Ref2/重量被粘到 SKU 前面的情况；一票多件仍强制核对 SKU 数、总件数和数量组合。</div>
       <div class="mt-1">像 <b>JFK-CBS 12195-82*1</b> 会识别为 SKU <b>12195-82</b>、数量 <b>1</b>，多页面单会自动拆成一页一个 PDF 保存。</div>
     </div>
 
@@ -10010,10 +10010,60 @@ function normalizeTrackingValue(value){
   return String(value ?? '').replace(/[^0-9A-Za-z]/g,'').toLowerCase();
 }
 
-function parseLabelSkuToken(token){
-  let t=String(token||'')
+
+function cleanLabelSkuCandidate(value){
+
+  let t=String(value||'')
     .replace(/\u00a0/g,' ')
-    .trim()
+    .replace(/[ \t]+/g,' ')
+    .trim();
+
+  /*
+   * V7.2 / V7.3 面单前缀清理：
+   *
+   * GOFO 文字层可能把：
+   *   分区代码 + Tracking + SKU
+   * 拼在同一行，例如：
+   *   DL2 GFUS01073035087683 HFheige 55CM*1;
+   *
+   * Yanwen 文字层可能把：
+   *   Ref2 + 重量 + SKU
+   * 拼在同一行，例如：
+   *   FC2609152627161 0.15KG 60023heihua2HF*1;
+   *
+   * 这些前缀都不是 SKU，必须先剥掉。
+   */
+
+  // GOFO / SwiftX / Yanwen：分区代码 + Tracking
+  t=t.replace(
+    /^(?:[A-Z0-9-]{1,8}\s+)?(?:GFUS|YWE|SWX)\d{8,}\s+/i,
+    ''
+  );
+
+  // 只有 Tracking
+  t=t.replace(
+    /^(?:GFUS|YWE|SWX)\d{8,}\s+/i,
+    ''
+  );
+
+  // Yanwen：Ref2(FC...) + 重量，例如 0.15KG / 1.5KG
+  t=t.replace(
+    /^FC\d{8,}\s+\d+(?:\.\d+)?\s*KG\s+/i,
+    ''
+  );
+
+  // 极少数 PDF 只把重量粘到 SKU 前面
+  t=t.replace(
+    /^\d+(?:\.\d+)?\s*KG\s+/i,
+    ''
+  );
+
+  return t.trim();
+}
+
+
+function parseLabelSkuToken(token){
+  let t=cleanLabelSkuCandidate(token)
     .replace(/^[,;\s]+|[,;\s]+$/g,'')
     .replace(/[ \t]+/g,' ');
 
@@ -10063,6 +10113,9 @@ function extractLabelSkuItems(rawText){
     }
   }
   if(!candidate) return [];
+
+  // V7.2：先清理 GOFO 等面单把“分区代码 + Tracking”粘到 SKU 前面的情况。
+  candidate=cleanLabelSkuCandidate(candidate);
 
   /*
    * V5.7：兼容今天真实客户面单的一票多件格式。
