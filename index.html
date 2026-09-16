@@ -1007,7 +1007,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V8.8 · Cloud Warehouse
+          版本 V8.9 · Cloud Warehouse
         </div>
 
       </div>
@@ -5558,6 +5558,7 @@ function openImport(){
 
 
     <button
+      id="importStartBtn"
       class="btn btn-purple w-full"
       onclick="runImport('items')">
       开始导入
@@ -5565,10 +5566,41 @@ function openImport(){
 
 
     <button
+      id="importCancelBtn"
       class="btn btn-gray w-full mt-2"
       onclick="closeModal()">
       取消
     </button>
+
+
+    <div
+      id="importProgressWrap"
+      class="hidden mt-4">
+
+      <div class="flex items-center justify-between text-sm mb-2">
+        <div id="importProgressText" class="font-bold text-blue-700">准备中...</div>
+        <div id="importProgressPercent" class="font-bold">0%</div>
+      </div>
+
+      <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+        <div
+          id="importProgressBar"
+          class="h-3 bg-blue-600 rounded-full"
+          style="width:0%">
+        </div>
+      </div>
+
+      <div
+        id="importProgressStats"
+        class="small mt-2">
+        新建 0｜覆盖 0｜一致 0｜恢复 0｜错误 0
+      </div>
+
+      <div class="small mt-1 text-gray-500">
+        导入过程中请不要关闭页面。中途断网也可以重新导入同一份文件，不会重复累加库存。
+      </div>
+
+    </div>
 
 
     <div
@@ -5649,6 +5681,66 @@ function importNumber(value){
 }
 
 
+function setImportBusy(busy){
+
+  const startBtn = $('importStartBtn');
+  const cancelBtn = $('importCancelBtn');
+  const fileInput = $('importFile');
+
+  if(startBtn){
+    startBtn.disabled = !!busy;
+    startBtn.classList.toggle('opacity-50',!!busy);
+    startBtn.textContent = busy ? '正在导入，请稍候...' : '开始导入';
+  }
+
+  if(cancelBtn){
+    cancelBtn.disabled = !!busy;
+    cancelBtn.classList.toggle('opacity-50',!!busy);
+  }
+
+  if(fileInput){
+    fileInput.disabled = !!busy;
+  }
+
+}
+
+
+function updateImportProgress(current,total,stats={}){
+
+  const wrap = $('importProgressWrap');
+  const text = $('importProgressText');
+  const percentEl = $('importProgressPercent');
+  const bar = $('importProgressBar');
+  const statsEl = $('importProgressStats');
+
+  if(wrap){
+    wrap.classList.remove('hidden');
+  }
+
+  const safeTotal = Math.max(1,Number(total)||1);
+  const safeCurrent = Math.min(safeTotal,Math.max(0,Number(current)||0));
+  const percent = Math.min(100,Math.round((safeCurrent/safeTotal)*100));
+
+  if(text){
+    text.textContent = `正在导入 ${safeCurrent} / ${safeTotal}`;
+  }
+
+  if(percentEl){
+    percentEl.textContent = `${percent}%`;
+  }
+
+  if(bar){
+    bar.style.width = `${percent}%`;
+  }
+
+  if(statsEl){
+    statsEl.textContent =
+      `新建 ${stats.created||0}｜覆盖 ${stats.overwritten||0}｜一致 ${stats.unchanged||0}｜恢复 ${stats.restored||0}｜错误 ${stats.errors||0}`;
+  }
+
+}
+
+
 async function runImport(type){
 
   if(type !== 'items'){
@@ -5676,6 +5768,26 @@ async function runImport(type){
 
 
   try{
+
+    setImportBusy(true);
+
+    const resultBox = $('importResult');
+    if(resultBox){
+      resultBox.innerHTML = '';
+    }
+
+    updateImportProgress(0,1,{
+      created:0,
+      overwritten:0,
+      unchanged:0,
+      restored:0,
+      errors:0
+    });
+
+    const progressText = $('importProgressText');
+    if(progressText){
+      progressText.textContent = '正在读取文件...';
+    }
 
     showInfo(
       '正在读取文件...'
@@ -5987,6 +6099,14 @@ async function runImport(type){
       `正在安全导入 ${prepared.length} 条...`
     );
 
+    updateImportProgress(0,prepared.length,{
+      created:0,
+      overwritten:0,
+      unchanged:0,
+      restored:0,
+      errors:prepareErrors.length
+    });
+
 
     /*
      * 导入前重新读取一次云端库存，避免手机页面上的旧缓存造成误判。
@@ -6264,6 +6384,32 @@ async function runImport(type){
       }
 
 
+      updateImportProgress(
+        i + 1,
+        prepared.length,
+        {
+          created,
+          overwritten,
+          unchanged,
+          restored,
+          errors:errors.length
+        }
+      );
+
+      /*
+       * 每一条都更新可视进度；每 10 条让出主线程一次，
+       * 让 iPhone Safari 有机会真正把进度条画出来。
+       */
+      if(
+        i > 0 &&
+        i % 10 === 0
+      ){
+        await new Promise(
+          resolve=>setTimeout(resolve,0)
+        );
+      }
+
+
       /*
        * 大文件导入时偶尔让出主线程，降低 iPhone Safari 假死概率。
        */
@@ -6287,6 +6433,25 @@ async function runImport(type){
     await loadLogs({silent:true});
     renderLogs();
 
+
+    updateImportProgress(
+      prepared.length,
+      prepared.length,
+      {
+        created,
+        overwritten,
+        unchanged,
+        restored,
+        errors:errors.length
+      }
+    );
+
+    const progressTextDone = $('importProgressText');
+    if(progressTextDone){
+      progressTextDone.textContent = '导入完成';
+    }
+
+    setImportBusy(false);
 
     const success =
       created +
