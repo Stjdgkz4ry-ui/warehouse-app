@@ -1005,7 +1005,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V6.6 · Cloud Warehouse
+          版本 V6.7 · Cloud Warehouse
         </div>
 
       </div>
@@ -1134,7 +1134,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V6.6-20260915-FULL-AUDIT-LOG';
+const APP_VERSION = 'V6.7-20260915-AUDIT-DELETE';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -4826,15 +4826,23 @@ function renderLogs(){
 
                 <button
                   class="btn btn-red btn-small"
-                  onclick="deleteStockLog('${log.id}')">
+                  onclick="deleteWarehouseLog('${log.id}','stock_logs')">
                   🗑️ 删除记录
                 </button>
 
               </div>
             `
             : `
-              <div class="small mt-3 text-gray-400">
-                系统操作记录
+              <div class="flex items-center justify-between gap-2 mt-3">
+                <div class="small text-gray-400">
+                  系统操作记录
+                </div>
+
+                <button
+                  class="btn btn-red btn-small"
+                  onclick="deleteWarehouseLog('${log.id}','warehouse_audit_logs')">
+                  🗑️ 删除记录
+                </button>
               </div>
             `
           }
@@ -4973,40 +4981,43 @@ async function saveStockLogNote(id){
 }
 
 
-async function deleteStockLog(id){
+
+async function deleteWarehouseLog(id,table){
+
+  const allowed=[
+    'stock_logs',
+    'warehouse_audit_logs'
+  ];
+
+  if(!allowed.includes(table)){
+    return showError('无效的流水类型');
+  }
 
   const log=
     APP.logs.find(
-      x=>x.id===id
+      x=>x.id===id &&
+      x._source_table===table
     );
 
   if(!log){
-    return showError(
-      '流水记录不存在'
-    );
+    return showError('流水记录不存在');
   }
 
-  const ok=
-    confirm(
-      '确定删除这条库存流水吗？\n\n注意：删除流水不会自动恢复库存数量。'
-    );
+  const ok=confirm(
+    '确定删除这条流水记录吗？\n\n只删除流水记录，不会改变当前库存数量。'
+  );
 
-  if(!ok){
-    return;
-  }
+  if(!ok) return;
 
   try{
 
-    showInfo('正在删除...');
+    showInfo('正在删除流水...');
 
     const {error}=
       await APP.sb
-        .from('stock_logs')
+        .from(table)
         .delete()
-        .eq(
-          'id',
-          id
-        )
+        .eq('id',id)
         .eq(
           'warehouse_id',
           APP.warehouse.id
@@ -5025,13 +5036,17 @@ async function deleteStockLog(id){
     console.error(error);
 
     showError(
-      '删除失败：' +
-      (
-        error.message ||
-        '请检查数据库权限'
-      )
+      '删除流水失败：' +
+      (error.message || '请检查数据库权限')
     );
   }
+}
+
+async function deleteStockLog(id){
+  return deleteWarehouseLog(
+    id,
+    'stock_logs'
+  );
 }
 
 
