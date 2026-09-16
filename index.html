@@ -1005,7 +1005,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V6.7 · Cloud Warehouse
+          版本 V6.8 · Cloud Warehouse
         </div>
 
       </div>
@@ -1134,7 +1134,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V6.7-20260915-AUDIT-DELETE';
+const APP_VERSION = 'V6.8-20260915-LOG-RLS-VERIFY';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -4785,6 +4785,15 @@ function renderLogs(){
               </div>
 
               ${
+                log._source_table==='stock_logs' &&
+                !item
+                ? `<div class="text-xs text-orange-600 mt-1">
+                    ⚠️ 原商品已删除/下架，这是保留下来的历史库存流水
+                  </div>`
+                : ''
+              }
+
+              ${
                 note
                 ? `<div class="text-sm text-gray-600 mt-2">
                     🧾 流水备注：${escapeHtml(note)}
@@ -4941,7 +4950,7 @@ async function saveStockLogNote(id){
       throw new Error('找不到这条流水');
     }
 
-    const {error}=
+    const {data,error}=
       await APP.sb
         .from('stock_logs')
         .update({
@@ -4954,10 +4963,17 @@ async function saveStockLogNote(id){
         .eq(
           'warehouse_id',
           APP.warehouse.id
-        );
+        )
+        .select('id');
 
     if(error){
       throw error;
+    }
+
+    if(!data || !data.length){
+      throw new Error(
+        '数据库没有允许修改这条记录。请先运行 V6.8 的 stock_logs 权限 SQL。'
+      );
     }
 
     closeModal();
@@ -5013,7 +5029,7 @@ async function deleteWarehouseLog(id,table){
 
     showInfo('正在删除流水...');
 
-    const {error}=
+    const {data,error}=
       await APP.sb
         .from(table)
         .delete()
@@ -5021,10 +5037,17 @@ async function deleteWarehouseLog(id,table){
         .eq(
           'warehouse_id',
           APP.warehouse.id
-        );
+        )
+        .select('id');
 
     if(error){
       throw error;
+    }
+
+    if(!data || !data.length){
+      throw new Error(
+        '数据库没有允许删除这条记录。请先运行 V6.8 的 stock_logs 权限 SQL。'
+      );
     }
 
     await loadLogs();
