@@ -1022,7 +1022,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V9.2 · Cloud Warehouse
+          版本 V9.3 · Cloud Warehouse
         </div>
 
       </div>
@@ -1152,7 +1152,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V9.2-20260916-PACKING-PROGRESS-AUTO-OUTBOUND';
+const APP_VERSION = 'V9.3-20260916-PACKING-PROGRESS-AUTO-OUTBOUND';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1182,6 +1182,9 @@ const APP = {
   scanner:null,
 
   scannerRunning:false,
+  cameraScanBusy:false,
+  cameraLastDecoded:'',
+  cameraLastDecodedAt:0,
 
   pickingRows:[],
 
@@ -1388,7 +1391,7 @@ function naturalCompare(a,b){
 
 
 /* =========================================================
-   V9.2 仓库物理路线排序
+   V9.3 仓库物理路线排序
    例：A2-1-1、A2-1-2、A2-1-3 是同一个货架的三层，
    必须连续拣完，再去 A2-2-*。
 ========================================================= */
@@ -5271,6 +5274,57 @@ function openInboundScanner(){
 }
 
 
+function compactSkuKey(value){
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-_.\/\\]+/g,'');
+}
+
+function resolveUniqueScannedSku(raw,skuList){
+  const exact=normalizeShippingKey(raw);
+  const unique=[...new Set((skuList||[]).map(x=>String(x??'').trim()).filter(Boolean))];
+  const exactHit=unique.find(x=>normalizeShippingKey(x)===exact);
+  if(exactHit) return exactHit;
+
+  const compact=compactSkuKey(raw);
+  if(!compact) return null;
+
+  const hits=unique.filter(x=>compactSkuKey(x)===compact);
+  return hits.length===1 ? hits[0] : null;
+}
+
+function warehouseScannerFormats(){
+  const F=window.Html5QrcodeSupportedFormats;
+  if(!F) return undefined;
+  return [
+    'CODE_128','CODE_39','CODE_93','CODABAR','ITF',
+    'EAN_13','EAN_8','UPC_A','UPC_E','QR_CODE','DATA_MATRIX'
+  ].map(k=>F[k]).filter(v=>v!==undefined && v!==null);
+}
+
+function createWarehouseScanner(readerId='reader'){
+  const cfg={verbose:false};
+  const formats=warehouseScannerFormats();
+  if(formats?.length) cfg.formatsToSupport=formats;
+  try{
+    if('BarcodeDetector' in window){
+      cfg.experimentalFeatures={useBarCodeDetectorIfSupported:true};
+    }
+  }catch(e){}
+  return new Html5Qrcode(readerId,cfg);
+}
+
+function warehouseCameraScanConfig(){
+  const w=Math.max(220,Math.min(420,(window.innerWidth||360)-56));
+  return {
+    fps:20,
+    qrbox:{width:w,height:130},
+    aspectRatio:1.777778,
+    disableFlip:true
+  };
+}
+
 async function startInboundScanner(){
 
   if(!window.Html5Qrcode){
@@ -5284,7 +5338,7 @@ async function startInboundScanner(){
     }
 
     APP.scanner=
-      new Html5Qrcode('reader');
+      createWarehouseScanner('reader');
 
     APP.scannerRunning=true;
 
@@ -5292,13 +5346,7 @@ async function startInboundScanner(){
 
       {facingMode:'environment'},
 
-      {
-        fps:15,
-        qrbox:{
-          width:280,
-          height:160
-        }
-      },
+      warehouseCameraScanConfig(),
 
       async decodedText=>{
 
@@ -5311,11 +5359,17 @@ async function startInboundScanner(){
 
         await stopScanner();
 
+        const resolvedSku=resolveUniqueScannedSku(
+          sku,
+          activeInventory().map(item=>item.sku)
+        );
+
         const matches=
           activeInventory()
             .filter(item=>
+              resolvedSku &&
               normalizeShippingKey(item.sku)===
-              normalizeShippingKey(sku)
+              normalizeShippingKey(resolvedSku)
             )
             .sort((a,b)=>
               naturalCompare(
@@ -5498,9 +5552,7 @@ async function startScanner(){
   try{
 
     APP.scanner =
-      new Html5Qrcode(
-        'reader'
-      );
+      createWarehouseScanner('reader');
 
 
     await APP.scanner.start(
@@ -5510,15 +5562,7 @@ async function startScanner(){
           'environment'
       },
 
-      {
-        fps:10,
-
-        qrbox:{
-          width:250,
-          height:180
-        }
-
-      },
+      warehouseCameraScanConfig(),
 
       decodedText => {
 
@@ -5595,6 +5639,8 @@ async function stopScanner(){
 
   APP.scanner =
     null;
+
+  APP.cameraScanBusy=false;
 
 }
 
@@ -8581,7 +8627,7 @@ function buildPrintTable(){
       .slice(0,10);
 
   /*
-   * V9.2：每个快递公司独立一页。
+   * V9.3：每个快递公司独立一页。
    * 页面里不再每一行重复显示快递公司。
    * 拣货表只保留“库位 + SKU”，数量直接写在 SKU 后面。
    */
@@ -13511,13 +13557,26 @@ async function startCustomScanner(onDecode){
   if(!window.Html5Qrcode) return showError('扫码组件加载失败');
   try{
     if(APP.scannerRunning) await stopScanner();
-    APP.scanner=new Html5Qrcode('reader');
+    APP.scanner=createWarehouseScanner('reader');
     APP.scannerRunning=true;
     await APP.scanner.start(
       {facingMode:'environment'},
-      {fps:10,qrbox:{width:250,height:180}},
+      warehouseCameraScanConfig(),
       async decodedText=>{
-        try{ await onDecode(decodedText); }catch(e){ console.error(e); }
+        const code=String(decodedText||'').trim();
+        if(!code || APP.cameraScanBusy) return;
+        const now=Date.now();
+        if(APP.cameraLastDecoded===code && now-APP.cameraLastDecodedAt<350) return;
+        APP.cameraScanBusy=true;
+        APP.cameraLastDecoded=code;
+        APP.cameraLastDecodedAt=now;
+        try{
+          await onDecode(code);
+        }catch(e){
+          console.error(e);
+        }finally{
+          setTimeout(()=>{ APP.cameraScanBusy=false; },180);
+        }
       },
       ()=>{}
     );
@@ -14424,11 +14483,11 @@ function activateHardwareScanner(){
 
       /*
        * 扫码枪字符一般非常快。
-       * 间隔超过 180ms 时重新开始一条条码。
+       * 兼容较慢扫码枪：字符间隔超过 650ms 才认为是新条码。
        */
       if(
         APP.hardwareScannerLastKeyAt &&
-        now-APP.hardwareScannerLastKeyAt>180
+        now-APP.hardwareScannerLastKeyAt>650
       ){
         APP.hardwareScannerBuffer='';
       }
@@ -14477,7 +14536,7 @@ function activateHardwareScanner(){
 
         /*
          * 有些扫码枪不带回车。
-         * 停止输入 120ms 后自动提交。
+         * 不带回车的扫码枪，停止输入 260ms 后自动提交，避免条码被截断。
          */
         APP.hardwareScannerTimer=
           setTimeout(()=>{
@@ -14489,7 +14548,7 @@ function activateHardwareScanner(){
               submitHardwareScannerBuffer();
             }
 
-          },120);
+          },260);
 
       }
 
@@ -14811,7 +14870,7 @@ async function openPackingScanner(){
       </div>
 
       <div class="small mt-1">
-        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。电脑端只走打印桥直接出纸；打印桥未连接时会立即报错并停止，不会再弹浏览器打印窗口。扫错/超量会发错误音并拦截。
+        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。V9.3 已优化慢速扫码枪、连续扫码和常见一维条码识别；条码如果只是少了连字符/空格，也会在唯一匹配时自动识别。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。电脑端只走打印桥直接出纸；打印桥未连接时会立即报错并停止，不会再弹浏览器打印窗口。扫错/超量会发错误音并拦截。
       </div>
 
       <div id="hardwareScannerLast" class="small mt-2 text-gray-600">
@@ -14926,7 +14985,7 @@ async function handlePackingScan(code){
     manualInput.value='';
   }
 
-  const value=
+  let value=
     normalizeShippingKey(raw);
 
   if(!value){
@@ -14971,16 +15030,18 @@ async function handlePackingScan(code){
   /*
    * 否则按商品 SKU 进入扫码货物池。
    */
-  const known=
-    APP.shippingItems.some(item=>
-      normalizeShippingKey(item.sku)===value
-    );
+  const resolvedSku=resolveUniqueScannedSku(
+    raw,
+    APP.shippingItems.map(item=>item.sku)
+  );
 
-  if(!known){
+  if(!resolvedSku){
     return packingScanError(
       `没有找到 SKU：${raw}`
     );
   }
+
+  value=normalizeShippingKey(resolvedSku);
 
   loadPackPool();
   sanitizePackPoolAgainstDemand();
