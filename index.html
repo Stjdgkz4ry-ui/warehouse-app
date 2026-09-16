@@ -1005,7 +1005,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V7.3 · Cloud Warehouse
+          版本 V7.4 · Cloud Warehouse
         </div>
 
       </div>
@@ -1134,7 +1134,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V7.3-20260915-YANWEN-SKU-PREFIX-FIX';
+const APP_VERSION = 'V7.4-20260915-LABEL-UPLOAD-PROGRESS';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -9993,14 +9993,55 @@ function openLabelUpload(){
     </div>
 
     <div class="bg-blue-50 rounded-xl p-3 text-sm mb-4">
-      <div class="font-bold mb-1">支持多页面单自动识别</div>
-      <div>系统会逐页读取 PDF，并自动识别订单号 / Tracking No. / 面单中的 SKU。自动识别失败时，可对该页进行人工确认绑定。V7.3 已修复 GOFO 的分区代码/Tracking，以及 Yanwen 的 Ref2/重量被粘到 SKU 前面的情况；一票多件仍强制核对 SKU 数、总件数和数量组合。</div>
-      <div class="mt-1">像 <b>JFK-CBS 12195-82*1</b> 会识别为 SKU <b>12195-82</b>、数量 <b>1</b>，多页面单会自动拆成一页一个 PDF 保存。</div>
+      <div class="font-bold mb-1">面单处理流程</div>
+      <div>1. 读取 PDF 页数</div>
+      <div>2. 逐页识别订单号 / Tracking / SKU</div>
+      <div>3. 核对当前批次订单与一票多件数量</div>
+      <div>4. 匹配成功后拆页并上传</div>
+      <div>5. 无法自动确认的页面进入“人工确认”</div>
     </div>
 
     <input id="shippingLabelFiles" type="file" accept="application/pdf,.pdf" multiple>
 
-    <button class="btn btn-blue w-full mt-4" onclick="uploadShippingLabels()">🤖 自动识别、拆页并上传</button>
+    <div id="labelUploadProgressBox" class="hidden mt-4 bg-gray-50 rounded-xl p-3">
+      <div class="flex items-center justify-between gap-3">
+        <div id="labelUploadProgressTitle" class="font-bold">等待开始</div>
+        <div id="labelUploadProgressPct" class="text-sm font-bold">0%</div>
+      </div>
+
+      <div class="h-3 bg-gray-200 rounded-full mt-2 overflow-hidden">
+        <div
+          id="labelUploadProgressBar"
+          class="h-full bg-blue-600"
+          style="width:0%">
+        </div>
+      </div>
+
+      <div id="labelUploadProgressText" class="small mt-2">
+        0 / 0 页
+      </div>
+
+      <div class="grid grid-cols-4 gap-2 mt-3 text-center text-xs">
+        <div class="bg-white rounded-lg p-2">
+          <div class="font-bold" id="labelProgressProcessed">0</div>
+          <div>已处理</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-2">
+          <div class="font-bold text-green-700" id="labelProgressMatched">0</div>
+          <div>已绑定</div>
+        </div>
+        <div class="bg-yellow-50 rounded-lg p-2">
+          <div class="font-bold text-yellow-700" id="labelProgressManual">0</div>
+          <div>待人工</div>
+        </div>
+        <div class="bg-red-50 rounded-lg p-2">
+          <div class="font-bold text-red-700" id="labelProgressFailed">0</div>
+          <div>失败</div>
+        </div>
+      </div>
+    </div>
+
+    <button id="labelUploadStartBtn" class="btn btn-blue w-full mt-4" onclick="uploadShippingLabels()">🤖 自动识别、拆页并上传</button>
     <button class="btn btn-gray w-full mt-2" onclick="closeModal()">取消</button>
     <div id="labelUploadResult" class="mt-3 text-sm"></div>
   `);
@@ -10875,6 +10916,87 @@ function labelRequirementStats(items){
   };
 }
 
+
+function updateLabelUploadProgress({
+  stage='处理中',
+  processed=0,
+  total=0,
+  matched=0,
+  manual=0,
+  failed=0
+}={}){
+
+  const box=$('labelUploadProgressBox');
+  if(box){
+    box.classList.remove('hidden');
+  }
+
+  const pct=
+    total>0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(
+              processed/total*100
+            )
+          )
+        )
+      : 0;
+
+  if($('labelUploadProgressTitle')){
+    $('labelUploadProgressTitle').textContent=stage;
+  }
+
+  if($('labelUploadProgressPct')){
+    $('labelUploadProgressPct').textContent=`${pct}%`;
+  }
+
+  if($('labelUploadProgressBar')){
+    $('labelUploadProgressBar').style.width=`${pct}%`;
+  }
+
+  if($('labelUploadProgressText')){
+    $('labelUploadProgressText').textContent=
+      `${processed} / ${total} 页`;
+  }
+
+  if($('labelProgressProcessed')){
+    $('labelProgressProcessed').textContent=processed;
+  }
+
+  if($('labelProgressMatched')){
+    $('labelProgressMatched').textContent=matched;
+  }
+
+  if($('labelProgressManual')){
+    $('labelProgressManual').textContent=manual;
+  }
+
+  if($('labelProgressFailed')){
+    $('labelProgressFailed').textContent=failed;
+  }
+}
+
+
+function setLabelUploadBusy(busy){
+
+  const btn=$('labelUploadStartBtn');
+  const input=$('shippingLabelFiles');
+
+  if(btn){
+    btn.disabled=!!busy;
+    btn.textContent=
+      busy
+      ? '⏳ 正在处理面单，请勿关闭页面'
+      : '🤖 自动识别、拆页并上传';
+  }
+
+  if(input){
+    input.disabled=!!busy;
+  }
+}
+
 async function uploadShippingLabels(){
   const input=$('shippingLabelFiles');
   const files=Array.from(input?.files||[]);
@@ -10897,10 +11019,25 @@ async function uploadShippingLabels(){
     }
 
     const resultEl=$('labelUploadResult');
-    if(resultEl) resultEl.innerHTML='<div class="font-bold">正在逐页识别订单号、Tracking、SKU组合并匹配，请稍候...</div>';
+    if(resultEl){
+      resultEl.innerHTML='<div class="font-bold">正在准备面单...</div>';
+    }
+
+    setLabelUploadBusy(true);
 
     let matched=0,created=0,unmatched=0,totalPages=0,mismatch=0;
+    let processedPages=0;
+    let failedPages=0;
     const details=[];
+
+    updateLabelUploadProgress({
+      stage:'正在读取 PDF 页数',
+      processed:0,
+      total:0,
+      matched:0,
+      manual:0,
+      failed:0
+    });
 
     /*
      * V5.5 修复：
@@ -10915,11 +11052,60 @@ async function uploadShippingLabels(){
      */
     const alreadyAssigned=new Set();
 
+    const filePageGroups=[];
+
     for(const file of files){
-      const pages=await extractPdfPages(file);
+
+      updateLabelUploadProgress({
+        stage:`正在读取 ${file.name}`,
+        processed:0,
+        total:totalPages,
+        matched,
+        manual:unmatched,
+        failed:failedPages
+      });
+
+      const pages=
+        await extractPdfPages(file);
+
       totalPages+=pages.length;
 
+      filePageGroups.push({
+        file,
+        pages
+      });
+    }
+
+    updateLabelUploadProgress({
+      stage:'开始逐页面单识别',
+      processed:0,
+      total:totalPages,
+      matched,
+      manual:unmatched,
+      failed:failedPages
+    });
+
+    for(const group of filePageGroups){
+
+      const file=group.file;
+      const pages=group.pages;
+
       for(const page of pages){
+
+        updateLabelUploadProgress({
+          stage:`正在处理 ${file.name} 第 ${page.pageNo} 页`,
+          processed:processedPages,
+          total:totalPages,
+          matched,
+          manual:unmatched,
+          failed:failedPages
+        });
+
+        // 给 Safari 一个机会刷新进度界面，避免看起来“卡死”
+        await new Promise(
+          resolve=>setTimeout(resolve,0)
+        );
+
         const info=page.info;
         let match=findOrderForLabelContent(info,alreadyAssigned);
         let order=match.order;
@@ -10953,6 +11139,17 @@ async function uploadShippingLabels(){
             kind:'manual',
             text:`❌ ${file.name} 第${page.pageNo}页：${orderText} · ${skuText} · ${trackText} · ${match.reason}`,
             manualId
+          });
+
+          processedPages++;
+
+          updateLabelUploadProgress({
+            stage:'需要人工确认',
+            processed:processedPages,
+            total:totalPages,
+            matched,
+            manual:unmatched,
+            failed:failedPages
           });
 
           continue;
@@ -11033,6 +11230,17 @@ async function uploadShippingLabels(){
             manualId
           });
 
+          processedPages++;
+
+          updateLabelUploadProgress({
+            stage:'需要人工确认',
+            processed:processedPages,
+            total:totalPages,
+            matched,
+            manual:unmatched,
+            failed:failedPages
+          });
+
           continue;
         }
 
@@ -11040,6 +11248,16 @@ async function uploadShippingLabels(){
         await uploadOneShippingLabelPage(order,page,pageFileName);
         alreadyAssigned.add(order.id);
         matched++;
+        processedPages++;
+
+        updateLabelUploadProgress({
+          stage:'已识别并绑定',
+          processed:processedPages,
+          total:totalPages,
+          matched,
+          manual:unmatched,
+          failed:failedPages
+        });
 
         const hadOldLabel=
           APP.shippingLabels.some(
@@ -11092,12 +11310,49 @@ async function uploadShippingLabels(){
       `;
     }
 
+    updateLabelUploadProgress({
+      stage:
+        unmatched
+        ? '处理完成：有页面需要人工确认'
+        : '✅ 全部面单处理完成',
+      processed:processedPages,
+      total:totalPages,
+      matched,
+      manual:unmatched,
+      failed:failedPages
+    });
+
     await loadShippingWorkspace(true);
-    showOk(`面单处理完成：${matched}/${totalPages} 页已绑定`);
+
+    showOk(
+      unmatched
+      ? `面单处理完成：已绑定 ${matched} / ${totalPages}，待人工 ${unmatched}`
+      : `面单处理完成：${matched}/${totalPages} 页全部绑定`
+    );
 
   }catch(error){
+
     console.error(error);
-    showError('面单处理失败：'+(error.message||'未知错误'));
+
+    failedPages++;
+
+    updateLabelUploadProgress({
+      stage:'❌ 处理发生错误',
+      processed:processedPages,
+      total:totalPages,
+      matched,
+      manual:unmatched,
+      failed:failedPages
+    });
+
+    showError(
+      '面单处理失败：'+
+      (error.message||'未知错误')
+    );
+
+  }finally{
+
+    setLabelUploadBusy(false);
   }
 }
 
