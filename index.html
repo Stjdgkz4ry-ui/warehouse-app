@@ -870,6 +870,7 @@ th{
             <button class="btn btn-blue" onclick="openPackingScanner()">🖨️ 扫码贴单</button>
             <button class="btn btn-yellow" onclick="openShippingPickAudit()">📋 配货表校验</button>
             <button class="btn btn-gray" onclick="openProductionPreflight()">✅ 开工前检查</button>
+            <button class="btn btn-gray" onclick="openArchiveHistory()">📚 历史 / 已归档</button>
           </div>
 
           <div class="small mt-3 text-gray-500">
@@ -1006,7 +1007,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V8.6 · Cloud Warehouse
+          版本 V8.7 · Cloud Warehouse
         </div>
 
       </div>
@@ -1136,7 +1137,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V8.6-20260916-ARCHIVE-VISIBLE-FIX';
+const APP_VERSION = 'V8.7-20260916-IMPORT-RESTORE-ARCHIVE-RPC';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -8886,6 +8887,27 @@ async function syncShippingBatchSummaries(){
 }
 
 
+
+async function openArchiveHistory(){
+
+  try{
+    await loadShippingBatchHistory(false);
+  }catch(error){
+    console.error(error);
+  }
+
+  const el=
+    $('shippingBatchHistory');
+
+  if(el){
+    el.scrollIntoView({
+      behavior:'smooth',
+      block:'start'
+    });
+  }
+}
+
+
 async function loadShippingBatchHistory(silent=true){
 
   if(!APP.warehouse || !APP.shippingCloudReady){
@@ -8895,38 +8917,56 @@ async function loadShippingBatchHistory(silent=true){
 
   try{
 
-    // 每次查看/刷新批次记录前，先把当前云端真实进度同步到永久批次表。
-    await syncShippingBatchSummaries();
-
     const {data,error}=
-      await APP.sb
-        .from('shipping_batches')
-        .select('*')
-        .eq('warehouse_id',APP.warehouse.id)
-        .order('created_at',{ascending:false})
-        .limit(500);
+      await APP.sb.rpc(
+        'list_shipping_batches_v87',
+        {
+          p_warehouse_id:APP.warehouse.id
+        }
+      );
 
     if(error){
-      throw new Error(
-        'V8.2 永久批次记录尚未初始化，请先运行 V8.2 SQL。'
-      );
+      throw error;
     }
 
-    APP.shippingBatchRows=data||[];
+    APP.shippingBatchRows=
+      (data||[])
+        .map(row=>({
+          id:
+            `${row.source_file||''}|${row.order_date||''}`,
+          warehouse_id:APP.warehouse.id,
+          source_file:row.source_file||'',
+          order_date:row.order_date||'',
+          order_count:safeNumber(row.order_count,0),
+          piece_count:safeNumber(row.piece_count,0),
+          picked_piece_count:safeNumber(row.picked_piece_count,0),
+          label_count:safeNumber(row.label_count,0),
+          completed_count:safeNumber(row.completed_count,0),
+          shipped_count:safeNumber(row.shipped_count,0),
+          archived_count:safeNumber(row.archived_count,0),
+          status:row.status||'active',
+          created_at:row.created_at,
+          updated_at:row.updated_at
+        }));
 
     renderShippingBatchHistory();
     enforceCurrentPageVisibility();
 
   }catch(error){
 
-    console.error(error);
+    console.error(
+      '加载批次历史失败：',
+      error
+    );
 
     if(!silent){
       showError(
-        '加载永久批次记录失败：'+
+        '加载历史 / 已归档批次失败：'+
         (error.message||'')
       );
     }
+
+    renderShippingBatchHistory();
   }
 }
 
@@ -8947,15 +8987,7 @@ function buildShippingBatchHistory(){
       completed:safeNumber(row.completed_count,0),
       shipped:safeNumber(row.shipped_count,0),
       archivedCount:safeNumber(row.archived_count,0),
-      status:(
-        safeNumber(row.archived_count,0)>0 &&
-        (
-          safeNumber(row.archived_count,0)+
-          safeNumber(row.shipped_count,0)
-        )>=safeNumber(row.order_count,0)
-      )
-        ? 'archived'
-        : (row.status||'active')
+      status:row.status||'active'
     }));
 }
 
@@ -9863,123 +9895,385 @@ function renderShippingImportProgress(current,total,label){
 
 async function saveImportedOrdersToCloud(parsedOrders, sourceFile){
 
-  const ready = await checkShippingCloud();
+  const ready=
+    await checkShippingCloud();
+
   if(!ready){
-    throw new Error('云端订单表尚未初始化');
+    throw new Error(
+      '云端订单表尚未初始化'
+    );
   }
 
   if(!APP.warehouse?.id){
-    throw new Error('请先选择仓库');
+    throw new Error(
+      '请先选择仓库'
+    );
   }
 
-  const orders=(parsedOrders||[])
-    .filter(x=>String(x.orderNo||'').trim());
+  const orders=
+    (parsedOrders||[])
+      .filter(
+        x=>
+          String(
+            x.orderNo||''
+          ).trim()
+      );
 
   if(!orders.length){
-    throw new Error('没有可导入订单');
+    throw new Error(
+      '没有可导入订单'
+    );
   }
 
-  const warehouseId=APP.warehouse.id;
-  const orderDate=$('pickOrderDate')?.value || shippingDateToday();
+  const warehouseId=
+    APP.warehouse.id;
 
-  /*
-   * V5.9 稳定批量导入：
-   * - 不再一单一单网络请求
-   * - 一个文件只生成一个批次
-   * - 订单批量保存，商品明细批量保存
-   * - 最后核验订单数和总件数
-   * - 任何一步失败，调用方会清理本批残留
-   */
+  const orderDate=
+    $('pickOrderDate')?.value ||
+    shippingDateToday();
 
   renderShippingImportProgress(
     0,
     orders.length,
-    '正在检查订单'
+    '正在检查云端是否已有这些订单'
   );
 
-  // 安全检查：如果相同订单号已经存在于别的未出库批次，直接停下来。
-  // 不自动覆盖旧订单，避免把历史批次改成今天的批次。
-  const orderNos=orders.map(x=>String(x.orderNo||'').trim());
-  const existingConflicts=[];
+  const orderNos=
+    orders.map(
+      x=>
+        String(
+          x.orderNo||''
+        ).trim()
+    );
 
-  for(const chunk of chunkArray(orderNos,100)){
-    const {data,error}=await APP.sb
-      .from('shipping_orders')
-      .select('order_no,source_file,status')
-      .eq('warehouse_id',warehouseId)
-      .eq('is_archived',false)
-      .in('order_no',chunk)
-      .neq('status','shipped');
+  /*
+   * V8.7：
+   * shipping_orders 有 (warehouse_id, order_no) 唯一约束。
+   * 所以“归档”以后再导入同一份 344 单，不能重新 INSERT。
+   * 正确做法是：
+   * 1. 如果 344 个订单全部来自同一个已归档旧批次 -> 直接恢复旧批次；
+   * 2. 如果发现活动中的重复订单 -> 停止，避免混单；
+   * 3. 如果只有部分订单存在 -> 停止，不做半截覆盖。
+   */
+  const existing=[];
 
-    if(error) throw error;
+  for(
+    const chunk of chunkArray(
+      orderNos,
+      100
+    )
+  ){
 
-    (data||[]).forEach(row=>{
-      if(String(row.source_file||'')!==String(sourceFile||'')){
-        existingConflicts.push(row);
-      }
-    });
-  }
+    const {data,error}=
+      await APP.sb
+        .from('shipping_orders')
+        .select(
+          'id,order_no,source_file,order_date,status,is_archived,tracking_no'
+        )
+        .eq(
+          'warehouse_id',
+          warehouseId
+        )
+        .in(
+          'order_no',
+          chunk
+        );
 
-  if(existingConflicts.length){
-    throw new Error(
-      `发现 ${existingConflicts.length} 个订单号已存在于其他未完成批次。为防止混单，已停止导入。请先清理旧测试批次。`
+    if(error){
+      throw error;
+    }
+
+    existing.push(
+      ...(data||[])
     );
   }
 
-  // V6.0：禁止导入流程自动删除任何已有批次数据。
-  // 若发现异常，由用户明确点击“清空当前批次”处理。
+  if(existing.length){
 
-  const orderPayload=orders.map(order=>({
-    warehouse_id:warehouseId,
-    order_no:String(order.orderNo||'').trim(),
-    order_date:orderDate,
-    status:'pending',
-    source_file:sourceFile || '',
-    tracking_no:String(order.trackingNo||'').trim() || null,
-    created_by:APP.user.id
-  }));
+    const existingKeySet=
+      new Set(
+        existing.map(
+          x=>
+            normalizeShippingKey(
+              x.order_no
+            )
+        )
+      );
+
+    const missing=
+      orders.filter(
+        x=>
+          !existingKeySet.has(
+            normalizeShippingKey(
+              x.orderNo
+            )
+          )
+      );
+
+    if(missing.length){
+      throw new Error(
+        `云端已经存在 ${existing.length} 个相同订单号，但这次文件共有 ${orders.length} 单。为防止把两个批次混在一起，系统没有继续写入。请先打开“历史 / 已归档”查看旧批次。`
+      );
+    }
+
+    const sourceSet=
+      new Set(
+        existing.map(
+          x=>
+            String(
+              x.source_file||''
+            )
+        )
+      );
+
+    if(sourceSet.size!==1){
+      throw new Error(
+        '这些订单号分散在多个历史批次中，系统已阻止自动合并。请先在“历史 / 已归档”里检查。'
+      );
+    }
+
+    const oldSource=
+      Array.from(
+        sourceSet
+      )[0];
+
+    const activeExisting=
+      existing.filter(
+        x=>
+          x.status!=='shipped' &&
+          x.is_archived!==true
+      );
+
+    if(activeExisting.length){
+      throw new Error(
+        `这 ${orders.length} 个订单已经存在于当前/未完成批次，不能重复导入。请点“云端同步”继续原来的批次。`
+      );
+    }
+
+    const archivedExisting=
+      existing.filter(
+        x=>
+          x.is_archived===true
+      );
+
+    if(!archivedExisting.length){
+      throw new Error(
+        '这些订单已经存在于历史中，但不是可恢复的归档状态。系统没有重复创建订单。'
+      );
+    }
+
+    const oldOrderDate=
+      String(
+        archivedExisting[0]?.order_date||
+        existing[0]?.order_date||
+        orderDate
+      ).slice(
+        0,
+        10
+      );
+
+    const restoreOk=
+      confirm(
+        `检测到这 ${orders.length} 个订单就是之前归档的旧批次。\n\n`+
+        `系统不能重新创建相同订单号，否则会触发数据库唯一约束。\n\n`+
+        `是否直接【恢复这个已归档批次】继续使用？\n\n`+
+        `不会删除库存、订单明细或面单。已出库订单仍保持已出库状态。`
+      );
+
+    if(!restoreOk){
+      throw new Error(
+        '已取消恢复旧归档批次，没有修改云端数据。'
+      );
+    }
+
+    const {data:restoreData,error:restoreError}=
+      await APP.sb.rpc(
+        'restore_archived_shipping_batch_v87',
+        {
+          p_warehouse_id:warehouseId,
+          p_source_file:oldSource,
+          p_order_date:oldOrderDate
+        }
+      );
+
+    if(restoreError){
+      throw restoreError;
+    }
+
+    setShippingActiveBatch(
+      oldSource
+    );
+
+    await loadShippingWorkspace(
+      true
+    );
+
+    const restoredIds=
+      existing
+        .filter(
+          x=>
+            x.status!=='shipped'
+        )
+        .map(
+          x=>x.id
+        );
+
+    let restoredItems=[];
+
+    for(
+      const chunk of chunkArray(
+        restoredIds,
+        50
+      )
+    ){
+
+      if(!chunk.length){
+        continue;
+      }
+
+      const {data,error}=
+        await APP.sb
+          .from('shipping_order_items')
+          .select('qty')
+          .in('order_id',chunk);
+
+      if(error){
+        throw error;
+      }
+
+      restoredItems.push(
+        ...(data||[])
+      );
+    }
+
+    const restoredPieces=
+      restoredItems.reduce(
+        (s,x)=>
+          s+
+          safeNumber(
+            x.qty,
+            0
+          ),
+        0
+      );
+
+    renderShippingImportProgress(
+      orders.length,
+      orders.length,
+      '✅ 已恢复原归档批次'
+    );
+
+    return {
+      orderCount:orders.length,
+      pieces:restoredPieces,
+      itemRows:restoredItems.length,
+      restored:true,
+      batchSource:oldSource,
+      restoredCount:
+        safeNumber(
+          restoreData?.restored_count,
+          archivedExisting.length
+        )
+    };
+  }
+
+  /*
+   * 没有任何重复订单号时，才真正创建新批次。
+   */
+  const orderPayload=
+    orders.map(
+      order=>({
+        warehouse_id:warehouseId,
+        order_no:
+          String(
+            order.orderNo||''
+          ).trim(),
+        order_date:orderDate,
+        status:'pending',
+        source_file:sourceFile||'',
+        tracking_no:
+          String(
+            order.trackingNo||''
+          ).trim()||
+          null,
+        created_by:APP.user.id,
+        is_archived:false
+      })
+    );
 
   let insertedOrders=[];
 
-  const orderChunks=chunkArray(orderPayload,80);
+  const orderChunks=
+    chunkArray(
+      orderPayload,
+      80
+    );
 
-  for(let i=0;i<orderChunks.length;i++){
+  for(
+    let i=0;
+    i<orderChunks.length;
+    i++
+  ){
 
-    const {data,error}=await APP.sb
-      .from('shipping_orders')
-      .insert(orderChunks[i])
-      .select('id,order_no,source_file');
+    const {data,error}=
+      await APP.sb
+        .from('shipping_orders')
+        .insert(
+          orderChunks[i]
+        )
+        .select(
+          'id,order_no,source_file'
+        );
 
-    if(error) throw error;
+    if(error){
+      throw error;
+    }
 
-    insertedOrders.push(...(data||[]));
+    insertedOrders.push(
+      ...(data||[])
+    );
 
     renderShippingImportProgress(
-      Math.min((i+1)*80,orders.length),
+      Math.min(
+        (i+1)*80,
+        orders.length
+      ),
       orders.length,
       '正在批量保存订单'
     );
   }
 
-  if(insertedOrders.length!==orders.length){
+  if(
+    insertedOrders.length!==
+    orders.length
+  ){
     throw new Error(
       `订单保存不完整：应有 ${orders.length} 单，实际保存 ${insertedOrders.length} 单`
     );
   }
 
-  const idMap=new Map(
-    insertedOrders.map(x=>[
-      normalizeShippingKey(x.order_no),
-      x.id
-    ])
-  );
+  const idMap=
+    new Map(
+      insertedOrders.map(
+        x=>[
+          normalizeShippingKey(
+            x.order_no
+          ),
+          x.id
+        ]
+      )
+    );
 
   const itemPayload=[];
 
   orders.forEach(order=>{
-    const orderId=idMap.get(
-      normalizeShippingKey(order.orderNo)
-    );
+
+    const orderId=
+      idMap.get(
+        normalizeShippingKey(
+          order.orderNo
+        )
+      );
 
     if(!orderId){
       throw new Error(
@@ -9987,40 +10281,81 @@ async function saveImportedOrdersToCloud(parsedOrders, sourceFile){
       );
     }
 
-    (order.items||[]).forEach(item=>{
-      const sku=String(item.sku||'').trim();
-      const qty=Math.floor(safeNumber(item.qty,0));
+    (order.items||[])
+      .forEach(item=>{
 
-      if(!sku || qty<=0) return;
+        const sku=
+          String(
+            item.sku||''
+          ).trim();
 
-      itemPayload.push({
-        order_id:orderId,
-        warehouse_id:warehouseId,
-        sku,
-        name:String(item.name||sku),
-        qty,
-        picked_qty:0
+        const qty=
+          Math.floor(
+            safeNumber(
+              item.qty,
+              0
+            )
+          );
+
+        if(
+          !sku ||
+          qty<=0
+        ){
+          return;
+        }
+
+        itemPayload.push({
+          order_id:orderId,
+          warehouse_id:warehouseId,
+          sku,
+          name:
+            String(
+              item.name||sku
+            ),
+          qty,
+          picked_qty:0
+        });
       });
-    });
   });
 
   let savedItemRows=0;
-  const itemChunks=chunkArray(itemPayload,250);
 
-  for(let i=0;i<itemChunks.length;i++){
+  const itemChunks=
+    chunkArray(
+      itemPayload,
+      250
+    );
 
-    const {data,error}=await APP.sb
-      .from('shipping_order_items')
-      .insert(itemChunks[i])
-      .select('id');
+  for(
+    let i=0;
+    i<itemChunks.length;
+    i++
+  ){
 
-    if(error) throw error;
+    const {data,error}=
+      await APP.sb
+        .from('shipping_order_items')
+        .insert(
+          itemChunks[i]
+        )
+        .select('id');
 
-    savedItemRows+=(data||[]).length;
+    if(error){
+      throw error;
+    }
+
+    savedItemRows+=
+      (data||[]).length;
 
     renderShippingImportProgress(
       Math.round(
-        ((i+1)/Math.max(itemChunks.length,1))*
+        (
+          (i+1)/
+          Math.max(
+            itemChunks.length,
+            1
+          )
+        )*
         orders.length
       ),
       orders.length,
@@ -10028,56 +10363,100 @@ async function saveImportedOrdersToCloud(parsedOrders, sourceFile){
     );
   }
 
-  if(savedItemRows!==itemPayload.length){
+  if(
+    savedItemRows!==
+    itemPayload.length
+  ){
     throw new Error(
       `商品明细保存不完整：应有 ${itemPayload.length} 行，实际 ${savedItemRows} 行`
     );
   }
 
-  // 最终核验：只认数据库实际结果。
-  const {data:verifyOrders,error:vOrderErr}=await APP.sb
-    .from('shipping_orders')
-    .select('id,order_no')
-    .eq('warehouse_id',warehouseId)
-    .eq('source_file',sourceFile)
-    .neq('status','shipped');
+  const {data:verifyOrders,error:vOrderErr}=
+    await APP.sb
+      .from('shipping_orders')
+      .select('id,order_no')
+      .eq('warehouse_id',warehouseId)
+      .eq('source_file',sourceFile)
+      .eq('is_archived',false)
+      .neq('status','shipped');
 
-  if(vOrderErr) throw vOrderErr;
+  if(vOrderErr){
+    throw vOrderErr;
+  }
 
-  if((verifyOrders||[]).length!==orders.length){
+  if(
+    (verifyOrders||[]).length!==
+    orders.length
+  ){
     throw new Error(
       `最终核验失败：应有 ${orders.length} 单，云端实际 ${(verifyOrders||[]).length} 单`
     );
   }
 
-  const verifyIds=(verifyOrders||[]).map(x=>x.id);
+  const verifyIds=
+    (verifyOrders||[])
+      .map(
+        x=>x.id
+      );
 
   let verifyItems=[];
 
-  for(const chunk of chunkArray(verifyIds,50)){
-    if(!chunk.length) continue;
+  for(
+    const chunk of chunkArray(
+      verifyIds,
+      50
+    )
+  ){
 
-    const {data,error}=await APP.sb
-      .from('shipping_order_items')
-      .select('qty')
-      .in('order_id',chunk);
+    if(!chunk.length){
+      continue;
+    }
 
-    if(error) throw error;
+    const {data,error}=
+      await APP.sb
+        .from('shipping_order_items')
+        .select('qty')
+        .in(
+          'order_id',
+          chunk
+        );
 
-    verifyItems.push(...(data||[]));
+    if(error){
+      throw error;
+    }
+
+    verifyItems.push(
+      ...(data||[])
+    );
   }
 
-  const expectedPieces=itemPayload.reduce(
-    (s,x)=>s+safeNumber(x.qty,0),
-    0
-  );
+  const expectedPieces=
+    itemPayload.reduce(
+      (s,x)=>
+        s+
+        safeNumber(
+          x.qty,
+          0
+        ),
+      0
+    );
 
-  const actualPieces=verifyItems.reduce(
-    (s,x)=>s+safeNumber(x.qty,0),
-    0
-  );
+  const actualPieces=
+    verifyItems.reduce(
+      (s,x)=>
+        s+
+        safeNumber(
+          x.qty,
+          0
+        ),
+      0
+    );
 
-  if(actualPieces!==expectedPieces){
+  if(
+    actualPieces!==
+    expectedPieces
+  ){
     throw new Error(
       `最终核验失败：应有 ${expectedPieces} 件，云端实际 ${actualPieces} 件`
     );
@@ -10094,7 +10473,9 @@ async function saveImportedOrdersToCloud(parsedOrders, sourceFile){
   return {
     orderCount:orders.length,
     pieces:expectedPieces,
-    itemRows:itemPayload.length
+    itemRows:itemPayload.length,
+    restored:false,
+    batchSource:sourceFile
   };
 }
 
@@ -10187,11 +10568,17 @@ async function runOrderImport(){
     const orders=Array.from(byOrder.values()).filter(x=>x.items.length);
     if(!orders.length) throw new Error('没有找到有效订单商品');
 
-    const batchSource=makeShippingBatchSource(file.name);
+    const batchSource=
+      makeShippingBatchSource(
+        file.name
+      );
 
-    // 从导入开始就锁定当前批次；后续面单只能匹配这一批订单。
-    setShippingActiveBatch(batchSource);
-
+    /*
+     * V8.7：
+     * 先检查是否是旧归档批次。
+     * 只有确认是全新订单后才使用新的 batchSource；
+     * 若是旧归档批次，会恢复并返回旧 source_file。
+     */
     APP.shippingImportExpectedOrders=orders.length;
     APP.shippingImportExpectedPieces=
       orders.reduce(
@@ -10210,6 +10597,11 @@ async function runOrderImport(){
         batchSource
       );
 
+    setShippingActiveBatch(
+      importResult.batchSource||
+      batchSource
+    );
+
     APP.pickingFileName=file.name;
     APP.pickingOrderNo=orders.length===1 ? orders[0].orderNo : `共${orders.length}个订单`;
     APP.pickingOrderDate=$('pickOrderDate')?.value || shippingDateToday();
@@ -10224,7 +10616,9 @@ async function runOrderImport(){
     closeModal();
 
     showOk(
-      `导入完成并核验通过：${importResult.orderCount} 单 / ${importResult.pieces} 件${suffix}`
+      importResult.restored
+        ? `✅ 已恢复原归档批次：${importResult.orderCount} 单 / ${importResult.pieces} 件${suffix}`
+        : `✅ 导入完成并核验通过：${importResult.orderCount} 单 / ${importResult.pieces} 件${suffix}`
     );
 
   }catch(error){
@@ -10239,7 +10633,7 @@ async function runOrderImport(){
     showError(
       '订单导入或核验中断：' +
       (error.message || '未知错误') +
-      '。已写入云端的数据不会自动删除。请先点“云端同步”检查，再决定是否清空当前批次重来。'
+      '。已写入云端的数据不会自动删除。请先点“云端同步”或“历史 / 已归档”检查。系统不会因为导入失败删除任何云端数据。'
     );
 
     try{
