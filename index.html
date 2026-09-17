@@ -833,18 +833,29 @@ th{
         </div>
 
         <div class="card p-3 mb-3">
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <button class="btn btn-blue" onclick="printPickingList()">
-              🖨️ 按快递公司打印拣货单
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+
+            <button class="btn btn-blue" onclick="printPickingSummary()">
+              🖨️ ① 打印汇总拣货单
+            </button>
+
+            <button class="btn btn-blue" onclick="printPickingByCarrier()">
+              🚚 ② 按快递公司打印拣货单
             </button>
 
             <button class="btn btn-gray" onclick="exportPickingList()">
-              📥 导出快递分表 Excel
+              📥 导出 Excel（全部 + 快递分表）
             </button>
 
             <button class="btn btn-red" onclick="clearPickingList()">
               📦 归档当前待处理订单
             </button>
+
+          </div>
+
+          <div class="small mt-2">
+            ① 汇总拣货单：把不同快递公司的相同“库位 + SKU”合并，只拣一次总数量。<br>
+            ② 快递公司拣货单：按快递公司分开，每个快递公司从新的一页开始打印。
           </div>
         </div>
 
@@ -1022,7 +1033,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V9.7 · Cloud Warehouse
+          版本 V9.9 · Cloud Warehouse
         </div>
 
       </div>
@@ -1152,7 +1163,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V9.7-20260916-BATCH-SAFE-CLEAR';
+const APP_VERSION = 'V9.9-20260917-DUAL-PICKING-PRINT';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -8724,7 +8735,220 @@ function updatePickingMeta(){
 }
 
 
-function buildPrintTable(){
+
+/*
+ * V9.9：汇总拣货打印
+ * 不分快递公司。
+ * 相同“库位 + SKU”跨快递合并，只显示一次，并把数量相加。
+ */
+function getPickingSummaryRows(){
+
+  const map=new Map();
+
+  (APP.pickingRows||[]).forEach(row=>{
+
+    const bin=
+      String(row.bin||'').trim();
+
+    const sku=
+      String(row.sku||'').trim();
+
+    if(!sku){
+      return;
+    }
+
+    const key=
+      bin.toLowerCase()+
+      '|' +
+      sku.toLowerCase();
+
+    if(!map.has(key)){
+      map.set(key,{
+        bin:bin,
+        sku:sku,
+        orderQty:0,
+        name:row.name||''
+      });
+    }
+
+    const item=map.get(key);
+
+    item.orderQty +=
+      Math.max(
+        0,
+        safeNumber(
+          row.orderQty,
+          0
+        )
+      );
+
+  });
+
+  return [...map.values()]
+    .sort((a,b)=>{
+
+      if(!a.bin && b.bin) return 1;
+      if(a.bin && !b.bin) return -1;
+
+      const binCompare=
+        warehouseBinCompare(
+          a.bin||'',
+          b.bin||''
+        );
+
+      if(binCompare!==0){
+        return binCompare;
+      }
+
+      return naturalCompare(
+        a.sku||'',
+        b.sku||''
+      );
+
+    });
+}
+
+
+function buildSummaryPrintTable(){
+
+  updatePickingMeta();
+
+  const rows=
+    getPickingSummaryRows();
+
+  const printArea=
+    $('printArea');
+
+  if(!printArea){
+    return;
+  }
+
+  const warehouseName=
+    APP.warehouse?.name||
+    '—';
+
+  const orderNo=
+    APP.pickingOrderNo||
+    '—';
+
+  const date=
+    APP.pickingOrderDate||
+    new Date()
+      .toISOString()
+      .slice(0,10);
+
+  const totalQty=
+    rows.reduce(
+      (sum,row)=>
+        sum+
+        Math.max(
+          0,
+          safeNumber(
+            row.orderQty,
+            0
+          )
+        ),
+      0
+    );
+
+  const body=
+    rows.map(row=>{
+
+      const qty=
+        Math.max(
+          0,
+          safeNumber(
+            row.orderQty,
+            0
+          )
+        );
+
+      return `
+        <tr>
+          <td style="font-size:15px;font-weight:800;white-space:nowrap;">
+            ${escapeHtml(row.bin||'未设置')}
+          </td>
+
+          <td style="font-size:14px;font-weight:700;word-break:break-all;">
+            ${escapeHtml(row.sku||'')}
+            ${qty!==1
+              ? `<b style="font-size:16px;"> × ${qty}</b>`
+              : ''}
+          </td>
+        </tr>
+      `;
+
+    }).join('');
+
+  printArea.innerHTML=`
+    <section>
+      <div class="print-title">
+        📋 汇总拣货单
+      </div>
+
+      <div class="print-meta">
+        仓库：${escapeHtml(warehouseName)}
+        &nbsp;&nbsp;日期：${escapeHtml(date)}
+        &nbsp;&nbsp;订单号：${escapeHtml(orderNo)}
+        &nbsp;&nbsp;汇总SKU行：${rows.length}
+        &nbsp;&nbsp;总件数：${totalQty}
+      </div>
+
+      <div style="font-size:11px;margin-bottom:8px;">
+        已把不同快递公司的相同“库位 + SKU”合并为一行。
+      </div>
+
+      <table class="print-table carrier-pick-table">
+        <thead>
+          <tr>
+            <th style="width:34%;">库位</th>
+            <th>SKU / 总拣货数量</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${body}
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
+
+function printPickingSummary(){
+
+  if(
+    !APP.pickingRows.length
+  ){
+    return showError(
+      '目前没有拣货数据'
+    );
+  }
+
+  updatePickingMeta();
+
+  buildSummaryPrintTable();
+
+  setTimeout(
+    ()=>{
+      window.print();
+    },
+    100
+  );
+
+}
+
+
+/*
+ * 保留旧函数名作为兼容入口。
+ * 旧页面/缓存如果还调用 printPickingList()，
+ * 仍然按快递公司打印，不会报错。
+ */
+function printPickingList(){
+  return printPickingByCarrier();
+}
+
+
+function buildCarrierPrintTable(){
 
   updatePickingMeta();
 
@@ -8850,7 +9074,7 @@ function buildPrintTable(){
 }
 
 
-function printPickingList(){
+function printPickingByCarrier(){
 
   if(
     !APP.pickingRows.length
@@ -8865,7 +9089,7 @@ function printPickingList(){
 
   updatePickingMeta();
 
-  buildPrintTable();
+  buildCarrierPrintTable();
 
 
   /*
@@ -9880,28 +10104,34 @@ function renderShippingBatchHistory(){
 
         </button>
 
-        <div class="grid grid-cols-2 gap-2 mt-3">
+        <div class="mt-3 space-y-2">
           <button
-            class="btn btn-gray btn-small"
+            class="btn btn-gray w-full"
             onclick="openShippingBatchDetail('${encodedKey}')">
-            🔎 查看明细
+            🔎 查看这个批次明细
           </button>
 
           ${
             b.status==='archived'
               ? `
                 <button
-                  class="btn btn-red btn-small"
+                  class="btn btn-red w-full"
                   onclick="permanentDeleteArchivedBatch('${encodedKey}')">
-                  🗑️ 永久清除
+                  🗑️ 永久清除这个归档批次（需要管理员密码）
                 </button>
+                <div class="small text-red-700">
+                  清除后会删除这个批次的订单、明细、面单记录和云端面单 PDF；不会删除仓库库存。
+                </div>
               `
               : `
                 <button
-                  class="btn btn-red btn-small"
+                  class="btn btn-red w-full"
                   onclick="permanentDeleteCurrentBatch('${encodedKey}')">
-                  🗑️ 清除错误批次
+                  🗑️ 清除这个错误当前批次（需要管理员密码）
                 </button>
+                <div class="small text-red-700">
+                  用于导入错批次。已经打印、贴单或出库过的订单会自动阻止清除。
+                </div>
               `
           }
         </div>
@@ -9920,7 +10150,7 @@ function renderShippingBatchHistory(){
           <div>
             <div class="font-bold text-lg">🚚 当前 / 进行中批次</div>
             <div class="small mt-1">
-              正在工作的批次显示在这里。
+              正在工作的批次显示在这里。导入错批次时，可直接在批次卡片下方用管理员密码清除。
             </div>
           </div>
 
@@ -9951,7 +10181,7 @@ function renderShippingBatchHistory(){
           <div>
             <div class="font-bold text-lg">📦 历史 / 已归档批次</div>
             <div class="small mt-1">
-              归档不会删除。只要这个批次的订单已经全部“出库或归档”，这里就会显示为历史/已归档，可随时查看；确定永远不需要时，再用管理员密码永久删除。
+              归档不会删除。历史批次会一直保留；确定不再需要时，可直接在批次卡片下方用管理员密码永久清除，避免旧批次和面单文件长期累积。
             </div>
             <button
               class="btn btn-gray mt-2"
