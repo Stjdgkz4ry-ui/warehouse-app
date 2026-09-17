@@ -1033,7 +1033,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V9.9 · Cloud Warehouse
+          版本 V10.0 · Cloud Warehouse
         </div>
 
       </div>
@@ -1163,7 +1163,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V9.9-20260917-DUAL-PICKING-PRINT';
+const APP_VERSION = 'V10.0-20260917-SCANNER-PARTIAL-INPUT-FIX';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -15063,7 +15063,17 @@ function isProbablyHardwareScannerInput(target){
 
   const tag=String(target.tagName||'').toLowerCase();
 
-  if(tag==='textarea' || target.isContentEditable){
+  /*
+   * V10.0：
+   * 用户正在输入框里手工打 SKU / 条码时，
+   * 绝不能把输入到一半的字符当成扫码枪结果。
+   */
+  if(
+    tag==='input' ||
+    tag==='textarea' ||
+    tag==='select' ||
+    target.isContentEditable
+  ){
     return false;
   }
 
@@ -15209,20 +15219,18 @@ function activateHardwareScanner(){
         }
 
         /*
-         * 有些扫码枪不带回车。
-         * 不带回车的扫码枪，停止输入 260ms 后自动提交，避免条码被截断。
+         * V10.0 关键修复：
+         * 不再用“停止输入 260ms”自动提交。
+         * 旧逻辑会把人工输入或较慢扫码枪的前几个字符
+         * （例如 608）误当成完整条码，于是立刻弹出绑定窗口。
+         *
+         * 现在电脑扫码枪只在收到 Enter / Tab 结束符时提交，
+         * 从根本上避免半截条码触发。
          */
-        APP.hardwareScannerTimer=
-          setTimeout(()=>{
-
-            if(
-              APP.hardwareScannerActive &&
-              APP.hardwareScannerBuffer.length>=3
-            ){
-              submitHardwareScannerBuffer();
-            }
-
-          },260);
+        if(APP.hardwareScannerTimer){
+          clearTimeout(APP.hardwareScannerTimer);
+          APP.hardwareScannerTimer=null;
+        }
 
       }
 
@@ -15549,7 +15557,7 @@ async function openPackingScanner(){
       </div>
 
       <div class="small mt-1">
-        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。V9.3 已优化慢速扫码枪、连续扫码和常见一维条码识别；条码如果只是少了连字符/空格，也会在唯一匹配时自动识别。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。电脑端只走打印桥直接出纸；打印桥未连接时会立即报错并停止，不会再弹浏览器打印窗口。扫错/超量会发错误音并拦截。
+        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。V10.0 起扫码枪必须以 Enter / Tab 结束后才提交完整条码，人工在输入框里打字不会再被半途截取；条码如果只是少了连字符/空格，也会在唯一匹配时自动识别。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。电脑端只走打印桥直接出纸；打印桥未连接时会立即报错并停止，不会再弹浏览器打印窗口。扫错/超量会发错误音并拦截。
       </div>
 
       <div id="hardwareScannerLast" class="small mt-2 text-gray-600">
