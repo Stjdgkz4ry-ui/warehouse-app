@@ -1033,7 +1033,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.2.2 · Stable Warehouse
+          版本 V10.3 · Stable Warehouse
         </div>
 
       </div>
@@ -1163,7 +1163,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.2.2-20260918-TEST-BATCH-FORCE-DELETE';
+const APP_VERSION = 'V10.3-20260918-FAST-PACKING-NO-ALIAS';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -5338,37 +5338,22 @@ function allKnownSkuCandidates(extra=[]){
 }
 
 async function resolveScannedSkuWithAlias(raw,skuList=[]){
-  let sku=resolveUniqueScannedSku(raw,skuList?.length?skuList:allKnownSkuCandidates());
-  if(sku) return sku;
-  const alias=findBarcodeAlias(raw);
-  if(alias?.sku){
-    const hit=resolveUniqueScannedSku(alias.sku,skuList?.length?skuList:allKnownSkuCandidates());
-    return hit||alias.sku;
-  }
-  return null;
+  /*
+   * V10.3：关闭条码映射。
+   * 只认扫描结果本身与 SKU 的唯一匹配；旧别名表不再参与自动识别。
+   */
+  return resolveUniqueScannedSku(
+    raw,
+    skuList?.length?skuList:allKnownSkuCandidates()
+  );
 }
 
 async function promptBindUnknownBarcode(raw,skuList=[]){
-  const barcode=normalizeBarcodeValue(raw);
-  if(!barcode) return null;
-  const typed=prompt(
-    `这个条码已经扫出来了，但系统找不到对应 SKU。\n\n条码：${barcode}\n\n请输入商品标签上真正的 SKU。\n绑定一次后，以后扫这个条码会自动识别。`,
-    ''
-  );
-  if(typed===null) return null;
-  const entered=String(typed||'').trim();
-  if(!entered) return null;
-  const candidates=skuList?.length?skuList:allKnownSkuCandidates();
-  const resolved=resolveUniqueScannedSku(entered,candidates);
-  if(!resolved){
-    showError(`没有找到你输入的 SKU：${entered}\n请先把这个 SKU 加入库存系统，或者检查拼写。`);
-    return null;
-  }
-  const ok=confirm(`确认绑定？\n\n条码：${barcode}\n→ SKU：${resolved}`);
-  if(!ok) return null;
-  await saveBarcodeAlias(barcode,resolved);
-  showOk(`✅ 已记住：${barcode} → ${resolved}`);
-  return resolved;
+  /*
+   * V10.3：未知条码不再弹出“绑定/映射”。
+   * 直接返回 null，让调用方显示“没有找到 SKU”。
+   */
+  return null;
 }
 
 
@@ -13473,21 +13458,16 @@ function confirmMultiPiecePack(order,source='扫码'){
   const {pieces,req}=multiPieceOrderSummary(order);
   if(pieces<=1) return true;
 
-  const first=confirm(
+  /*
+   * V10.3：一票多件只确认一次。
+   * 系统已经先按 SKU + 数量拦截，只有整票数量满足后才会到这里。
+   */
+  return confirm(
     `⚠️ 一票多件：共 ${pieces} 件\n\n`+
     `订单：${order.order_no}\n`+
     `需要：${req}\n\n`+
-    `${source}已满足整票数量。请先确认 ${pieces} 件货物都已经放在一起。\n\n`+
-    `现在还不会打印面单。点击“确定”进入第二次确认。`
-  );
-
-  if(!first) return false;
-
-  return confirm(
-    `🚨 最后确认：这是“一票 ${pieces} 件”订单。\n\n`+
-    `${req}\n\n`+
-    `请再次确认全部 ${pieces} 件都在你面前，且准备贴同一张面单。\n\n`+
-    `确定后才会打印面单并扣减整票库存。`
+    `${source}已满足整票数量。请确认全部 ${pieces} 件已经放在一起，并贴同一张面单。\n\n`+
+    `确定后开始打印。`
   );
 }
 
@@ -15048,7 +15028,7 @@ function renderPackPoolStatus(){
     <div class="bg-blue-50 rounded-xl p-3">
       <div class="font-bold">📦 当前扫码货物池</div>
       <div class="mt-1 text-sm">${entries.length?entries.map(([sku,q])=>`${escapeHtml(sku)} ×${q}`).join('　'):'还没有扫码商品'}</div>
-      <div class="small mt-2">系统会按当前订单/拣货单自动组单：单件订单扫 1 件即可出面单；一票多件必须全部扫够，并经过两次人工确认后才打印。未扫齐时会明确显示“还差几件 / 暂不打印”。超数量或错误 SKU 会立刻拦截。</div>
+      <div class="small mt-2">系统会按当前订单/拣货单自动组单：单件订单扫 1 件即可出面单；一票多件必须全部扫够，整票数量满足后只确认一次再打印。未扫齐时会明确显示“还差几件 / 暂不打印”。超数量或错误 SKU 会立刻拦截。</div>
       <div class="small mt-1">待贴单订单：${candidates.length} 个</div>
       ${entries.length?'<button class="btn btn-gray btn-small mt-2" onclick="clearPackPool()">清空扫码货物池</button>':''}
     </div>`;
@@ -16078,7 +16058,7 @@ async function handlePackingScan(code){
     if(isMultiPieceOrder(directOrder.id)){
       const {pieces,req}=multiPieceOrderSummary(directOrder);
       return packingScanError(
-        `⚠️ 订单 ${directOrder.order_no} 是一票 ${pieces} 件：${req}。不能只扫订单号/Tracking 就直接出面单。请逐件扫描商品；或在“未贴单明细”里使用人工确认并进行双重核对。`
+        `⚠️ 订单 ${directOrder.order_no} 是一票 ${pieces} 件：${req}。不能只扫订单号/Tracking 就直接出面单。请逐件扫描商品；或在“未贴单明细”里使用人工确认。`
       );
     }
 
@@ -16217,7 +16197,7 @@ async function handlePackingScan(code){
   /*
    * V9.6 一票多件防错：
    * 即使货物池已经扫齐，也绝不直接自动打印。
-   * 多件订单必须双重人工确认“所有件都在一起”，然后才出面单。
+   * 多件订单整票数量满足后只需一次人工确认“所有件都在一起”，然后出面单。
    */
   if(
     isMultiPieceOrder(order.id) &&
@@ -16647,56 +16627,14 @@ async function renderPdfBlobToPrintWindow(
 
 
 async function confirmPrintedPaperV102(order,printToken){
-
   /*
-   * V10.2：打印桥返回“成功”只代表程序完成了打印动作，
-   * 不直接等于纸张已经实际出来。
+   * V10.3：生产贴单台不再每单人工确认“是否出纸”。
+   * 只要本地打印桥明确返回成功，就自动视为本次打印提交成功。
    *
-   * 只有员工亲眼确认实际出纸，才调用 finish_shipping_print，
-   * 才把订单变成 packed（已贴单）。
+   * 打印桥失败时原有流程会报错并释放锁；
+   * 如果以后使用支持“结果不确定”的打印桥，应只在异常单上人工处理。
    */
-  const printed=confirm(
-    `请看打印机：订单 ${order.order_no} 的面单是否已经【实际出纸】？\n\n`+
-    `✅ 已经实际出纸：点“确定”，系统才标记为“已贴单”。\n`+
-    `❌ 没有出纸 / 卡纸：点“取消”。`
-  );
-
-  if(printed){
-    return 'printed';
-  }
-
-  const definitelyNoPaper=confirm(
-    `请再次确认：订单 ${order.order_no} 的面单【完全没有出纸】吗？\n\n`+
-    `只有确定没有出纸才能点“确定”，系统会释放打印锁，允许重新扫描打印。\n\n`+
-    `如果不确定是否出过纸，请点“取消”，订单将保持锁定，防止重复打印。`
-  );
-
-  if(definitelyNoPaper){
-
-    const {error}=await APP.sb.rpc(
-      'release_shipping_print_lock',
-      {
-        p_order_id:order.id,
-        p_token:printToken
-      }
-    );
-
-    if(error){
-      throw error;
-    }
-
-    showError(
-      `❌ ${order.order_no} 已确认没有出纸：未标记已贴单，打印锁已释放，可以重新扫描。`
-    );
-
-    return 'not_printed';
-  }
-
-  showError(
-    `🔒 ${order.order_no} 打印结果不确定：未标记已贴单，并继续保留打印锁，禁止自动重打。`
-  );
-
-  return 'uncertain';
+  return 'printed';
 }
 
 
@@ -16852,23 +16790,10 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
     if(markPacked){
 
       /*
-       * V10.2：必须确认“实际出纸”以后，才允许 finish_shipping_print。
-       * 没有出纸：释放锁、保持 pending。
-       * 不确定：保持锁定、保持 pending，防止重复打印。
+       * V10.3：本地打印桥明确返回成功后，自动完成贴单状态。
+       * 正常订单不再弹“是否实际出纸”确认，提高连续扫码速度。
+       * 打印桥报错时不会进入这里，也不会标记 packed。
        */
-      const paperResult=
-        await confirmPrintedPaperV102(
-          order,
-          printToken
-        );
-
-      if(paperResult!=='printed'){
-        if(paperResult==='not_printed'){
-          printToken=null;
-        }
-        return false;
-      }
-
       const {error:finishError}=
         await APP.sb.rpc(
           'finish_shipping_print',
@@ -16886,7 +16811,7 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       printToken=null;
 
       showOk(
-        `✅ ${order.order_no} 已确认实际出纸，已标记“已贴单”；库存暂不扣减`
+        `✅ ${order.order_no} 打印桥返回成功，已自动标记“已贴单”；库存将在批次归档时统一扣减`
       );
 
       renderPackingQueue();
