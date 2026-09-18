@@ -1033,7 +1033,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.3 · Stable Warehouse
+          版本 V10.3.1 · Stable Warehouse
         </div>
 
       </div>
@@ -1163,7 +1163,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.3-20260918-FAST-PACKING-NO-ALIAS';
+const APP_VERSION = 'V10.3.1-20260918-COMPLETED-LIST-FIX';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -15819,14 +15819,14 @@ async function openPackingProgressSearch(){
     </div>
 
     <div class="bg-blue-50 rounded-xl p-3 mb-3 text-sm">
-      已经上传并绑定面单、但还没扫码的订单，可以直接点“查看面单”核对，再点“人工确认出单”。只有确认实际出纸后才标记为已贴单；库存将在整个批次归档时统一扣减。
+      已经上传并绑定面单、但还没扫码的订单，可以直接点“查看面单”核对，再点“人工确认出单”。正常扫码打印桥返回成功后会自动标记为已贴单；库存将在整个批次归档时统一扣减。
     </div>
 
     <input id="packingProgressSearchInput" placeholder="搜索订单号 / Tracking / SKU" oninput="renderPackingProgressSearchList()">
 
     <div class="grid grid-cols-3 gap-2 mt-3">
       <button class="btn btn-red btn-small" onclick="APP.packingProgressFilter='pending';renderPackingProgressSearchList()">未贴单</button>
-      <button class="btn btn-green btn-small" onclick="APP.packingProgressFilter='shipped';renderPackingProgressSearchList()">已完成</button>
+      <button class="btn btn-green btn-small" onclick="APP.packingProgressFilter='completed';renderPackingProgressSearchList()">已完成</button>
       <button class="btn btn-gray btn-small" onclick="APP.packingProgressFilter='all';renderPackingProgressSearchList()">全部</button>
     </div>
 
@@ -15849,8 +15849,14 @@ function renderPackingProgressSearchList(){
   let rows=(data.orders||[]).filter(o=>{
     if(filter==='pending'){
       if(o.status==='packed'||o.status==='shipped'||o.status==='cancelled'||!labelMap.has(o.id)) return false;
-    }else if(filter==='shipped'){
-      if(o.status!=='shipped') return false;
+    }else if(filter==='completed' || filter==='shipped'){
+      /*
+       * V10.3.1：
+       * “已完成”代表已经完成贴单，所以 packed 和 shipped 都必须显示。
+       * packed = 已打印/已贴单，等待整批归档扣库存；
+       * shipped = 已归档出库的历史完成单。
+       */
+      if(o.status!=='packed' && o.status!=='shipped') return false;
     }
 
     if(!q) return true;
@@ -15900,7 +15906,7 @@ async function openPackingScanner(){
         🟢 扫码枪监听中
       </div>
       <div class="small mt-2">
-        V10.1.1：扫码货物池已做本机双备份；刷新/切后台会尽量保留。只有确认实际出纸才标记“已贴单”；库存将在整批归档时统一扣减。
+        V10.3.1：扫码货物池已做本机双备份；刷新/切后台会尽量保留。打印桥成功后自动标记“已贴单”；库存将在整批归档时统一扣减。
       </div>
 
       <div class="small mt-1">
