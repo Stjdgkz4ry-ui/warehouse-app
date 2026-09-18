@@ -891,7 +891,7 @@ th{
 
           <div class="grid grid-cols-2 gap-2 mt-3">
             <button class="btn btn-purple" onclick="openLabelUpload()">📄 上传面单 PDF</button>
-            <button class="btn btn-gray" onclick="loadShippingWorkspace(true)">🔄 云端同步</button>
+            <button class="btn btn-gray" onclick="loadShippingWorkspace(false)">🔄 云端同步</button>
             <button class="btn btn-green" onclick="openPickScanner()">📷 扫码拣货</button>
             <button class="btn btn-blue" onclick="openPackingScanner()">🖨️ 扫码贴单</button>
             <button class="btn btn-yellow" onclick="openShippingPickAudit()">📋 配货表校验</button>
@@ -1033,7 +1033,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.0 · Cloud Warehouse
+          版本 V10.1 · Stable Warehouse
         </div>
 
       </div>
@@ -1163,7 +1163,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.0-20260917-SCANNER-PARTIAL-INPUT-FIX';
+const APP_VERSION = 'V10.1-20260918-STABLE-PACKPOOL-NO-STOCK-DEDUCT';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1246,7 +1246,10 @@ const APP = {
 
   /* V9.1：扫码贴单会话管理员授权 + 贴单进度缓存 */
   packingAdminAuthorized:false,
-  packingProgressData:null
+  packingProgressData:null,
+
+  /* V10.1：扫码贴单窗口打开时，禁止点击遮罩误关闭 */
+  packingModalLocked:false
 
 };
 
@@ -1482,6 +1485,13 @@ function closeModal(){
 
 
 function closeModalByBg(event){
+
+  if(
+    event.target.id === 'modalBg' &&
+    APP.packingModalLocked
+  ){
+    return;
+  }
 
   if(event.target.id === 'modalBg'){
     closeModal();
@@ -14453,17 +14463,71 @@ function packPoolStorageKey(){
   return `warehouse_pack_pool_${APP.warehouse?.id||'none'}`;
 }
 
+function packPoolBackupStorageKey(){
+  return `${packPoolStorageKey()}_backup`;
+}
+
 function loadPackPool(){
   try{
-    APP.packPool=JSON.parse(localStorage.getItem(packPoolStorageKey())||'{}')||{};
-  }catch(e){ APP.packPool={}; }
+    const primary=localStorage.getItem(packPoolStorageKey());
+    const backup=localStorage.getItem(packPoolBackupStorageKey());
+
+    let parsed=null;
+
+    try{
+      if(primary) parsed=JSON.parse(primary);
+    }catch(e){
+      console.warn('读取扫码货物池主记录失败，尝试备份',e);
+    }
+
+    if(
+      !parsed ||
+      typeof parsed!=='object' ||
+      Array.isArray(parsed)
+    ){
+      try{
+        parsed=backup ? JSON.parse(backup) : {};
+      }catch(e){
+        parsed={};
+      }
+    }
+
+    APP.packPool=parsed||{};
+
+  }catch(e){
+    console.warn('读取扫码货物池失败',e);
+    APP.packPool={};
+  }
+
   return APP.packPool;
 }
 
 function savePackPool(){
-  localStorage.setItem(packPoolStorageKey(),JSON.stringify(APP.packPool||{}));
-  saveShippingProgressSnapshot();
+  try{
+    const payload=JSON.stringify(APP.packPool||{});
+    localStorage.setItem(packPoolStorageKey(),payload);
+    localStorage.setItem(packPoolBackupStorageKey(),payload);
+    saveShippingProgressSnapshot();
+  }catch(e){
+    console.error('保存扫码货物池失败',e);
+  }
 }
+
+function persistPackPoolBeforeLeave(){
+  try{
+    const payload=JSON.stringify(APP.packPool||{});
+    localStorage.setItem(packPoolStorageKey(),payload);
+    localStorage.setItem(packPoolBackupStorageKey(),payload);
+  }catch(e){}
+}
+
+window.addEventListener('beforeunload',persistPackPoolBeforeLeave);
+window.addEventListener('pagehide',persistPackPoolBeforeLeave);
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='hidden'){
+    persistPackPoolBeforeLeave();
+  }
+});
 
 function clearPackPool(){
   APP.packPool={};
@@ -14556,6 +14620,18 @@ function totalRemainingPackDemandForSku(sku){
 }
 
 function sanitizePackPoolAgainstDemand(){
+
+  if(
+    APP.shippingCloudReady!==true ||
+    !Array.isArray(APP.shippingOrders) ||
+    !Array.isArray(APP.shippingItems) ||
+    !Array.isArray(APP.shippingLabels) ||
+    !APP.shippingOrders.length ||
+    !APP.shippingItems.length ||
+    !APP.shippingLabels.length
+  ){
+    return;
+  }
 
   let changed=false;
 
@@ -14887,11 +14963,9 @@ function renderPackingQueue(){
                       : ''
                     }
 
-                    <button
-                      class="btn btn-small btn-green"
-                      onclick="completePackedOrder('${o.id}')">
-                      出库
-                    </button>
+                    <div class="small text-gray-500 text-center px-2 py-2">
+                      库存扣减已暂停
+                    </div>
                   </div>
 
                 </div>
@@ -15274,6 +15348,8 @@ async function closePackingScanner(){
 
   APP.packingAdminAuthorized=false; // V9.6 保留兼容字段，不再用于库存密码验证
   APP.packingProgressData=null;
+  APP.packingModalLocked=false;
+  persistPackPoolBeforeLeave();
 
   deactivateHardwareScanner();
 
@@ -15538,11 +15614,7 @@ function renderPackingProgressSearchList(){
 async function openPackingScanner(){
   if(!APP.shippingCloudReady) return showError('请先同步云端订单');
 
-  /*
-   * V9.6：扫码贴单打印成功后仍会自动完成出库并扣库存，
-   * 但库存操作不再要求管理员密码。
-   */
-
+  APP.packingModalLocked=true;
   loadPackPool();
 
   openModal(`
@@ -15953,8 +16025,8 @@ async function manualConfirmPackOrder(orderId){
       `Tracking：${tracking}\n`+
       `快递：${carrier}${page?`\n面单页：第 ${page} 页`:''}\n`+
       `需要：${req}\n\n`+
-      `确认后：打印成功 → 自动完成订单 → 扣减库存。\n`+
-      `如果打印失败，不会扣库存，也不会把订单标记完成。`
+      `确认后：打印成功 → 标记为已贴单。\n`+
+      `当前版本已暂停自动扣减库存；如果打印失败，也不会把订单标记为已贴单。`
     );
 
     if(!ok) return;
@@ -16446,40 +16518,12 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       printToken=null;
 
       /*
-       * V9.1：打印桥确认面单已经成功发送后，立即完成出库并扣减库存。
-       * 这里使用现有 complete_shipping_order RPC：云端会校验订单状态、库存并防重复。
-       * 如果扣库存失败，订单保留 packed（已打印待出库），绝不重复打印。
+       * V10.1：暂停自动扣减库存。
+       * 打印成功后只保留 status='packed'（已贴单），不调用 complete_shipping_order。
        */
-      try{
-        const {error:outError}=await APP.sb.rpc(
-          'complete_shipping_order',
-          {p_order_id:order.id}
-        );
-
-        if(outError){
-          throw outError;
-        }
-
-        order.status='shipped';
-
-        await loadInventory();
-        await loadLogs();
-        renderHome();
-        renderInventoryList();
-        renderLogs();
-
-      }catch(outError){
-
-        console.error('面单已打印，但自动扣库存失败',outError);
-
-        playWarehouseTone('error');
-
-        showError(
-          `⚠️ ${order.order_no} 面单已经打印成功，但库存自动扣减失败：${outError.message||'未知错误'}。
-
-订单已保留为“已贴单待出库”，请不要重复打印，在贴单进度里处理。`
-        );
-      }
+      showOk(
+        `✅ ${order.order_no} 面单已打印并标记“已贴单”；库存扣减功能已暂停`
+      );
 
       renderPackingQueue();
       updateShippingCloudSummary();
@@ -16494,8 +16538,8 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
     if(markPacked && progress){
       showOk(
         order.status==='shipped'
-        ? `✅ 面单已打印并扣库存 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
-        : `⚠️ 面单已打印，待人工完成出库 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
+        ? `✅ 面单已打印并标记已贴单 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
+        : `✅ 面单已打印并标记已贴单 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
       );
     }else{
       if(!silentPrinted){
@@ -16553,29 +16597,8 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 }
 
 async function completePackedOrder(orderId){
-
-  const order=
-    (APP.shippingOrders||[])
-      .find(x=>x.id===orderId);
-
-  /* V9.6：订单出库并扣库存不再要求管理员密码。 */
-
-  try{
-    const {data,error}=await APP.sb.rpc('complete_shipping_order',{p_order_id:orderId});
-    if(error) throw error;
-    await loadInventory();
-    await loadLogs();
-    await syncShippingBatchSummaries();
-    await loadShippingWorkspace(true);
-    renderHome();
-    renderInventoryList();
-    renderLogs();
-    showOk('订单已出库并扣减库存');
-    return data;
-  }catch(error){
-    console.error(error);
-    showError('出库失败：'+(error.message||''));
-  }
+  showInfo('库存扣减功能已暂停；不会修改库存数量。');
+  return false;
 }
 
 // 云端订单全部拣完后，仍然保留出货中心结果区，方便继续扫码贴单/出库。
