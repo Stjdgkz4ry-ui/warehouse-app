@@ -1033,7 +1033,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.3.1 · Stable Warehouse
+          版本 V10.3.2 · Stable Warehouse
         </div>
 
       </div>
@@ -1163,7 +1163,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.3.1-20260918-COMPLETED-LIST-FIX';
+const APP_VERSION = 'V10.3.2-20260918-PACKING-PROGRESS-CLEAN-ORDERED';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -15745,8 +15745,6 @@ function renderPackingProgressCenter(){
     !labelMap.has(o.id)
   );
 
-  const visiblePending=pending.slice(0,12);
-
   el.innerHTML=`
     <div class="card p-3 border border-blue-100">
       <div class="flex items-center justify-between gap-2">
@@ -15764,26 +15762,6 @@ function renderPackingProgressCenter(){
       </div>
 
       ${missingLabel.length?`<div class="mt-2 text-red-600 text-sm">⚠️ 还有 ${missingLabel.length} 单没有绑定面单</div>`:''}
-
-      <div class="mt-3 font-bold text-red-700">🔴 未贴单明细 ${pending.length}</div>
-      ${visiblePending.length?visiblePending.map(o=>{
-        const label=labelMap.get(o.id);
-        const page=shippingLabelPageNo(label);
-        const req=packingProgressOrderItems(o.id)||'无商品明细';
-        return `
-          <div class="border-t py-2 text-sm">
-            <div class="font-bold break-all">${escapeHtml(o.order_no||'')}</div>
-            <div class="small break-all">SKU：${escapeHtml(req)}</div>
-            <div class="small break-all">Tracking：${escapeHtml(o.tracking_no||label?.tracking_no||'—')}</div>
-            <div class="small">快递：${escapeHtml(shippingCarrierName(o))}${page?` · 面单第 ${page} 页`:''}</div>
-            <div class="grid grid-cols-2 gap-2 mt-2">
-              <button class="btn btn-gray btn-small" onclick="openBoundShippingLabel('${o.id}')">👁️ 查看面单</button>
-              <button class="btn btn-blue btn-small" onclick="manualConfirmPackOrder('${o.id}')">✅ 人工确认出单</button>
-            </div>
-          </div>`;
-      }).join(''):'<div class="bg-green-50 rounded-lg p-2 mt-2 text-green-700 text-sm">✅ 当前没有未贴单订单</div>'}
-
-      ${pending.length>12?`<div class="small mt-2">这里只显示前 12 单，点击下面按钮可搜索全部。</div>`:''}
 
       <button class="btn btn-blue w-full mt-3" onclick="openPackingProgressSearch()">🔎 查询未贴 / 已完成订单</button>
     </div>`;
@@ -15866,15 +15844,40 @@ function renderPackingProgressSearchList(){
       .some(v=>normalizeShippingKey(v).includes(q));
   });
 
+  /*
+   * V10.3.2：
+   * “已完成”必须严格按实际扫码出单顺序显示。
+   * finish_shipping_print 会写 packed_at，所以用 packed_at 作为主顺序。
+   * 最早扫出的第 1 单排最上面，后续依次往下。
+   * shipped 历史单仍优先沿用原 packed_at；只有旧数据没有 packed_at 时才回退 shipped_at/created_at。
+   */
+  if(filter==='completed' || filter==='shipped'){
+    rows.sort((a,b)=>{
+      const ta=Date.parse(a.packed_at||a.shipped_at||a.created_at||0)||0;
+      const tb=Date.parse(b.packed_at||b.shipped_at||b.created_at||0)||0;
+      if(ta!==tb) return ta-tb;
+      return String(a.id||'').localeCompare(String(b.id||''));
+    });
+  }
+
   rows=rows.slice(0,200);
+
+  const completedSequenceMap=new Map();
+  if(filter==='completed' || filter==='shipped'){
+    rows.forEach((o,index)=>completedSequenceMap.set(o.id,index+1));
+  }
 
   el.innerHTML=rows.length?rows.map(o=>{
     const label=labelMap.get(o.id);
     const page=shippingLabelPageNo(label);
     const req=packingProgressOrderItems(o.id)||'无商品明细';
     const status=o.status==='shipped'?'✅ 历史已出库':o.status==='packed'?'✅ 已打印 / 库存不变':'🔴 未贴单';
+    const seq=completedSequenceMap.get(o.id);
+    const packedTime=o.packed_at||o.shipped_at||'';
+    const packedTimeText=packedTime ? new Date(packedTime).toLocaleString() : '';
     return `
       <div class="card p-3 mb-2">
+        ${seq?`<div class="small font-bold text-green-700 mb-1">扫码出单顺序：第 ${seq} 单${packedTimeText?` · ${escapeHtml(packedTimeText)}`:''}</div>`:''}
         <div class="font-bold break-all">${escapeHtml(o.order_no||'')}</div>
         <div class="small mt-1 break-all">${escapeHtml(req)}</div>
         <div class="small mt-1 break-all">Tracking：${escapeHtml(o.tracking_no||label?.tracking_no||'—')}</div>
@@ -15919,7 +15922,7 @@ async function openPackingScanner(){
     </div>
 
     <div class="bg-blue-50 rounded-xl p-3 mb-3 text-sm">
-      扫商品 SKU：单件订单扫 1 件即可出面单；一票多件会累计 SKU，未扫齐绝不打印，扫齐后必须双重确认。订单号 / Tracking 只能直接出单件订单；多件订单会被拦截。
+      扫商品 SKU：单件订单扫 1 件即可出面单；一票多件会累计 SKU，未扫齐绝不打印，扫齐后只确认一次。订单号 / Tracking 只能直接出单件订单；多件订单会被拦截。
     </div>
 
     <div id="packingProgressCenter" class="mb-3">
