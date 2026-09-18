@@ -1163,7 +1163,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V11.1-20260918-ONE-SCAN-SAFE-PRINT';
+const APP_VERSION = 'V11.2.1-20260918-PACK-POOL-LOCK-SKIP';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -14664,6 +14664,24 @@ function isOrderPackingEligible(order){
     return false;
   }
 
+  /*
+   * V11.2.1 关键修复：
+   * 已经处于 claimed / submitted / uncertain 的打印任务，
+   * 绝不能继续参加“扫码货物池自动组单”。
+   *
+   * 否则同 SKU 的一个异常锁单会一直被 nextCompletablePackingOrder()
+   * 选中，打印函数又因为防重复锁拒绝出纸，结果就是：
+   * 商品越扫越堆在货物池，后面的正常订单永远轮不到。
+   *
+   * 锁单必须单独在“贴单/完成查询 -> 处理打印异常”里人工处理。
+   */
+  if(
+    typeof isPrintLockedV11==='function' &&
+    isPrintLockedV11(order)
+  ){
+    return false;
+  }
+
   const hasItems=
     APP.shippingItems.some(
       x=>x.order_id===order.id &&
@@ -15977,6 +15995,15 @@ async function handlePackingScan(code){
     ){
       return packingScanError(
         `❌ 订单 ${directOrder.order_no} 已经出过面单/已完成，禁止重复出单`
+      );
+    }
+
+    if(
+      typeof isPrintLockedV11==='function' &&
+      isPrintLockedV11(directOrder)
+    ){
+      return packingScanError(
+        `🔒 订单 ${directOrder.order_no} 的打印结果待确认，已禁止自动重打。请到“贴单 / 完成查询”里处理打印异常。`
       );
     }
 
