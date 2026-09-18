@@ -848,7 +848,7 @@ th{
             </button>
 
             <button class="btn btn-red" onclick="clearPickingList()">
-              📦 归档当前待处理订单
+              📦 本批处理完成 → 归档并扣已发货库存
             </button>
 
           </div>
@@ -1033,7 +1033,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.1 · Stable Warehouse
+          版本 V10.2.2 · Stable Warehouse
         </div>
 
       </div>
@@ -1163,7 +1163,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.1-20260918-STABLE-PACKPOOL-NO-STOCK-DEDUCT';
+const APP_VERSION = 'V10.2.2-20260918-TEST-BATCH-FORCE-DELETE';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1471,6 +1471,14 @@ function openModal(html){
 
 
 function closeModal(){
+
+  /*
+   * V10.1.1：无论通过哪个代码路径关闭弹窗，都释放扫码贴单遮罩锁。
+   * 避免某个内部流程直接 closeModal() 后，后续其它弹窗再也点不掉。
+   */
+  if(APP){
+    APP.packingModalLocked=false;
+  }
 
   deactivateHardwareScanner();
 
@@ -8612,15 +8620,81 @@ async function clearPickingList(){
     return showError('请先选择仓库');
   }
 
+  const source=
+    APP.shippingActiveBatchSource ||
+    getStoredShippingActiveBatch();
+
+  if(!source){
+    return showError('没有当前批次，不能归档');
+  }
+
+  /*
+   * V10.2.1：
+   * 配货清单里允许存在“这次不发货”的订单，因此没有上传面单的订单不要求出纸。
+   *
+   * 只有【已经上传/绑定面单】的订单，才必须先确认实际出纸并成为 packed/shipped。
+   * 没有面单的订单归档时只归档，不扣库存、不标记 shipped。
+   */
+  const labelOrderIds=
+    new Set(
+      (APP.shippingLabels||[])
+        .map(x=>x.order_id)
+        .filter(Boolean)
+    );
+
+  const ordersWithLabel=
+    (APP.shippingOrders||[])
+      .filter(o=>labelOrderIds.has(o.id));
+
+  const noLabelOrders=
+    (APP.shippingOrders||[])
+      .filter(o=>!labelOrderIds.has(o.id));
+
+  const unfinished=
+    ordersWithLabel.filter(
+      o=>!['packed','shipped'].includes(String(o.status||''))
+    );
+
+  if(unfinished.length){
+    return showError(
+      `❌ 还有 ${unfinished.length} 个【有面单】订单没有确认实际出纸/完成贴单，禁止归档和扣库存。`
+    );
+  }
+
   if(!(await verifyShippingDeletePassword())){
     return;
   }
 
+  const totalOrders=(APP.shippingOrders||[]).length;
+
+  const shippedOrderIds=
+    new Set(
+      (APP.shippingOrders||[])
+        .filter(o=>['packed','shipped'].includes(String(o.status||'')) && labelOrderIds.has(o.id))
+        .map(o=>o.id)
+    );
+
+  const shipPieces=
+    (APP.shippingItems||[])
+      .filter(x=>shippedOrderIds.has(x.order_id))
+      .reduce(
+        (s,x)=>s+safeNumber(x.qty,0),
+        0
+      );
+
   const ok=confirm(
-    '确定把当前仓库【全部未完成出货订单】移出工作区吗？\n\n' +
-    'V8.2 不再真正删除订单和面单。\n' +
-    '这些订单会进入“已归档历史”，批次记录、面单和工作进度继续保留在云端。\n\n' +
-    '库存和已经完成的出库历史不会受影响。'
+    `确认这个批次已经处理完并准备归档吗？\n\n`+
+    `批次：${shippingActiveBatchName()}\n`+
+    `总订单：${totalOrders} 单\n`+
+    `有面单/实际发货：${ordersWithLabel.length} 单\n`+
+    `没有面单/本次不发：${noLabelOrders.length} 单\n`+
+    `预计扣库存：${shipPieces} 件\n\n`+
+    `确认后数据库会一次性：\n`+
+    `1. 只检查“有面单”的订单是否都已确认实际出纸\n`+
+    `2. 只扣“有面单且已贴单”的订单库存\n`+
+    `3. 没有面单的订单不扣库存、不标记出库\n`+
+    `4. 整个批次统一归档\n\n`+
+    `任一步失败，整次操作都会回滚，不会只扣一半库存。`
   );
 
   if(!ok) return;
@@ -8628,27 +8702,19 @@ async function clearPickingList(){
   try{
 
     saveShippingProgressSnapshot();
+    showInfo('正在归档并一次性扣减本批次库存，请勿关闭页面...');
 
-    showInfo('正在安全归档当前待处理订单...');
-
-    const {data,error}=
-      await APP.sb
-        .from('shipping_orders')
-        .update({
-          is_archived:true,
-          archived_at:new Date().toISOString(),
-          archived_by:APP.user.id
-        })
-        .eq('warehouse_id',APP.warehouse.id)
-        .neq('status','shipped')
-        .eq('is_archived',false)
-        .select('id');
+    const {data,error}=await APP.sb.rpc(
+      'archive_shipping_batch_and_deduct_v102',
+      {
+        p_warehouse_id:APP.warehouse.id,
+        p_source_file:source
+      }
+    );
 
     if(error){
       throw error;
     }
-
-    await syncShippingBatchSummaries();
 
     APP.pickingRows=[];
     APP.pickingFileName='';
@@ -8660,25 +8726,30 @@ async function clearPickingList(){
     APP.shippingPickAudit=null;
 
     setShippingActiveBatch('');
+    clearPackPool();
 
+    await loadInventory();
+    await loadLogs({silent:true});
     await loadShippingWorkspace(true);
     await loadShippingBatchHistory(true);
 
+    renderHome();
+    renderInventoryList();
+    renderLogs();
     renderPickingEmpty();
-    renderPackingQueue();
-    updateShippingCloudSummary();
+
+    const deducted=safeNumber(data?.deducted_pieces,shipPieces);
 
     showOk(
-      `✅ 已安全归档 ${(data||[]).length} 个未完成订单；没有删除任何历史订单或面单`
+      `✅ 批次已归档，库存已一次性扣减 ${deducted} 件`
     );
 
   }catch(error){
 
-    console.error(error);
+    console.error('归档并扣库存失败',error);
 
     showError(
-      '归档失败：'+
-      (error.message||'')
+      `❌ 归档失败：${error.message||'未知错误'}。数据库事务已回滚，不会只扣一半库存。`
     );
   }
 }
@@ -10142,6 +10213,15 @@ function renderShippingBatchHistory(){
                 <div class="small text-red-700">
                   用于导入错批次。已经打印、贴单或出库过的订单会自动阻止清除。
                 </div>
+
+                <button
+                  class="btn btn-yellow w-full"
+                  onclick="forceDeleteTestBatchV1022('${encodedKey}')">
+                  🧪 强制删除测试批次（管理员）
+                </button>
+                <div class="small text-yellow-800">
+                  仅用于测试数据。允许删除 packed / 已打印测试单；如果批次里有任何 shipped（已出库）订单，会强制阻止。
+                </div>
               `
           }
         </div>
@@ -10457,6 +10537,218 @@ async function permanentDeleteCurrentBatch(encodedKey){
     console.error(error);
     showError(
       '清除当前批次失败：'+
+      (error.message||'')
+    );
+  }
+}
+
+
+async function forceDeleteTestBatchV1022(encodedKey){
+
+  const key=decodeURIComponent(encodedKey||'');
+
+  const batch=
+    buildShippingBatchHistory()
+      .find(x=>x.key===key);
+
+  if(!batch){
+    return showError('找不到这个测试批次');
+  }
+
+  if(batch.status==='archived'){
+    return showError('这个批次已经归档，请使用“永久清除这个归档批次”。');
+  }
+
+  const adminPin=
+    await verifyWarehouseAdminPassword(
+      `强制删除测试批次：${batch.name}`
+    );
+
+  if(!adminPin){
+    return;
+  }
+
+  /*
+   * 强制删除测试批次比普通清除权限更高，
+   * 所以必须输入完整批次名称，再输入固定确认词。
+   */
+  const typed=prompt(
+    '⚠️ 仅允许删除测试批次。\n\n'+
+    '这个操作允许删除已经打印/已贴单（packed）的测试订单，\n'+
+    '但只要存在任何 shipped（已出库）订单，数据库会拒绝删除。\n\n'+
+    '库存不会被修改。\n\n'+
+    '请输入完整批次名称确认：\n\n'+
+    batch.name
+  );
+
+  if(typed===null){
+    return;
+  }
+
+  if(String(typed).trim()!==String(batch.name).trim()){
+    return showError('❌ 批次名称输入不一致，没有删除任何数据。');
+  }
+
+  const phrase=prompt(
+    '最后一道确认。\n\n'+
+    '请输入：删除测试批次\n\n'+
+    '只有完全一致才会继续。'
+  );
+
+  if(String(phrase||'').trim()!=='删除测试批次'){
+    return showError('❌ 确认词不正确，没有删除任何数据。');
+  }
+
+  try{
+
+    showInfo('正在检查测试批次，并读取面单文件清单...');
+
+    let orderQuery=
+      APP.sb
+        .from('shipping_orders')
+        .select('id,status')
+        .eq('warehouse_id',APP.warehouse.id)
+        .eq('source_file',batch.sourceFile);
+
+    if(batch.orderDate){
+      orderQuery=
+        orderQuery.eq(
+          'order_date',
+          String(batch.orderDate).slice(0,10)
+        );
+    }
+
+    const {
+      data:batchOrders,
+      error:orderReadError
+    }=await orderQuery;
+
+    if(orderReadError){
+      throw orderReadError;
+    }
+
+    const orders=batchOrders||[];
+
+    if(!orders.length){
+      return showError('这个批次已经不存在，刷新后再看。');
+    }
+
+    const shippedCount=
+      orders.filter(x=>x.status==='shipped').length;
+
+    if(shippedCount>0){
+      return showError(
+        `❌ 这个批次有 ${shippedCount} 个已出库订单，禁止强制删除。`
+      );
+    }
+
+    const orderIds=
+      orders
+        .map(x=>x.id)
+        .filter(Boolean);
+
+    let storagePaths=[];
+
+    if(orderIds.length){
+      const labels=
+        await shippingFetchByOrderIds(
+          'shipping_labels',
+          orderIds,
+          {select:'storage_path'}
+        );
+
+      storagePaths=
+        labels
+          .map(x=>String(x.storage_path||'').trim())
+          .filter(Boolean);
+    }
+
+    showInfo('正在强制删除测试批次...');
+
+    const {data,error}=
+      await APP.sb.rpc(
+        'force_delete_test_shipping_batch_v1022',
+        {
+          p_warehouse_id:APP.warehouse.id,
+          p_source_file:String(batch.sourceFile||''),
+          p_order_date:String(batch.orderDate||'').slice(0,10),
+          p_admin_pin:String(adminPin)
+        }
+      );
+
+    if(error){
+      throw error;
+    }
+
+    let storageCleanupFailed=false;
+    let storageCleanupMessage='';
+
+    if(storagePaths.length){
+      const chunkSize=100;
+
+      for(let i=0;i<storagePaths.length;i+=chunkSize){
+        const chunk=storagePaths.slice(i,i+chunkSize);
+
+        const {error:removeError}=
+          await APP.sb.storage
+            .from('shipping-labels')
+            .remove(chunk);
+
+        if(removeError){
+          storageCleanupFailed=true;
+          storageCleanupMessage=
+            removeError.message||
+            'Storage 清理失败';
+          console.error(
+            '删除测试批次 Storage 文件失败：',
+            removeError
+          );
+          break;
+        }
+      }
+    }
+
+    if(
+      String(APP.shippingActiveBatchSource||'')===
+      String(batch.sourceFile||'')
+    ){
+      setShippingActiveBatch('');
+      APP.pickingRows=[];
+      APP.pickingFileName='';
+      APP.pickingOrderNo='';
+      APP.pickingOrderDate='';
+      APP.shippingOrders=[];
+      APP.shippingItems=[];
+      APP.shippingLabels=[];
+      APP.shippingPickAudit=null;
+      clearPackPool();
+    }
+
+    await syncShippingBatchSummaries();
+    await loadShippingWorkspace(true);
+    await loadShippingBatchHistory(false);
+
+    renderPackingQueue();
+    updateShippingCloudSummary();
+
+    if(storageCleanupFailed){
+      showError(
+        '⚠️ 测试批次数据库记录已经删除，但有部分旧面单 PDF 没有从 Storage 清干净：'+
+        storageCleanupMessage
+      );
+      return;
+    }
+
+    showOk(
+      `✅ 测试批次已永久删除：${batch.name}；订单 ${safeNumber(data?.deleted_orders,0)} 个`
+    );
+
+  }catch(error){
+
+    console.error('强制删除测试批次失败',error);
+
+    showError(
+      '强制删除测试批次失败：'+
       (error.message||'')
     );
   }
@@ -14887,7 +15179,7 @@ function renderPackingQueue(){
    * 正常订单通过“扫码贴单”入口处理即可。
    *
    * 工作台只显示真正需要人工关注的状态：
-   * 1. 已完成贴单、等待出库；
+   * 1. 已完成贴单（当前版本不自动扣库存）；
    * 2. 已有面单但被人工标记/处理中的订单（以后可扩展）。
    */
   const awaitingOutbound=
@@ -14924,7 +15216,7 @@ function renderPackingQueue(){
         awaitingOutbound.length
         ? `
           <div class="font-bold mt-4 mb-2">
-            已贴单 · 待出库 ${awaitingOutbound.length}
+            已贴单（库存不变） ${awaitingOutbound.length}
           </div>
 
           ${awaitingOutbound.map(o=>{
@@ -14964,7 +15256,7 @@ function renderPackingQueue(){
                     }
 
                     <div class="small text-gray-500 text-center px-2 py-2">
-                      库存扣减已暂停
+                      库存将在整批归档时统一扣减
                     </div>
                   </div>
 
@@ -14975,7 +15267,7 @@ function renderPackingQueue(){
         `
         : `
           <div class="bg-gray-50 rounded-xl p-3 mt-3 text-sm">
-            当前没有“已贴单待出库”的订单。
+            当前没有“已贴单”订单。
           </div>
         `
       }
@@ -15486,9 +15778,9 @@ function renderPackingProgressCenter(){
         <div class="bg-blue-50 rounded-lg p-2"><b>${orders.length}</b><br>订单总数</div>
         <div class="bg-purple-50 rounded-lg p-2"><b>${labels.length}</b><br>已上传面单</div>
         <div class="bg-yellow-50 rounded-lg p-2"><b>${printed.length}</b><br>已打印</div>
-        <div class="bg-green-50 rounded-lg p-2"><b>${shipped.length}</b><br>已完成/已扣库存</div>
+        <div class="bg-green-50 rounded-lg p-2"><b>${shipped.length}</b><br>历史已出库</div>
         <div class="bg-red-50 rounded-lg p-2"><b>${pending.length}</b><br>未贴单</div>
-        <div class="bg-orange-50 rounded-lg p-2"><b>${packedNotShipped.length}</b><br>已打印待扣库存</div>
+        <div class="bg-orange-50 rounded-lg p-2"><b>${packedNotShipped.length}</b><br>已打印 / 库存不变</div>
       </div>
 
       ${missingLabel.length?`<div class="mt-2 text-red-600 text-sm">⚠️ 还有 ${missingLabel.length} 单没有绑定面单</div>`:''}
@@ -15547,7 +15839,7 @@ async function openPackingProgressSearch(){
     </div>
 
     <div class="bg-blue-50 rounded-xl p-3 mb-3 text-sm">
-      已经上传并绑定面单、但还没扫码的订单，可以直接点“查看面单”核对，再点“人工确认出单”。打印成功后系统会自动扣库存并标记完成。
+      已经上传并绑定面单、但还没扫码的订单，可以直接点“查看面单”核对，再点“人工确认出单”。只有确认实际出纸后才标记为已贴单；库存将在整个批次归档时统一扣减。
     </div>
 
     <input id="packingProgressSearchInput" placeholder="搜索订单号 / Tracking / SKU" oninput="renderPackingProgressSearchList()">
@@ -15594,7 +15886,7 @@ function renderPackingProgressSearchList(){
     const label=labelMap.get(o.id);
     const page=shippingLabelPageNo(label);
     const req=packingProgressOrderItems(o.id)||'无商品明细';
-    const status=o.status==='shipped'?'✅ 已完成 / 已扣库存':o.status==='packed'?'🟡 已打印待出库':'🔴 未贴单';
+    const status=o.status==='shipped'?'✅ 历史已出库':o.status==='packed'?'✅ 已打印 / 库存不变':'🔴 未贴单';
     return `
       <div class="card p-3 mb-2">
         <div class="font-bold break-all">${escapeHtml(o.order_no||'')}</div>
@@ -15626,6 +15918,9 @@ async function openPackingScanner(){
     <div class="bg-green-50 rounded-xl p-3 mb-3 text-sm">
       <div id="hardwareScannerStatus" class="font-bold text-green-700">
         🟢 扫码枪监听中
+      </div>
+      <div class="small mt-2">
+        V10.1.1：扫码货物池已做本机双备份；刷新/切后台会尽量保留。只有确认实际出纸才标记“已贴单”；库存将在整批归档时统一扣减。
       </div>
 
       <div class="small mt-1">
@@ -15937,7 +16232,7 @@ async function handlePackingScan(code){
 
   /*
    * 形成完整订单：
-   * 先打印并标记 packed，成功后才从货物池扣掉该订单数量。
+   * 先打印；只有确认实际出纸并标记 packed 后，才从货物池扣掉该订单数量。
    */
   const printed=
     await printShippingLabelByOrderId(
@@ -16009,7 +16304,7 @@ async function manualConfirmPackOrder(orderId){
     return showError('这个订单当前没有可用面单，或者已经完成贴单');
   }
 
-  /* V9.6：人工确认出单并扣库存不再要求管理员密码。 */
+  /* V10.1.1：人工确认出单只负责打印并标记已贴单，不自动扣库存。 */
 
   const page=shippingLabelPageNo(label);
   const tracking=order.tracking_no||label.tracking_no||'—';
@@ -16350,6 +16645,61 @@ async function renderPdfBlobToPrintWindow(
   }
 }
 
+
+async function confirmPrintedPaperV102(order,printToken){
+
+  /*
+   * V10.2：打印桥返回“成功”只代表程序完成了打印动作，
+   * 不直接等于纸张已经实际出来。
+   *
+   * 只有员工亲眼确认实际出纸，才调用 finish_shipping_print，
+   * 才把订单变成 packed（已贴单）。
+   */
+  const printed=confirm(
+    `请看打印机：订单 ${order.order_no} 的面单是否已经【实际出纸】？\n\n`+
+    `✅ 已经实际出纸：点“确定”，系统才标记为“已贴单”。\n`+
+    `❌ 没有出纸 / 卡纸：点“取消”。`
+  );
+
+  if(printed){
+    return 'printed';
+  }
+
+  const definitelyNoPaper=confirm(
+    `请再次确认：订单 ${order.order_no} 的面单【完全没有出纸】吗？\n\n`+
+    `只有确定没有出纸才能点“确定”，系统会释放打印锁，允许重新扫描打印。\n\n`+
+    `如果不确定是否出过纸，请点“取消”，订单将保持锁定，防止重复打印。`
+  );
+
+  if(definitelyNoPaper){
+
+    const {error}=await APP.sb.rpc(
+      'release_shipping_print_lock',
+      {
+        p_order_id:order.id,
+        p_token:printToken
+      }
+    );
+
+    if(error){
+      throw error;
+    }
+
+    showError(
+      `❌ ${order.order_no} 已确认没有出纸：未标记已贴单，打印锁已释放，可以重新扫描。`
+    );
+
+    return 'not_printed';
+  }
+
+  showError(
+    `🔒 ${order.order_no} 打印结果不确定：未标记已贴单，并继续保留打印锁，禁止自动重打。`
+  );
+
+  return 'uncertain';
+}
+
+
 async function printShippingLabelByOrderId(orderId, markPacked=false){
   const order=APP.shippingOrders.find(x=>x.id===orderId);
   const label=APP.shippingLabels.find(x=>x.order_id===orderId);
@@ -16501,6 +16851,24 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 
     if(markPacked){
 
+      /*
+       * V10.2：必须确认“实际出纸”以后，才允许 finish_shipping_print。
+       * 没有出纸：释放锁、保持 pending。
+       * 不确定：保持锁定、保持 pending，防止重复打印。
+       */
+      const paperResult=
+        await confirmPrintedPaperV102(
+          order,
+          printToken
+        );
+
+      if(paperResult!=='printed'){
+        if(paperResult==='not_printed'){
+          printToken=null;
+        }
+        return false;
+      }
+
       const {error:finishError}=
         await APP.sb.rpc(
           'finish_shipping_print',
@@ -16517,12 +16885,8 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       order.status='packed';
       printToken=null;
 
-      /*
-       * V10.1：暂停自动扣减库存。
-       * 打印成功后只保留 status='packed'（已贴单），不调用 complete_shipping_order。
-       */
       showOk(
-        `✅ ${order.order_no} 面单已打印并标记“已贴单”；库存扣减功能已暂停`
+        `✅ ${order.order_no} 已确认实际出纸，已标记“已贴单”；库存暂不扣减`
       );
 
       renderPackingQueue();
@@ -16601,7 +16965,7 @@ async function completePackedOrder(orderId){
   return false;
 }
 
-// 云端订单全部拣完后，仍然保留出货中心结果区，方便继续扫码贴单/出库。
+// 云端订单全部拣完后，仍然保留出货中心结果区，方便继续扫码贴单。
 const _v3RenderPickingEmpty = renderPickingEmpty;
 renderPickingEmpty = function(){
   if(APP.shippingCloudReady && APP.shippingOrders.length){
