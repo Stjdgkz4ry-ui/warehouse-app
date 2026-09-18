@@ -1246,7 +1246,10 @@ const APP = {
 
   /* V9.1：扫码贴单会话管理员授权 + 贴单进度缓存 */
   packingAdminAuthorized:false,
-  packingProgressData:null
+  packingProgressData:null,
+  bootPromise:null,
+  bootedUserId:null,
+  mobilePendingPrint:null
 
 };
 
@@ -1363,6 +1366,15 @@ function formatDate(value){
 
   }
 
+}
+
+/* 按设备本地时区生成 YYYY-MM-DD，避免纽约晚上被 UTC 算成第二天。 */
+function localDateYmd(value=new Date()){
+  const d=value instanceof Date ? value : new Date(value);
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
 }
 
 
@@ -1668,8 +1680,8 @@ async function login(){
     APP.user =
       data.user;
 
-
-    
+    /* 登录成功后直接启动，不再完全依赖 Auth 事件。 */
+    await bootApp();
 
 
   }catch(error){
@@ -1759,6 +1771,8 @@ async function logout(){
   APP.logs = [];
 
   APP.pickingRows = [];
+  APP.bootedUserId = null;
+  APP.bootPromise = null;
 
 
   $('appPage')
@@ -1803,7 +1817,7 @@ document.addEventListener(
   }
 );
 
-async function bootApp(){
+async function bootAppOnce(){
 
   try{
 
@@ -1840,10 +1854,7 @@ async function bootApp(){
       APP.user.email || '';
 
 
-    const date =
-      new Date()
-        .toISOString()
-        .slice(0,10);
+    const date = localDateYmd();
 
     $('pickOrderDate').value =
       date;
@@ -1861,6 +1872,8 @@ async function bootApp(){
       lastPage,
       {remember:false}
     );
+
+    APP.bootedUserId=APP.user.id;
 
 
   }catch(error){
@@ -1881,6 +1894,28 @@ async function bootApp(){
 
   }
 
+}
+
+/* 防止 INITIAL_SESSION、init() 和 login() 同时重复启动。 */
+async function bootApp(){
+  if(APP.bootPromise){
+    return APP.bootPromise;
+  }
+
+  if(
+    APP.bootedUserId &&
+    APP.user?.id===APP.bootedUserId &&
+    !$('appPage').classList.contains('hidden')
+  ){
+    return;
+  }
+
+  APP.bootPromise=bootAppOnce();
+  try{
+    return await APP.bootPromise;
+  }finally{
+    APP.bootPromise=null;
+  }
 }
 
 
@@ -7275,7 +7310,7 @@ function getInventoryDuplicateCount(sku){
 }
 
 
-async function runOrderImport(){
+async function runOrderImportLegacyUnused(){
 
   const file =
     $('orderImportFile')
@@ -9518,7 +9553,7 @@ function exportLogs(){
 ========================================================= */
 
 function shippingDateToday(){
-  return new Date().toISOString().slice(0,10);
+  return localDateYmd();
 }
 
 function normalizeShippingKey(value){
@@ -9533,13 +9568,15 @@ async function checkShippingCloud(){
   }
 
   try{
-    const {error} = await APP.sb
-      .from('shipping_orders')
-      .select('id')
-      .eq('warehouse_id',APP.warehouse.id)
-      .limit(1);
+    const {data,error}=await APP.sb.rpc(
+      'warehouse_system_healthcheck'
+    );
 
-    if(error){
+    if(error || data?.ok!==true){
+      console.error(
+        '云端健康检查失败',
+        error||data
+      );
       APP.shippingCloudReady = false;
       updateShippingCloudBadge();
       return false;
@@ -11434,6 +11471,69 @@ async function saveImportedOrdersToCloud(parsedOrders, sourceFile){
   /*
    * 没有任何重复订单号时，才真正创建新批次。
    */
+  const atomicPayload=orders.map(order=>({
+    order_no:String(order.orderNo||'').trim(),
+    tracking_no:String(order.trackingNo||'').trim()||null,
+    items:(order.items||[]).map(item=>({
+      sku:String(item.sku||'').trim(),
+      name:String(item.name||item.sku||'').trim(),
+      qty:Math.floor(safeNumber(item.qty,0))
+    })).filter(item=>item.sku && item.qty>0)
+  }));
+
+  renderShippingImportProgress(
+    0,
+    orders.length,
+    '正在由数据库事务安全导入订单'
+  );
+
+  const {data:atomicResult,error:atomicError}=await APP.sb.rpc(
+    'import_shipping_batch_atomic',
+    {
+      p_warehouse_id:warehouseId,
+      p_order_date:orderDate,
+      p_source_file:sourceFile,
+      p_orders:atomicPayload
+    }
+  );
+
+  if(atomicError){
+    throw new Error(
+      '原子导入失败：'+
+      (atomicError.message||'请先执行配套 Supabase SQL')
+    );
+  }
+
+  const atomicOrders=safeNumber(atomicResult?.order_count,0);
+  const atomicPieces=safeNumber(atomicResult?.piece_count,0);
+  const atomicRows=safeNumber(atomicResult?.item_row_count,0);
+
+  if(atomicOrders!==orders.length){
+    throw new Error(
+      `数据库事务核验失败：应有 ${orders.length} 单，实际 ${atomicOrders} 单`
+    );
+  }
+
+  renderShippingImportProgress(
+    orders.length,
+    orders.length,
+    '✅ 原子导入完成并核验通过'
+  );
+
+  await syncShippingBatchSummaries();
+
+  return {
+    orderCount:atomicOrders,
+    pieces:atomicPieces,
+    itemRows:atomicRows,
+    restored:false,
+    batchSource:sourceFile
+  };
+
+  /*
+   * 以下旧分批写入代码保留作版本回看，但上面的事务导入成功后不会执行。
+   * 不要重新启用，否则断网时可能留下只有订单、没有明细的半成品批次。
+   */
   const orderPayload=
     orders.map(
       order=>({
@@ -11775,6 +11875,12 @@ async function runOrderImport(){
     const byOrder=new Map();
     const errors=[];
 
+    if(orderNoIndex<0 && !manualOrderNo){
+      throw new Error(
+        '没有识别到订单号列。为防止把多个客户订单错误合并成一张订单，系统已停止导入。请检查表头，或在页面上填写订单号（仅适用于整个文件确实只有一张订单）。'
+      );
+    }
+
     for(let i=1;i<rows.length;i++){
       const row=rows[i];
       const skuCell=String(row[skuIndex]??'').trim();
@@ -11793,8 +11899,8 @@ async function runOrderImport(){
       let orderNo=orderNoIndex>=0 ? String(row[orderNoIndex]??'').trim() : '';
       if(!orderNo) orderNo=manualOrderNo;
       if(!orderNo){
-        const baseName=String(file.name||'order').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9_-]+/g,'-').slice(0,40);
-        orderNo='FILE-' + shippingDateToday().replaceAll('-','') + '-' + baseName;
+        errors.push(`第${i+1}行：缺少订单号`);
+        continue;
       }
 
       const trackingNo=trackingIndex>=0 ? String(row[trackingIndex]??'').trim() : '';
@@ -13190,6 +13296,9 @@ function confirmMultiPiecePack(order,source='扫码'){
 }
 
 async function uploadOneShippingLabelPage(order,page,fileName){
+  const oldLabel=(APP.shippingLabels||[]).find(
+    x=>x.order_id===order.id
+  );
   /*
    * Supabase Storage 的对象 key 必须尽量使用稳定的 ASCII 字符。
    * iPhone 文件名里常有中文、空格、全角符号，直接放进 Storage path
@@ -13239,7 +13348,29 @@ async function uploadOneShippingLabelPage(order,page,fileName){
     },{onConflict:'order_id'});
 
   if(labelError){
+    /* 数据库保存失败时回收刚上传的文件，避免孤儿 PDF。 */
+    try{
+      await APP.sb.storage
+        .from('shipping-labels')
+        .remove([path]);
+    }catch(cleanupError){
+      console.warn('回收未绑定面单文件失败',cleanupError);
+    }
     throw labelError;
+  }
+
+  /* 新面单记录保存成功后，再清理同一订单的旧 PDF。 */
+  if(
+    oldLabel?.storage_path &&
+    oldLabel.storage_path!==path
+  ){
+    try{
+      await APP.sb.storage
+        .from('shipping-labels')
+        .remove([oldLabel.storage_path]);
+    }catch(cleanupError){
+      console.warn('清理旧面单文件失败',cleanupError);
+    }
   }
 
   /*
@@ -14314,16 +14445,27 @@ async function handlePickScan(code){
       );
     }
 
-    const nextQty=safeNumber(item.picked_qty,0)+1;
-    const {error}=await APP.sb
-      .from('shipping_order_items')
-      .update({picked_qty:nextQty})
-      .eq('id',item.id)
-      .eq('warehouse_id',APP.warehouse.id);
+    const {data:scanResult,error}=await APP.sb.rpc(
+      'scan_shipping_item_atomic',
+      {
+        p_item_id:item.id,
+        p_warehouse_id:APP.warehouse.id
+      }
+    );
     if(error) throw error;
 
-    item.picked_qty=nextQty;
-    await refreshShippingOrderStatuses();
+    item.picked_qty=safeNumber(
+      scanResult?.picked_qty,
+      safeNumber(item.picked_qty,0)+1
+    );
+
+    const changedOrder=APP.shippingOrders.find(
+      x=>x.id===item.order_id
+    );
+    if(changedOrder && scanResult?.order_status){
+      changedOrder.status=scanResult.order_status;
+    }
+
     buildCloudPickingRows();
     renderNextPickHint();
     updateShippingCloudSummary();
@@ -16278,6 +16420,155 @@ async function renderPdfBlobToPrintWindow(
   }
 }
 
+async function beginMobilePrintConfirmation(order,url,printToken){
+  APP.mobilePendingPrint={
+    orderId:order.id,
+    orderNo:order.order_no,
+    url,
+    printToken,
+    consumePool:orderCanUsePackPool(order),
+    busy:false
+  };
+
+  deactivateHardwareScanner();
+  if(APP.scannerRunning){
+    try{ await stopScanner(); }catch(e){}
+  }
+
+  const opened=window.open(url,'_blank');
+
+  openModal(`
+    <h2 class="text-xl font-bold mb-3">📄 手机面单确认</h2>
+    <div class="bg-yellow-50 rounded-xl p-3 text-sm mb-3">
+      系统还没有扣库存，也没有完成订单。请先确认面单已经成功打开、打印并贴到货物上。
+    </div>
+    <div class="font-bold break-all mb-3">订单：${escapeHtml(order.order_no)}</div>
+    ${opened ? '' : '<div class="text-red-600 text-sm mb-3">Safari 阻止了自动打开，请点击下面“重新打开面单”。</div>'}
+    <button class="btn btn-blue w-full" onclick="reopenPendingMobileLabel()">👁️ 重新打开面单</button>
+    <button id="mobilePrintConfirmBtn" class="btn btn-green w-full mt-2" onclick="confirmMobilePrintSuccess()">✅ 已成功打印并贴单</button>
+    <button class="btn btn-gray w-full mt-2" onclick="cancelMobilePrintConfirmation()">取消，不扣库存</button>
+  `);
+
+  /* 返回 false，阻止原扫码函数提前消费本机货物池。 */
+  return false;
+}
+
+function reopenPendingMobileLabel(){
+  const pending=APP.mobilePendingPrint;
+  if(!pending?.url){
+    return showError('面单链接已经失效，请重新扫描');
+  }
+  const win=window.open(pending.url,'_blank');
+  if(!win){
+    showError('Safari 仍阻止打开，请允许此网站弹出窗口后重试');
+  }
+}
+
+async function cancelMobilePrintConfirmation(){
+  const pending=APP.mobilePendingPrint;
+  APP.mobilePendingPrint=null;
+
+  if(pending?.printToken){
+    try{
+      await APP.sb.rpc(
+        'release_shipping_print_lock',
+        {
+          p_order_id:pending.orderId,
+          p_token:pending.printToken
+        }
+      );
+    }catch(e){
+      console.warn('取消手机打印时释放锁失败',e);
+    }
+  }
+
+  closeModal();
+  showInfo('已取消，没有完成订单，也没有扣库存');
+}
+
+async function confirmMobilePrintSuccess(){
+  const pending=APP.mobilePendingPrint;
+  if(!pending || pending.busy){
+    return;
+  }
+
+  const order=APP.shippingOrders.find(x=>x.id===pending.orderId);
+  if(!order){
+    return showError('订单数据已变化，请重新同步后处理');
+  }
+
+  pending.busy=true;
+  const btn=$('mobilePrintConfirmBtn');
+  if(btn){
+    btn.disabled=true;
+    btn.textContent='正在完成订单并扣库存...';
+  }
+
+  try{
+    const {error:finishError}=await APP.sb.rpc(
+      'finish_shipping_print',
+      {
+        p_order_id:order.id,
+        p_token:pending.printToken
+      }
+    );
+    if(finishError) throw finishError;
+
+    order.status='packed';
+    pending.printToken=null;
+
+    const {error:outError}=await APP.sb.rpc(
+      'complete_shipping_order',
+      {p_order_id:order.id}
+    );
+
+    if(outError){
+      APP.mobilePendingPrint=null;
+      closeModal();
+      showError(
+        `⚠️ ${order.order_no} 已确认贴单，但扣库存失败：${outError.message||'未知错误'}。订单保留为“已贴单待出库”，请不要重复打印。`
+      );
+      await loadShippingWorkspace(true);
+      return;
+    }
+
+    if(pending.consumePool){
+      consumePackPoolForOrder(order);
+    }
+
+    order.status='shipped';
+    APP.mobilePendingPrint=null;
+    closeModal();
+
+    await loadInventory();
+    await loadLogs();
+    await loadShippingWorkspace(true);
+    renderHome();
+    renderInventoryList();
+    renderLogs();
+    showOk(`✅ ${order.order_no} 已完成并扣减库存`);
+
+  }catch(error){
+    console.error('手机确认贴单失败',error);
+
+    if(pending.printToken){
+      try{
+        await APP.sb.rpc(
+          'release_shipping_print_lock',
+          {
+            p_order_id:order.id,
+            p_token:pending.printToken
+          }
+        );
+      }catch(e){}
+    }
+
+    APP.mobilePendingPrint=null;
+    closeModal();
+    showError('确认贴单失败：'+(error.message||'未知错误')+'。没有自动扣库存，请重新同步检查。');
+  }
+}
+
 async function printShippingLabelByOrderId(orderId, markPacked=false){
   const order=APP.shippingOrders.find(x=>x.id===orderId);
   const label=APP.shippingLabels.find(x=>x.order_id===orderId);
@@ -16331,6 +16622,18 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 
     const url=data?.signedUrl;
     if(!url) throw new Error('无法生成面单地址');
+
+    /*
+     * 手机端必须由用户明确确认“已打印并贴单”后才能完成订单和扣库存。
+     * 即使 Safari 阻止弹窗，也绝不能继续把订单自动标记为 shipped。
+     */
+    if(markPacked && !isDesktopPackingStation()){
+      return await beginMobilePrintConfirmation(
+        order,
+        url,
+        printToken
+      );
+    }
 
     const res=await fetch(url);
     if(!res.ok) throw new Error('面单下载失败');
