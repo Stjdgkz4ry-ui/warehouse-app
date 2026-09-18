@@ -1163,7 +1163,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.0-20260917-SCANNER-PARTIAL-INPUT-FIX';
+const APP_VERSION = 'V11.1-20260918-ONE-SCAN-SAFE-PRINT';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -1249,7 +1249,8 @@ const APP = {
   packingProgressData:null,
   bootPromise:null,
   bootedUserId:null,
-  mobilePendingPrint:null
+  mobilePendingPrint:null,
+  pendingPrintedVerification:null
 
 };
 
@@ -15452,6 +15453,16 @@ function packingProgressOrderItems(orderId){
     .join(' + ');
 }
 
+function isPrintLockedV11(order){
+  return [
+    'claimed',
+    'submitted',
+    'uncertain'
+  ].includes(
+    String(order?.print_state||'')
+  );
+}
+
 async function loadPackingProgressData(){
   if(!APP.warehouse || !APP.shippingCloudReady){
     return null;
@@ -15534,6 +15545,7 @@ function renderPackingProgressCenter(){
   );
 
   const packedNotShipped=orders.filter(o=>o.status==='packed');
+  const printLocked=orders.filter(isPrintLockedV11);
   const missingLabel=orders.filter(o=>
     o.status!=='cancelled' &&
     !labelMap.has(o.id)
@@ -15555,6 +15567,7 @@ function renderPackingProgressCenter(){
         <div class="bg-green-50 rounded-lg p-2"><b>${shipped.length}</b><br>已完成/已扣库存</div>
         <div class="bg-red-50 rounded-lg p-2"><b>${pending.length}</b><br>未贴单</div>
         <div class="bg-orange-50 rounded-lg p-2"><b>${packedNotShipped.length}</b><br>已打印待扣库存</div>
+        <div class="bg-red-100 rounded-lg p-2"><b>${printLocked.length}</b><br>打印异常锁定</div>
       </div>
 
       ${missingLabel.length?`<div class="mt-2 text-red-600 text-sm">⚠️ 还有 ${missingLabel.length} 单没有绑定面单</div>`:''}
@@ -15570,10 +15583,17 @@ function renderPackingProgressCenter(){
             <div class="small break-all">SKU：${escapeHtml(req)}</div>
             <div class="small break-all">Tracking：${escapeHtml(o.tracking_no||label?.tracking_no||'—')}</div>
             <div class="small">快递：${escapeHtml(shippingCarrierName(o))}${page?` · 面单第 ${page} 页`:''}</div>
-            <div class="grid grid-cols-2 gap-2 mt-2">
-              <button class="btn btn-gray btn-small" onclick="openBoundShippingLabel('${o.id}')">👁️ 查看面单</button>
-              <button class="btn btn-blue btn-small" onclick="manualConfirmPackOrder('${o.id}')">✅ 人工确认出单</button>
-            </div>
+            ${isPrintLockedV11(o)?`
+              <div class="bg-red-50 text-red-700 rounded-lg p-2 mt-2 font-bold">
+                🔒 打印结果待确认，禁止重新出单
+              </div>
+              <button class="btn btn-red w-full mt-2" onclick="openPrintRecoveryV11('${o.id}')">处理打印异常</button>
+            `:`
+              <div class="grid grid-cols-2 gap-2 mt-2">
+                <button class="btn btn-gray btn-small" onclick="openBoundShippingLabel('${o.id}')">👁️ 查看面单</button>
+                <button class="btn btn-blue btn-small" onclick="manualConfirmPackOrder('${o.id}')">✅ 人工确认出单</button>
+              </div>
+            `}
           </div>`;
       }).join(''):'<div class="bg-green-50 rounded-lg p-2 mt-2 text-green-700 text-sm">✅ 当前没有未贴单订单</div>'}
 
@@ -15668,7 +15688,10 @@ function renderPackingProgressSearchList(){
         <div class="small mt-1 break-all">Tracking：${escapeHtml(o.tracking_no||label?.tracking_no||'—')}</div>
         <div class="small mt-1">${escapeHtml(shippingCarrierName(o))}${page?` · 面单第 ${page} 页`:''}</div>
         <div class="mt-2 font-bold">${status}</div>
-        ${o.status!=='packed' && o.status!=='shipped' && o.status!=='cancelled' && label ? `
+        ${isPrintLockedV11(o) ? `
+          <div class="bg-red-50 text-red-700 rounded-lg p-2 mt-2 font-bold">🔒 打印结果待确认，禁止自动重打</div>
+          <button class="btn btn-red w-full mt-2" onclick="openPrintRecoveryV11('${o.id}')">处理打印异常</button>
+        ` : o.status!=='packed' && o.status!=='shipped' && o.status!=='cancelled' && label ? `
           <div class="grid grid-cols-2 gap-2 mt-2">
             <button class="btn btn-gray btn-small" onclick="openBoundShippingLabel('${o.id}')">👁️ 查看面单</button>
             <button class="btn btn-blue btn-small" onclick="manualConfirmPackOrder('${o.id}')">✅ 人工确认出单</button>
@@ -15677,8 +15700,121 @@ function renderPackingProgressSearchList(){
   }).join(''):'<div class="bg-gray-50 rounded-xl p-4 text-center text-gray-500">没有找到记录</div>';
 }
 
+function openPrintRecoveryV11(orderId){
+  const order=
+    APP.packingProgressData?.orders?.find(x=>x.id===orderId) ||
+    APP.shippingOrders.find(x=>x.id===orderId);
+
+  if(!order){
+    return showError('找不到这张订单，请先刷新贴单进度');
+  }
+
+  if(!isPrintLockedV11(order)){
+    return showInfo('这张订单当前没有打印异常锁定');
+  }
+
+  const req=packingProgressOrderItems(order.id)||describeOrderRequirement(order.id)||'无商品明细';
+
+  openModal(`
+    <h2 class="text-xl font-bold text-red-700 mb-3">🔒 打印结果待确认</h2>
+    <div class="bg-yellow-50 rounded-xl p-3 text-sm mb-3">
+      系统无法确定打印机是否已经出纸，所以已经锁定此订单。请先亲眼检查打印机和货物，绝不能直接重新扫描。
+    </div>
+    <div class="font-bold break-all">订单：${escapeHtml(order.order_no||'')}</div>
+    <div class="small mt-1 break-all">商品：${escapeHtml(req)}</div>
+    <div class="small mt-1">锁定状态：${escapeHtml(order.print_state||'未知')}</div>
+    <div class="small mt-1 break-all">任务编号：${escapeHtml(order.print_job_id||'—')}</div>
+    <div class="small mt-1 text-red-600 break-all">原因：${escapeHtml(order.print_error||'打印结果没有得到明确确认')}</div>
+
+    <button class="btn btn-green w-full mt-4" onclick="resolvePrintRecoveryV11('${order.id}','printed')">✅ 已确认面单已经出纸</button>
+    <button class="btn btn-red w-full mt-2" onclick="resolvePrintRecoveryV11('${order.id}','not_printed')">❌ 已确认完全没有出纸，允许重新打印</button>
+    <button class="btn btn-gray w-full mt-2" onclick="closeModal()">暂不处理，继续锁定</button>
+  `);
+}
+
+async function resolvePrintRecoveryV11(orderId,resolution){
+  const order=
+    APP.packingProgressData?.orders?.find(x=>x.id===orderId) ||
+    APP.shippingOrders.find(x=>x.id===orderId);
+
+  if(!order || !order.print_job_id){
+    return showError('缺少打印任务编号，请刷新后重试');
+  }
+
+  const actionName=
+    resolution==='printed'
+    ? '确认面单已经打印并完成出库'
+    : '确认面单完全没有打印并解除锁定';
+
+  const adminOk=await verifyWarehouseAdminPassword(actionName);
+  if(!adminOk) return;
+
+  const warning=
+    resolution==='printed'
+    ? `确认订单 ${order.order_no} 的面单已经实际出纸并贴到货物上？\n\n确认后会完成订单并扣减库存。`
+    : `危险操作：只有亲眼确认打印机完全没有出纸时才能解锁。\n\n订单：${order.order_no}\n\n解锁后下一次扫描会生成全新的打印任务。`;
+
+  if(!confirm(warning)) return;
+
+  if(
+    resolution==='not_printed' &&
+    !confirm('请再次确认：打印机、接纸处和货物旁边都没有这张面单。确定解除锁定吗？')
+  ){
+    return;
+  }
+
+  try{
+    showInfo('正在保存人工处理结果...');
+
+    const {error}=await APP.sb.rpc(
+      'resolve_shipping_print_v11',
+      {
+        p_order_id:order.id,
+        p_job_id:order.print_job_id,
+        p_resolution:resolution,
+        p_note:resolution==='printed'
+          ? '管理员人工确认已经出纸'
+          : '管理员双重确认完全没有出纸'
+      }
+    );
+    if(error) throw error;
+
+    if(resolution==='printed'){
+      const {error:outError}=await APP.sb.rpc(
+        'complete_shipping_order',
+        {p_order_id:order.id}
+      );
+      if(outError){
+        showError('已确认打印，但自动扣库存失败：'+(outError.message||'')+'。订单会保留为已打印待出库，禁止重打。');
+      }else{
+        showOk('✅ 已确认打印并完成出库、扣减库存');
+      }
+    }else{
+      showOk('✅ 已解除旧打印锁；下次扫描会创建新的任务编号');
+    }
+
+    closeModal();
+    await loadInventory();
+    await loadLogs();
+    await loadShippingWorkspace(true);
+    await refreshPackingProgressCenter();
+    renderHome();
+    renderInventoryList();
+
+  }catch(error){
+    console.error(error);
+    showError('处理打印异常失败：'+(error.message||'未知错误'));
+  }
+}
+
 async function openPackingScanner(){
   if(!APP.shippingCloudReady) return showError('请先同步云端订单');
+
+  if(!isDesktopPackingStation()){
+    return showError(
+      '🔒 V11 安全模式：手机只用于库存和拣货扫码。正式扫码贴单请到固定 Windows 电脑操作，避免手机重复打开或重复打印面单。'
+    );
+  }
 
   /*
    * V9.6：扫码贴单打印成功后仍会自动完成出库并扣库存，
@@ -16146,27 +16282,95 @@ async function localPrintBridgeReady(){
   }
 }
 
-async function sendPdfToLocalPrinter(blob,orderNo){
-  const form = new FormData();
-  form.append(
-    'file',
-    blob,
-    `${String(orderNo||'label').replace(/[^a-zA-Z0-9._-]/g,'_')}.pdf`
-  );
-  form.append('order_no',String(orderNo||''));
+async function getLocalPrintJobStatus(printJobId){
+  try{
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),2500);
+    const res=await fetch(
+      LOCAL_PRINT_BRIDGE_URL+'/job/'+encodeURIComponent(String(printJobId)),
+      {method:'GET',signal:controller.signal}
+    );
+    clearTimeout(timer);
+    if(!res.ok) return null;
+    return await res.json();
+  }catch(e){
+    return null;
+  }
+}
 
-  const res = await fetch(
-    LOCAL_PRINT_BRIDGE_URL + '/print',
-    {method:'POST',body:form}
-  );
-
-  const data = await res.json().catch(()=>({}));
-
-  if(!res.ok || !data?.ok){
-    throw new Error(data?.error || '本地打印服务返回失败');
+async function sendPdfToLocalPrinter(blob,orderNo,printJobId){
+  if(!printJobId){
+    throw new Error('缺少唯一打印任务编号，已禁止打印');
   }
 
-  return data;
+  const controller=new AbortController();
+  const timer=setTimeout(
+    ()=>controller.abort(),
+    45000
+  );
+
+  try{
+    const res=await fetch(
+      LOCAL_PRINT_BRIDGE_URL + '/print',
+      {
+        method:'POST',
+        body:blob,
+        signal:controller.signal,
+        headers:{
+          'Content-Type':'application/pdf',
+          'X-Print-Job-Id':String(printJobId),
+          'X-Order-No':encodeURIComponent(String(orderNo||''))
+        }
+      }
+    );
+
+    const data=await res.json().catch(()=>({}));
+
+    if(!res.ok || !data?.ok){
+      const error=new Error(
+        data?.error ||
+        '打印桥没有返回明确成功结果'
+      );
+      error.printState=data?.state||'uncertain';
+      throw error;
+    }
+
+    if(
+      String(data.job_id||'') !==
+      String(printJobId)
+    ){
+      const error=new Error('打印桥返回的任务编号不一致');
+      error.printState='uncertain';
+      throw error;
+    }
+
+    return data;
+
+  }catch(error){
+    if(error?.name==='AbortError'){
+      /*
+       * 浏览器超时后先查询同一任务号。打印桥如果已经记录为 submitted，
+       * 直接按成功处理；绝不重新发送 PDF，所以不会因为超时重复出纸。
+       */
+      const saved=await getLocalPrintJobStatus(printJobId);
+      if(saved?.ok===true && saved?.state==='submitted'){
+        return {
+          ...saved,
+          job_id:String(printJobId),
+          device:saved.device||saved.printer||'Windows固定贴单电脑',
+          recovered:true
+        };
+      }
+      const timeoutError=new Error(
+        '打印请求超时：打印机可能已经收到任务，系统已锁定，禁止自动重打'
+      );
+      timeoutError.printState='uncertain';
+      throw timeoutError;
+    }
+    throw error;
+  }finally{
+    clearTimeout(timer);
+  }
 }
 
 function isDesktopPackingStation(){
@@ -16569,19 +16773,233 @@ async function confirmMobilePrintSuccess(){
   }
 }
 
+async function openPrintedLabelVerificationV11(order,label,printJobId){
+  const expectedTracking=String(
+    order?.tracking_no ||
+    label?.tracking_no ||
+    ''
+  ).trim();
+
+  APP.pendingPrintedVerification={
+    orderId:order.id,
+    jobId:printJobId,
+    expectedTracking,
+    consumePool:orderCanUsePackPool(order),
+    busy:false
+  };
+
+  deactivateHardwareScanner();
+  if(APP.scannerRunning){
+    try{ await stopScanner(); }catch(e){}
+  }
+
+  openModal(`
+    <h2 class="text-xl font-bold mb-3">🧾 确认面单实际出纸</h2>
+    <div class="bg-green-50 rounded-xl p-3 text-sm mb-3">
+      打印桥已经接收任务，但系统暂时不会扣库存。请拿起刚刚打印出来的面单，扫描面单上的 Tracking 条码。
+    </div>
+    <div class="font-bold break-all">订单：${escapeHtml(order.order_no||'')}</div>
+    <div class="small mt-1 break-all">应核对 Tracking：${escapeHtml(expectedTracking||'面单没有识别到 Tracking')}</div>
+    <div class="small mt-1 break-all">打印任务：${escapeHtml(printJobId||'')}</div>
+
+    ${expectedTracking?`
+      <input
+        id="printedTrackingConfirm"
+        class="mt-4"
+        autocomplete="off"
+        inputmode="none"
+        placeholder="扫描刚打印出来的 Tracking 条码"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();verifyPrintedLabelV11()}">
+      <button class="btn btn-green w-full mt-2" onclick="verifyPrintedLabelV11()">✅ 核对条码并完成订单</button>
+    `:`
+      <div class="bg-yellow-50 text-yellow-800 rounded-xl p-3 mt-3 text-sm">
+        这张面单没有识别到 Tracking，不能用条码自动确认，必须由管理员人工确认。
+      </div>
+      <button class="btn btn-yellow w-full mt-2" onclick="adminConfirmPrintedLabelV11()">管理员确认面单已出纸</button>
+    `}
+
+    <button class="btn btn-red w-full mt-2" onclick="markPrintedLabelUncertainV11()">❌ 没有出纸 / 卡纸 / 结果不确定</button>
+    <div class="small text-red-600 mt-3">
+      不确定时不要重新扫描商品。点击上面的红色按钮后，订单会保持锁定，等待管理员处理。
+    </div>
+  `);
+
+  setTimeout(()=>{
+    const input=$('printedTrackingConfirm');
+    if(input) input.focus();
+  },150);
+}
+
+async function verifyPrintedLabelV11(){
+  const pending=APP.pendingPrintedVerification;
+  if(!pending || pending.busy) return;
+
+  const scanned=String(
+    $('printedTrackingConfirm')?.value||''
+  ).trim();
+
+  if(!scanned){
+    return showError('请扫描刚刚打印出来的面单 Tracking 条码');
+  }
+
+  if(
+    normalizeShippingKey(scanned) !==
+    normalizeShippingKey(pending.expectedTracking)
+  ){
+    if(navigator.vibrate){
+      navigator.vibrate([150,80,150]);
+    }
+    $('printedTrackingConfirm').value='';
+    $('printedTrackingConfirm').focus();
+    return showError(
+      `❌ 面单不匹配！应该是 ${pending.expectedTracking}，刚扫描的是 ${scanned}。请检查是否拿错面单。`
+    );
+  }
+
+  await finalizePrintedLabelV11();
+}
+
+async function adminConfirmPrintedLabelV11(){
+  const pending=APP.pendingPrintedVerification;
+  if(!pending || pending.busy) return;
+
+  const ok=await verifyWarehouseAdminPassword(
+    '面单无 Tracking 条码，人工确认已经实际出纸'
+  );
+  if(!ok) return;
+
+  if(!confirm('请确认面单已经实际从打印机出来，并且已经贴到正确货物上。确认后才会扣库存。')){
+    return;
+  }
+
+  await finalizePrintedLabelV11();
+}
+
+async function finalizePrintedLabelV11(){
+  const pending=APP.pendingPrintedVerification;
+  if(!pending || pending.busy) return;
+
+  const order=APP.shippingOrders.find(
+    x=>x.id===pending.orderId
+  );
+  if(!order){
+    return showError('订单数据已经变化，请刷新贴单进度处理');
+  }
+
+  pending.busy=true;
+
+  try{
+    showInfo('面单条码正确，正在完成订单...');
+
+    const {error:confirmError}=await APP.sb.rpc(
+      'confirm_shipping_print_v11',
+      {
+        p_order_id:order.id,
+        p_job_id:pending.jobId
+      }
+    );
+    if(confirmError) throw confirmError;
+
+    order.status='packed';
+
+    const {error:outError}=await APP.sb.rpc(
+      'complete_shipping_order',
+      {p_order_id:order.id}
+    );
+
+    if(outError){
+      APP.pendingPrintedVerification=null;
+      closeModal();
+      showError(
+        `⚠️ ${order.order_no} 已确认面单出纸，但自动扣库存失败：${outError.message||'未知错误'}。订单保持“已打印待出库”，禁止重新打印。`
+      );
+      await loadShippingWorkspace(true);
+      return;
+    }
+
+    if(pending.consumePool){
+      consumePackPoolForOrder(order);
+    }
+
+    order.status='shipped';
+    APP.pendingPrintedVerification=null;
+    closeModal();
+
+    await loadInventory();
+    await loadLogs();
+    await syncShippingBatchSummaries();
+    await loadShippingWorkspace(true);
+    renderHome();
+    renderInventoryList();
+    renderLogs();
+    playWarehouseTone('print');
+    showOk(`✅ ${order.order_no} 面单条码正确，已完成并扣减库存`);
+
+  }catch(error){
+    console.error('确认打印面单失败',error);
+    pending.busy=false;
+    showError('完成订单失败：'+(error.message||'未知错误')+'。系统没有自动重新打印。');
+  }
+}
+
+async function markPrintedLabelUncertainV11(){
+  const pending=APP.pendingPrintedVerification;
+  if(!pending || pending.busy) return;
+
+  const order=APP.shippingOrders.find(
+    x=>x.id===pending.orderId
+  );
+  if(!order) return showError('订单不存在');
+
+  if(!confirm('确认面单没有正常出纸、发生卡纸，或者无法判断是否已经打印？\n\n系统会锁定订单，不会自动重打，也不会扣库存。')){
+    return;
+  }
+
+  pending.busy=true;
+
+  try{
+    const {error}=await APP.sb.rpc(
+      'mark_shipping_print_uncertain_v11',
+      {
+        p_order_id:order.id,
+        p_job_id:pending.jobId,
+        p_error:'打印桥已提交，但员工未能扫描到实际出纸的面单'
+      }
+    );
+    if(error) throw error;
+
+    APP.pendingPrintedVerification=null;
+    closeModal();
+    await loadShippingWorkspace(true);
+    showError('🔒 订单已安全锁定。请检查打印机后，到“贴单进度”由管理员处理，禁止重新扫描。');
+
+  }catch(error){
+    pending.busy=false;
+    showError('锁定打印任务失败：'+(error.message||'未知错误')+'。请不要重新打印，立即联系管理员。');
+  }
+}
+
 async function printShippingLabelByOrderId(orderId, markPacked=false){
   const order=APP.shippingOrders.find(x=>x.id===orderId);
   const label=APP.shippingLabels.find(x=>x.order_id===orderId);
   if(!order) return showError('订单不存在');
   if(!label) return showError(`订单 ${order.order_no} 还没有上传面单`);
 
+  if(markPacked && !isDesktopPackingStation()){
+    showError(
+      '🔒 为防止重复打印，正式出单只允许在固定 Windows 贴单电脑操作。手机可以查看订单，但不能发送正式打印任务。'
+    );
+    return false;
+  }
+
   let printToken=null;
+  let bridgeSubmissionStarted=false;
 
   if(markPacked){
 
     const {data:claim,error:claimError}=
       await APP.sb.rpc(
-        'claim_shipping_print',
+        'claim_shipping_print_v11',
         {p_order_id:order.id}
       );
 
@@ -16592,7 +17010,14 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       return false;
     }
 
-    printToken=claim?.token||null;
+    if(claim?.ok===false || claim?.locked===true){
+      packingScanError(
+        `❌ 此订单打印任务已锁定：${claim?.state||'未知状态'}。请到“贴单进度”处理，禁止重新扫描打印。`
+      );
+      return false;
+    }
+
+    printToken=claim?.job_id||null;
 
     if(!printToken){
       packingScanError('❌ 无法取得打印锁，已停止出单');
@@ -16624,6 +17049,21 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
     if(!url) throw new Error('无法生成面单地址');
 
     /*
+     * 预览与正式打印彻底分开：
+     * markPacked=false 只打开 PDF，永远不调用本地打印桥。
+     * 只有取得唯一 printJobId 的正式出单才能发送打印机。
+     */
+    if(!markPacked){
+      const preview=window.open(url,'_blank');
+      if(!preview){
+        showError('浏览器阻止了面单预览窗口，请允许弹出窗口后重试');
+        return false;
+      }
+      showInfo('已打开面单预览；预览不会自动打印，也不会扣库存');
+      return true;
+    }
+
+    /*
      * 手机端必须由用户明确确认“已打印并贴单”后才能完成订单和扣库存。
      * 即使 Safari 阻止弹窗，也绝不能继续把订单自动标记为 shipped。
      */
@@ -16653,10 +17093,26 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
     ){
       try{
 
-        await sendPdfToLocalPrinter(
+        bridgeSubmissionStarted=true;
+
+        const bridgeResult=await sendPdfToLocalPrinter(
           blob,
-          order.order_no
+          order.order_no,
+          printToken
         );
+
+        const {error:submittedError}=await APP.sb.rpc(
+          'mark_shipping_print_submitted_v11',
+          {
+            p_order_id:order.id,
+            p_job_id:printToken,
+            p_device:String(bridgeResult?.device||'Windows固定贴单电脑')
+          }
+        );
+
+        if(submittedError){
+          throw submittedError;
+        }
 
         silentPrinted=true;
         autoPrintStarted=true;
@@ -16672,10 +17128,10 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       }catch(error){
 
         console.error(
-          '静默打印失败，准备退回浏览器打印',
+          '打印桥提交结果不明确，进入安全锁定',
           error
         );
-
+        throw error;
       }
     }
 
@@ -16695,10 +17151,11 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 
       if(printToken){
         await APP.sb.rpc(
-          'release_shipping_print_lock',
+          'cancel_shipping_print_v11',
           {
             p_order_id:order.id,
-            p_token:printToken
+            p_job_id:printToken,
+            p_reason:'打印桥未连接，任务尚未发送'
           }
         );
         printToken=null;
@@ -16734,10 +17191,10 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 
       const {error:finishError}=
         await APP.sb.rpc(
-          'finish_shipping_print',
+          'confirm_shipping_print_v11',
           {
             p_order_id:order.id,
-            p_token:printToken
+            p_job_id:printToken
           }
         );
 
@@ -16749,7 +17206,8 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       printToken=null;
 
       /*
-       * V9.1：打印桥确认面单已经成功发送后，立即完成出库并扣减库存。
+       * V11.1：打印桥以唯一任务号确认已经成功提交后，立即完成出库并扣减库存。
+       * 正常订单只需扫描一次商品，不再要求扫描打印出来的面单。
        * 这里使用现有 complete_shipping_order RPC：云端会校验订单状态、库存并防重复。
        * 如果扣库存失败，订单保留 packed（已打印待出库），绝不重复打印。
        */
@@ -16823,15 +17281,35 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 
     if(printToken){
       try{
-        await APP.sb.rpc(
-          'release_shipping_print_lock',
-          {
-            p_order_id:order.id,
-            p_token:printToken
-          }
-        );
+        if(
+          bridgeSubmissionStarted &&
+          error?.printState!=='not_submitted'
+        ){
+          /*
+           * 请求一旦发给打印桥，失败/超时都属于“不确定”：
+           * 可能已经出纸，绝不能自动释放锁或自动重打。
+           */
+          await APP.sb.rpc(
+            'mark_shipping_print_uncertain_v11',
+            {
+              p_order_id:order.id,
+              p_job_id:printToken,
+              p_error:String(error.message||'打印结果不确定').slice(0,500)
+            }
+          );
+        }else{
+          /* 尚未向打印桥发送 PDF，可以安全取消本次领取。 */
+          await APP.sb.rpc(
+            'cancel_shipping_print_v11',
+            {
+              p_order_id:order.id,
+              p_job_id:printToken,
+              p_reason:String(error.message||'打印前失败').slice(0,500)
+            }
+          );
+        }
       }catch(e){
-        console.warn('释放打印锁失败',e);
+        console.warn('保存打印异常状态失败',e);
       }
       printToken=null;
     }
@@ -16846,9 +17324,13 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       'error'
     );
 
+    const definitelyNotSubmitted=
+      error?.printState==='not_submitted';
+
     showError(
-      '打开面单失败：'+
-      (error.message||'')
+      bridgeSubmissionStarted && !definitelyNotSubmitted
+      ? '⚠️ 打印结果不确定，订单已锁定，禁止再次扫描打印。请检查打印机是否出纸，再到“贴单进度”人工处理。原因：'+(error.message||'未知')
+      : '打印前失败，打印桥确认没有提交面单；订单未完成，可以排除故障后重新扫描。原因：'+(error.message||'未知')
     );
 
     return false;
