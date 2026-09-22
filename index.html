@@ -835,12 +835,16 @@ th{
         <div class="card p-3 mb-3">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
 
-            <button class="btn btn-blue" onclick="printPickingSummary()">
-              🖨️ ① 打印汇总拣货单
+            <button class="btn btn-blue" onclick="printPickingSingleOnly()">
+              🖨️ ① 只打印单件订单拣货单
+            </button>
+
+            <button class="btn btn-blue" onclick="printPickingMultiOnly()">
+              🖨️ ② 只打印多件订单拣货单
             </button>
 
             <button class="btn btn-blue" onclick="printPickingByCarrier()">
-              🚚 ② 按快递公司打印拣货单
+              🚚 ③ 按快递公司打印（单件/多件分开）
             </button>
 
             <button class="btn btn-gray" onclick="exportPickingList()">
@@ -854,8 +858,9 @@ th{
           </div>
 
           <div class="small mt-2">
-            ① 汇总拣货单：先分“单件订单”和“一票多件订单”，两类分别按库位 + SKU 汇总打印。<br>
-            ② 快递公司拣货单：每个快递公司内部再分“单件订单 / 多件订单”打印。
+            ① 单件订单：只打印“整票总件数 = 1”的订单。<br>
+            ② 多件订单：只打印“整票总件数 > 1”的订单。<br>
+            ③ 按快递公司：每个快递公司内部仍把单件 / 多件分成不同页。
           </div>
         </div>
 
@@ -1033,7 +1038,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.4.1 · Stable Warehouse
+          版本 V10.4.2 · Stable Warehouse
         </div>
 
       </div>
@@ -1163,7 +1168,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.4.1-20260922-ARCHIVE-NO-STOCK-DEDUCT';
+const APP_VERSION = 'V10.4.2-20260922-PICKING-SEPARATE-PRINT-JOBS';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -8808,9 +8813,13 @@ function getPickingRowsSplitByOrderType(){
     const order=orderMap.get(item.order_id);
     if(!order) return;
 
+    /*
+     * V10.4.2：打印拣货单按订单原始总数量分类，
+     * 不受 picked_qty 影响。
+     */
     const remain=Math.max(
       0,
-      safeNumber(item.qty,0)-safeNumber(item.picked_qty,0)
+      safeNumber(item.qty,0)
     );
     if(remain<=0) return;
 
@@ -8958,6 +8967,82 @@ function buildSummaryPrintTable(){
       'carrier-print-page carrier-print-last'
     );
 }
+
+
+function buildSingleOnlyPrintTable(){
+  updatePickingMeta();
+
+  const split=getPickingRowsSplitByOrderType();
+  const rows=getPickingSummaryRows(split.single);
+  const printArea=$('printArea');
+  if(!printArea) return;
+
+  const warehouseName=APP.warehouse?.name||'—';
+  const orderNo=APP.pickingOrderNo||'—';
+  const date=APP.pickingOrderDate||new Date().toISOString().slice(0,10);
+
+  printArea.innerHTML=
+    buildPickingPrintSection(
+      '📦 单件订单拣货单',
+      rows,
+      warehouseName,
+      date,
+      orderNo,
+      'carrier-print-page carrier-print-last'
+    );
+}
+
+function buildMultiOnlyPrintTable(){
+  updatePickingMeta();
+
+  const split=getPickingRowsSplitByOrderType();
+  const rows=getPickingSummaryRows(split.multi);
+  const printArea=$('printArea');
+  if(!printArea) return;
+
+  const warehouseName=APP.warehouse?.name||'—';
+  const orderNo=APP.pickingOrderNo||'—';
+  const date=APP.pickingOrderDate||new Date().toISOString().slice(0,10);
+
+  printArea.innerHTML=
+    buildPickingPrintSection(
+      '📦📦 多件订单拣货单',
+      rows,
+      warehouseName,
+      date,
+      orderNo,
+      'carrier-print-page carrier-print-last'
+    );
+}
+
+function printPickingSingleOnly(){
+  if(!APP.pickingRows.length){
+    return showError('目前没有拣货数据');
+  }
+
+  const split=getPickingRowsSplitByOrderType();
+  if(!split.single.length){
+    return showError('当前批次没有单件订单需要打印');
+  }
+
+  buildSingleOnlyPrintTable();
+  setTimeout(()=>window.print(),100);
+}
+
+function printPickingMultiOnly(){
+  if(!APP.pickingRows.length){
+    return showError('目前没有拣货数据');
+  }
+
+  const split=getPickingRowsSplitByOrderType();
+  if(!split.multi.length){
+    return showError('当前批次没有多件订单需要打印');
+  }
+
+  buildMultiOnlyPrintTable();
+  setTimeout(()=>window.print(),100);
+}
+
 
 function printPickingSummary(){
 
