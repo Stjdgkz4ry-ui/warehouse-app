@@ -1038,7 +1038,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.4.2 · Stable Warehouse
+          版本 V10.4.3 · Stable Warehouse
         </div>
 
       </div>
@@ -1168,7 +1168,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.4.2-20260922-PICKING-SEPARATE-PRINT-JOBS';
+const APP_VERSION = 'V10.4.3-20260924-COMPLETED-ALL-ROWS';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -15854,14 +15854,20 @@ function renderPackingProgressSearchList(){
     });
   }
 
-  rows=rows.slice(0,200);
-
+  /*
+   * V10.4.3：查询未贴 / 已完成不再限制 200 单。
+   * 当前批次有多少匹配记录就显示多少条。
+   */
   const completedSequenceMap=new Map();
   if(filter==='completed' || filter==='shipped'){
     rows.forEach((o,index)=>completedSequenceMap.set(o.id,index+1));
   }
 
-  el.innerHTML=rows.length?rows.map(o=>{
+  const resultCountHtml=
+    `<div class="small text-gray-500 mb-2">当前显示 ${rows.length} 条记录</div>`;
+
+  el.innerHTML=rows.length
+    ? resultCountHtml+rows.map(o=>{
     const label=labelMap.get(o.id);
     const page=shippingLabelPageNo(label);
     const req=packingProgressOrderItems(o.id)||'无商品明细';
@@ -15883,7 +15889,8 @@ function renderPackingProgressSearchList(){
             <button class="btn btn-blue btn-small" onclick="manualConfirmPackOrder('${o.id}')">✅ 人工确认出单</button>
           </div>` : ''}
       </div>`;
-  }).join(''):'<div class="bg-gray-50 rounded-xl p-4 text-center text-gray-500">没有找到记录</div>';
+  }).join('')
+    : '<div class="bg-gray-50 rounded-xl p-4 text-center text-gray-500">没有找到记录</div>';
 }
 
 async function openPackingScanner(){
