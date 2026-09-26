@@ -1038,7 +1038,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.4.3 · Stable Warehouse
+          版本 V10.5 · Stable Warehouse
         </div>
 
       </div>
@@ -1168,7 +1168,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.4.3-20260924-COMPLETED-ALL-ROWS';
+const APP_VERSION = 'V10.5-20260926-SINGLE-MULTI-PACKING-MODES';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -15000,32 +15000,94 @@ function renderPackPoolStatus(){
   const el=$('packPoolStatus');
   if(!el) return;
 
-  loadPackPool();
+  const mode=APP.packingScanMode==='multi'?'multi':'single';
 
-  /*
-   * V5.2 按当前未完成订单 / 拣货单真实需求限制扫码数量。
-   * 不要求先逐件登记 picked_qty；贴单扫码本身就是最终复核。
-   */
-  sanitizePackPoolAgainstDemand();
+  if(mode==='single'){
+    const pendingSingle=
+      (APP.shippingOrders||[])
+        .filter(isOrderPackingEligible)
+        .filter(o=>!isMultiPieceOrder(o.id))
+        .length;
+
+    const duplicateSkuMap=new Map();
+
+    (APP.shippingOrders||[])
+      .filter(isOrderPackingEligible)
+      .filter(o=>!isMultiPieceOrder(o.id))
+      .forEach(o=>{
+        const items=(APP.shippingItems||[]).filter(x=>x.order_id===o.id);
+
+        if(items.length===1 && safeNumber(items[0].qty,0)===1){
+          const sku=String(items[0].sku||'').trim();
+          const key=normalizeShippingKey(sku);
+
+          if(!duplicateSkuMap.has(key)){
+            duplicateSkuMap.set(key,{sku,count:0});
+          }
+
+          duplicateSkuMap.get(key).count++;
+        }
+      });
+
+    const repeatSkus=
+      [...duplicateSkuMap.values()]
+        .filter(x=>x.count>1)
+        .sort((a,b)=>b.count-a.count)
+        .slice(0,8);
+
+    el.innerHTML=`
+      <div class="bg-blue-50 rounded-xl p-3">
+        <div class="font-bold">📦 单件订单</div>
+        <div class="small mt-1">待贴单件订单：<b>${pendingSingle}</b> 单</div>
+        ${
+          repeatSkus.length
+            ? `<div class="small mt-2">
+                重复 SKU：
+                ${repeatSkus.map(x=>`${escapeHtml(x.sku)} ×${x.count}单`).join('　')}
+               </div>`
+            : '<div class="small mt-2">当前没有重复 SKU 的单件订单</div>'
+        }
+        <div class="small mt-2">
+          扫到重复 SKU 后，系统会让你输入面前实际准备好的数量，然后连续打印对应数量的单件面单。
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  loadPackPool();
+  sanitizeMultiPackPoolAgainstDemand();
 
   const entries=
     Object.entries(APP.packPool||{})
-      .filter(([,q])=>
-        safeNumber(q,0)>0
-      );
+      .filter(([,q])=>safeNumber(q,0)>0);
 
   const candidates=
-    APP.shippingOrders
-      .filter(isOrderPackingEligible);
+    (APP.shippingOrders||[])
+      .filter(isOrderPackingEligible)
+      .filter(o=>isMultiPieceOrder(o.id));
 
   el.innerHTML=`
-    <div class="bg-blue-50 rounded-xl p-3">
-      <div class="font-bold">📦 当前扫码货物池</div>
-      <div class="mt-1 text-sm">${entries.length?entries.map(([sku,q])=>`${escapeHtml(sku)} ×${q}`).join('　'):'还没有扫码商品'}</div>
-      <div class="small mt-2">系统会按当前订单/拣货单自动组单：单件订单扫 1 件即可出面单；一票多件必须全部扫够，整票数量满足后只确认一次再打印。未扫齐时会明确显示“还差几件 / 暂不打印”。超数量或错误 SKU 会立刻拦截。</div>
-      <div class="small mt-1">待贴单订单：${candidates.length} 个</div>
-      ${entries.length?'<button class="btn btn-gray btn-small mt-2" onclick="clearPackPool()">清空扫码货物池</button>':''}
-    </div>`;
+    <div class="bg-yellow-50 rounded-xl p-3">
+      <div class="font-bold">📦📦 多件订单货物池</div>
+      <div class="mt-1 text-sm">
+        ${
+          entries.length
+            ? entries.map(([sku,q])=>`${escapeHtml(sku)} ×${q}`).join('　')
+            : '还没有扫码商品'
+        }
+      </div>
+      <div class="small mt-2">
+        只计算多件订单需求。整票没扫齐绝不打印；扫齐后只确认一次。
+      </div>
+      <div class="small mt-1">待贴多件订单：${candidates.length} 个</div>
+      ${
+        entries.length
+          ? '<button class="btn btn-gray btn-small mt-2" onclick="clearPackPool()">清空多件货物池</button>'
+          : ''
+      }
+    </div>
+  `;
 }
 
 
@@ -15897,33 +15959,33 @@ async function openPackingScanner(){
   if(!APP.shippingCloudReady) return showError('请先同步云端订单');
 
   APP.packingModalLocked=true;
+  APP.packingScanMode=APP.packingScanMode||'single';
+  APP.singleSkuBatchBusy=false;
   loadPackPool();
 
   openModal(`
     <div class="flex items-center justify-between mb-3">
-      <h2 class="text-xl font-bold">🖨️ 智能扫码组单贴单</h2>
+      <h2 class="text-xl font-bold">🖨️ 扫码贴单</h2>
       <button onclick="closePackingScanner()" class="text-gray-400 text-2xl">×</button>
     </div>
 
-    <div class="bg-green-50 rounded-xl p-3 mb-3 text-sm">
-      <div id="hardwareScannerStatus" class="font-bold text-green-700">
-        🟢 扫码枪监听中
-      </div>
-      <div class="small mt-2">
-        V10.3.1：扫码货物池已做本机双备份；刷新/切后台会尽量保留。打印桥成功后自动标记“已贴单”；当前版本归档不扣库存。
-      </div>
-
-      <div class="small mt-1">
-        电脑 USB / 蓝牙扫码枪可以直接扫码，不需要先点输入框。V10.0 起扫码枪必须以 Enter / Tab 结束后才提交完整条码，人工在输入框里打字不会再被半途截取；条码如果只是少了连字符/空格，也会在唯一匹配时自动识别。有效商品会发提示音；单件订单扫 1 次就立刻出单，多件订单扫齐最后一件立刻出单。电脑端只走打印桥直接出纸；打印桥未连接时会立即报错并停止，不会再弹浏览器打印窗口。扫错/超量会发错误音并拦截。
-      </div>
-
-      <div id="hardwareScannerLast" class="small mt-2 text-gray-600">
-        等待扫码...
-      </div>
+    <div class="grid grid-cols-2 gap-2 mb-3">
+      <button id="packingModeSingleBtn" class="btn btn-blue" onclick="setPackingScanMode('single')">
+        📦 单件订单
+      </button>
+      <button id="packingModeMultiBtn" class="btn btn-gray" onclick="setPackingScanMode('multi')">
+        📦📦 多件订单
+      </button>
     </div>
 
-    <div class="bg-blue-50 rounded-xl p-3 mb-3 text-sm">
-      扫商品 SKU：单件订单扫 1 件即可出面单；一票多件会累计 SKU，未扫齐绝不打印，扫齐后只确认一次。订单号 / Tracking 只能直接出单件订单；多件订单会被拦截。
+    <div id="packingModeHelp" class="rounded-xl p-3 mb-3 text-sm"></div>
+
+    <div class="bg-green-50 rounded-xl p-3 mb-3 text-sm">
+      <div id="hardwareScannerStatus" class="font-bold text-green-700">🟢 扫码枪监听中</div>
+      <div class="small mt-2">
+        V10.5：单件和多件彻底分开处理。打印桥成功后自动标记“已贴单”；当前版本归档不扣库存。
+      </div>
+      <div id="hardwareScannerLast" class="small mt-2 text-gray-600">等待扫码...</div>
     </div>
 
     <div id="packingProgressCenter" class="mb-3">
@@ -15933,9 +15995,7 @@ async function openPackingScanner(){
     <div id="packPoolStatus" class="mb-3"></div>
 
     <div id="packingCameraBox" class="border rounded-xl p-3 mb-3">
-      <div class="font-bold mb-2">
-        📷 手机摄像头扫码（仅手机显示）
-      </div>
+      <div class="font-bold mb-2">📷 手机摄像头扫码（仅手机显示）</div>
       <div id="reader" style="width:100%;"></div>
     </div>
 
@@ -15943,109 +16003,283 @@ async function openPackingScanner(){
       💻 电脑贴单台已关闭摄像头，只监听 USB / 蓝牙扫码枪。
     </div>
 
-    <input
-      id="packManualCode"
-      class="mt-3"
-      placeholder="也可以手动输入 SKU / 订单号 / Tracking No.">
+    <input id="packManualCode" class="mt-3" placeholder="也可以手动输入 SKU / 订单号 / Tracking No.">
 
-    <button
-      class="btn btn-blue w-full mt-2"
-      onclick="handlePackingScan($('packManualCode').value)">
+    <button class="btn btn-blue w-full mt-2" onclick="handlePackingScan($('packManualCode').value)">
       确认扫描
     </button>
 
-    <button
-      class="btn btn-gray w-full mt-2"
-      onclick="closePackingScanner()">
-      关闭
-    </button>
+    <button class="btn btn-gray w-full mt-2" onclick="closePackingScanner()">关闭</button>
   `);
 
-  renderPackPoolStatus();
+  setPackingScanMode(APP.packingScanMode||'single',true);
   refreshPackingProgressCenter();
 
-  /*
-   * V5.0：
-   * 电脑贴单台只启用扫码枪，不再调用笔记本摄像头。
-   * 手机打开贴单页时才保留摄像头扫码作为备用。
-   */
   activateHardwareScanner();
 
-  const cameraBox=
-    $('packingCameraBox');
-
-  const desktopOnlyBox=
-    $('desktopScannerOnlyBox');
+  const cameraBox=$('packingCameraBox');
+  const desktopOnlyBox=$('desktopScannerOnlyBox');
 
   if(isDesktopPackingStation()){
-
-    if(cameraBox){
-      cameraBox.classList.add(
-        'hidden'
-      );
-    }
-
-    if(desktopOnlyBox){
-      desktopOnlyBox.classList.remove(
-        'hidden'
-      );
-    }
-
+    if(cameraBox) cameraBox.classList.add('hidden');
+    if(desktopOnlyBox) desktopOnlyBox.classList.remove('hidden');
   }else{
+    if(cameraBox) cameraBox.classList.remove('hidden');
+    if(desktopOnlyBox) desktopOnlyBox.classList.add('hidden');
+    setTimeout(()=>startCustomScanner(handlePackingScan),300);
+  }
+}
 
-    if(cameraBox){
-      cameraBox.classList.remove(
-        'hidden'
-      );
+function setPackingScanMode(mode,silent=false){
+  APP.packingScanMode=mode==='multi'?'multi':'single';
+
+  const singleBtn=$('packingModeSingleBtn');
+  const multiBtn=$('packingModeMultiBtn');
+  const help=$('packingModeHelp');
+
+  if(singleBtn){
+    singleBtn.className=APP.packingScanMode==='single'?'btn btn-blue':'btn btn-gray';
+  }
+  if(multiBtn){
+    multiBtn.className=APP.packingScanMode==='multi'?'btn btn-blue':'btn btn-gray';
+  }
+
+  if(help){
+    help.className=APP.packingScanMode==='single'
+      ? 'bg-blue-50 rounded-xl p-3 mb-3 text-sm'
+      : 'bg-yellow-50 rounded-xl p-3 mb-3 text-sm';
+
+    help.innerHTML=APP.packingScanMode==='single'
+      ? `<div class="font-bold">📦 单件订单模式</div>
+         <div class="small mt-1">
+           只处理“一票一件”。同一个 SKU 有多单时，扫一次 SKU 后可输入实际准备好的数量，连续打印对应数量的面单。
+         </div>`
+      : `<div class="font-bold">📦📦 多件订单模式</div>
+         <div class="small mt-1">
+           只处理“一票多件”。每件商品逐一扫码，整票没扫齐绝不打印，扫齐后只确认一次。
+         </div>`;
+  }
+
+  renderPackPoolStatus();
+
+  if(!silent){
+    showOk(APP.packingScanMode==='single'
+      ? '✅ 已切换到单件订单模式'
+      : '✅ 已切换到多件订单模式');
+  }
+}
+
+function eligibleSingleOrdersForSku(sku){
+  const key=normalizeShippingKey(sku);
+
+  return (APP.shippingOrders||[])
+    .filter(isOrderPackingEligible)
+    .filter(o=>!isMultiPieceOrder(o.id))
+    .filter(o=>{
+      const items=(APP.shippingItems||[]).filter(x=>x.order_id===o.id);
+      if(items.length!==1) return false;
+      const item=items[0];
+      return safeNumber(item.qty,0)===1 && normalizeShippingKey(item.sku)===key;
+    })
+    .sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
+}
+
+function eligibleMultiOrdersForSku(sku){
+  const key=normalizeShippingKey(sku);
+  return (APP.shippingOrders||[])
+    .filter(isOrderPackingEligible)
+    .filter(o=>isMultiPieceOrder(o.id))
+    .filter(o=>safeNumber(orderNeeds(o.id).get(key),0)>0);
+}
+
+function totalRemainingMultiPackDemandForSku(sku){
+  const key=normalizeShippingKey(sku);
+  let total=0;
+
+  (APP.shippingOrders||[])
+    .filter(isOrderPackingEligible)
+    .filter(o=>isMultiPieceOrder(o.id))
+    .forEach(order=>{
+      total+=safeNumber(orderNeeds(order.id).get(key),0);
+    });
+
+  return total;
+}
+
+function sanitizeMultiPackPoolAgainstDemand(){
+  if(
+    APP.shippingCloudReady!==true ||
+    !Array.isArray(APP.shippingOrders) ||
+    !Array.isArray(APP.shippingItems) ||
+    !Array.isArray(APP.shippingLabels)
+  ) return;
+
+  let changed=false;
+
+  for(const [sku,rawQty] of Object.entries(APP.packPool||{})){
+    const qty=Math.max(0,safeNumber(rawQty,0));
+    const maxQty=totalRemainingMultiPackDemandForSku(sku);
+
+    if(maxQty<=0){
+      delete APP.packPool[sku];
+      changed=true;
+      continue;
     }
 
-    if(desktopOnlyBox){
-      desktopOnlyBox.classList.add(
-        'hidden'
-      );
+    if(qty>maxQty){
+      APP.packPool[sku]=maxQty;
+      changed=true;
     }
+  }
 
-    setTimeout(
-      ()=>startCustomScanner(
-        handlePackingScan
-      ),
-      300
+  if(changed) savePackPool();
+}
+
+function nextCompletableMultiPackingOrder(){
+  const ready=(APP.shippingOrders||[])
+    .filter(isOrderPackingEligible)
+    .filter(o=>isMultiPieceOrder(o.id))
+    .filter(orderCanUsePackPool)
+    .sort((a,b)=>{
+      const qa=orderPieceCount(a.id);
+      const qb=orderPieceCount(b.id);
+      if(qa!==qb) return qa-qb;
+      return String(a.created_at||'').localeCompare(String(b.created_at||''));
+    });
+
+  return ready[0]||null;
+}
+
+async function printSingleSkuBatch(sku){
+  if(APP.singleSkuBatchBusy){
+    return showInfo('当前正在批量打印，请稍等');
+  }
+
+  let orders=eligibleSingleOrdersForSku(sku);
+
+  if(!orders.length){
+    const multiCount=eligibleMultiOrdersForSku(sku).length;
+    return packingScanError(
+      multiCount
+        ? `SKU ${sku} 当前没有单件订单；有 ${multiCount} 个多件订单，请切换到“多件订单”模式`
+        : `SKU ${sku} 当前没有待贴的单件订单`
     );
+  }
+
+  if(orders.length===1){
+    return await printShippingLabelByOrderId(orders[0].id,true);
+  }
+
+  const typed=prompt(
+    `SKU：${sku}\n\n`+
+    `当前有 ${orders.length} 个【单件订单】待打印。\n\n`+
+    `请确认你面前实际已经准备好的 ${sku} 数量。\n`+
+    `输入要连续打印的数量（最多 ${orders.length}）：`,
+    String(orders.length)
+  );
+
+  if(typed===null) return false;
+
+  const qty=Math.floor(Number(typed));
+
+  if(!Number.isFinite(qty) || qty<1 || qty>orders.length){
+    showError(`数量必须是 1 - ${orders.length} 之间的整数`);
+    return false;
+  }
+
+  const ok=confirm(
+    `确认连续打印？\n\n`+
+    `SKU：${sku}\n`+
+    `准备货物：${qty} 件\n`+
+    `将打印：${qty} 个单件订单面单\n\n`+
+    `⚠️ 请先确认这 ${qty} 件实物确实已经放在你面前。\n`+
+    `打印会一张一张进行；如果中途失败，系统会立即停止。`
+  );
+
+  if(!ok) return false;
+
+  APP.singleSkuBatchBusy=true;
+  deactivateHardwareScanner();
+
+  let success=0;
+  let failed=0;
+
+  try{
+    showInfo(`正在连续打印 ${sku}：0/${qty}`);
+
+    orders=eligibleSingleOrdersForSku(sku).slice(0,qty);
+
+    for(let i=0;i<orders.length;i++){
+      const order=orders[i];
+
+      const printed=await printShippingLabelByOrderId(
+        order.id,
+        true,
+        {
+          batchMode:true,
+          suppressPostRefresh:true,
+          suppressSuccessToast:true
+        }
+      );
+
+      if(printed===true){
+        success++;
+        showInfo(`连续打印 ${sku}：${success}/${qty}，剩余 ${Math.max(0,qty-success)}`);
+        continue;
+      }
+
+      failed++;
+      break;
+    }
+
+    await syncShippingBatchSummaries();
+    await loadShippingBatchHistory(true);
+    await refreshPackingProgressCenter();
+
+    showOk(
+      `✅ ${sku} 批量打印结束：成功 ${success} 单`+
+      (failed?`，中途已停止`:'')
+    );
+
+    return success>0;
+
+  }catch(error){
+    console.error('单件 SKU 批量打印失败',error);
+    showError(
+      `❌ ${sku} 批量打印中断：${error.message||'未知错误'}；已经成功的 ${success} 单不会重复打印。`
+    );
+    return false;
+  }finally{
+    APP.singleSkuBatchBusy=false;
+    activateHardwareScanner();
   }
 }
 
 async function handlePackingScan(code){
 
-  const raw=
-    String(code||'').trim();
+  if(APP.singleSkuBatchBusy){
+    return showInfo('当前正在批量打印单件订单，请等待完成');
+  }
 
-  const manualInput=
-    $('packManualCode');
+  const raw=String(code||'').trim();
+  const manualInput=$('packManualCode');
 
-  if(
-    manualInput &&
-    document.activeElement===manualInput
-  ){
+  if(manualInput && document.activeElement===manualInput){
     manualInput.value='';
   }
 
-  let value=
-    normalizeShippingKey(raw);
+  let value=normalizeShippingKey(raw);
 
   if(!value){
-    return packingScanError(
-      '没有读取到条码'
-    );
+    return packingScanError('没有读取到条码');
   }
 
-  /*
-   * 先判断是不是订单号 / Tracking。
-   */
-  const directOrder=
-    APP.shippingOrders.find(o=>
-      normalizeShippingKey(o.order_no)===value ||
-      normalizeShippingKey(o.tracking_no)===value
-    );
+  const mode=APP.packingScanMode==='multi'?'multi':'single';
+
+  const directOrder=APP.shippingOrders.find(o=>
+    normalizeShippingKey(o.order_no)===value ||
+    normalizeShippingKey(o.tracking_no)===value
+  );
 
   if(directOrder){
 
@@ -16065,170 +16299,127 @@ async function handlePackingScan(code){
       );
     }
 
-    if(isMultiPieceOrder(directOrder.id)){
-      const {pieces,req}=multiPieceOrderSummary(directOrder);
+    if(mode==='single'){
+      if(isMultiPieceOrder(directOrder.id)){
+        return packingScanError(
+          `⚠️ 这是多件订单 ${directOrder.order_no}，请切换到“多件订单”模式逐件扫码`
+        );
+      }
+
+      return printShippingLabelByOrderId(directOrder.id,true);
+    }
+
+    if(!isMultiPieceOrder(directOrder.id)){
       return packingScanError(
-        `⚠️ 订单 ${directOrder.order_no} 是一票 ${pieces} 件：${req}。不能只扫订单号/Tracking 就直接出面单。请逐件扫描商品；或在“未贴单明细”里使用人工确认。`
+        `⚠️ 这是单件订单 ${directOrder.order_no}，请切换到“单件订单”模式`
       );
     }
 
-    return printShippingLabelByOrderId(
-      directOrder.id,
-      true
+    return packingScanError(
+      `⚠️ 多件订单不能只扫订单号直接出单。请逐件扫描商品，扫齐整票后再确认打印。`
     );
   }
 
-  /*
-   * 否则按商品 SKU 进入扫码货物池。
-   */
   let resolvedSku=await resolveScannedSkuWithAlias(
     raw,
     APP.shippingItems.map(item=>item.sku)
   );
 
   if(!resolvedSku){
-    resolvedSku=await promptBindUnknownBarcode(
-      raw,
-      APP.shippingItems.map(item=>item.sku)
-    );
-  }
-
-  if(!resolvedSku){
-    return packingScanError(
-      `没有找到 SKU：${raw}`
-    );
+    return packingScanError(`没有找到 SKU：${raw}`);
   }
 
   value=normalizeShippingKey(resolvedSku);
 
-  loadPackPool();
-  sanitizePackPoolAgainstDemand();
+  if(mode==='single'){
+    const singleOrders=eligibleSingleOrdersForSku(resolvedSku);
 
-  /*
-   * V5.2 核心保护：
-   * 此 SKU 当前所有“有面单 + 未完成贴单”的订单
-   * 一共还需要多少件，就最多只能扫多少件。
-   * 这个上限就是当前订单 / 拣货单真实需求。
-   */
-  const allowedQty=
-    totalRemainingPackDemandForSku(
-      value
-    );
+    if(!singleOrders.length){
+      const multiCount=eligibleMultiOrdersForSku(resolvedSku).length;
 
-  const alreadyScanned=
-    safeNumber(
-      APP.packPool[value],
-      0
-    );
-
-  if(allowedQty<=0){
-
-    if(navigator.vibrate){
-      navigator.vibrate([100,60,100]);
+      return packingScanError(
+        multiCount
+          ? `SKU ${resolvedSku} 只有多件订单（${multiCount} 单），请切换到“多件订单”模式`
+          : `SKU ${resolvedSku} 当前没有待贴的单件订单`
+      );
     }
 
+    playWarehouseTone('ok');
+    if(navigator.vibrate) navigator.vibrate(40);
+
+    return await printSingleSkuBatch(resolvedSku);
+  }
+
+  loadPackPool();
+  sanitizeMultiPackPoolAgainstDemand();
+
+  const allowedQty=totalRemainingMultiPackDemandForSku(value);
+  const alreadyScanned=safeNumber(APP.packPool[value],0);
+
+  if(allowedQty<=0){
+    const singleCount=eligibleSingleOrdersForSku(resolvedSku).length;
+
     return packingScanError(
-      `❌ SKU ${raw} 当前没有待贴单数量，禁止继续扫描`
+      singleCount
+        ? `SKU ${resolvedSku} 只有单件订单（${singleCount} 单），请切换到“单件订单”模式`
+        : `❌ SKU ${resolvedSku} 当前没有待贴的多件订单数量`
     );
   }
 
   if(alreadyScanned>=allowedQty){
-
-    if(navigator.vibrate){
-      navigator.vibrate([100,60,100]);
-    }
-
     return packingScanError(
-      `❌ SKU ${raw} 已扫够 ${allowedQty} 件，不能再扫`
+      `❌ SKU ${resolvedSku} 的多件订单已扫够 ${allowedQty} 件，不能再扫`
     );
   }
 
-  APP.packPool[value]=
-    alreadyScanned+1;
+  APP.packPool[value]=alreadyScanned+1;
 
   savePackPool();
   renderPackPoolStatus();
 
-  /*
-   * 有效商品：短“滴”一声。
-   * 如果这一件刚好完成一个订单，后面打印成功会再发“出单成功”提示音。
-   */
-  playWarehouseTone(
-    'ok'
-  );
+  playWarehouseTone('ok');
+  if(navigator.vibrate) navigator.vibrate(40);
 
-  if(navigator.vibrate){
-    navigator.vibrate(40);
-  }
-
-  const order=
-    nextCompletablePackingOrder();
+  const order=nextCompletableMultiPackingOrder();
 
   if(!order){
-
-    /*
-     * V9.6：只要当前货物池可能正在组成一票多件，
-     * 就给仓库人员一个非常明显的“暂不打印”提示，避免误以为第一件已经出单。
-     */
-    const multiWaiting=APP.shippingOrders
-      .filter(isOrderPackingEligible)
-      .filter(o=>isMultiPieceOrder(o.id))
-      .filter(o=>{
-        const need=orderNeeds(o.id);
-        return [...need.keys()].some(sku=>safeNumber(APP.packPool?.[sku],0)>0);
-      })
-      .sort((a,b)=>orderPieceCount(a.id)-orderPieceCount(b.id))[0];
+    const multiWaiting=
+      APP.shippingOrders
+        .filter(isOrderPackingEligible)
+        .filter(o=>isMultiPieceOrder(o.id))
+        .filter(o=>{
+          const need=orderNeeds(o.id);
+          return [...need.keys()].some(
+            sku=>safeNumber(APP.packPool?.[sku],0)>0
+          );
+        })
+        .sort((a,b)=>orderPieceCount(a.id)-orderPieceCount(b.id))[0];
 
     if(multiWaiting){
       const pieces=orderPieceCount(multiWaiting.id);
       const need=orderNeeds(multiWaiting.id);
       const scanned=[...need.entries()].reduce(
-        (sum,[sku,qty])=>sum+Math.min(qty,safeNumber(APP.packPool?.[sku],0)),0
+        (sum,[sku,qty])=>sum+Math.min(qty,safeNumber(APP.packPool?.[sku],0)),
+        0
       );
+
       showInfo(
-        `⚠️ 一票多件：订单 ${multiWaiting.order_no} 已扫 ${scanned}/${pieces} 件，还差 ${Math.max(0,pieces-scanned)} 件，暂不打印面单`
+        `⚠️ 多件订单 ${multiWaiting.order_no}：已扫 ${scanned}/${pieces} 件，还差 ${Math.max(0,pieces-scanned)} 件，暂不打印`
       );
-    }else{
-      showOk(
-        `✅ ${raw} ${alreadyScanned+1}/${allowedQty}，继续扫描`
-      );
-    }
-
-    const manual=
-      $('packManualCode');
-
-    if(manual){
-      manual.value='';
     }
 
     return;
   }
 
-  /*
-   * V9.6 一票多件防错：
-   * 即使货物池已经扫齐，也绝不直接自动打印。
-   * 多件订单整票数量满足后只需一次人工确认“所有件都在一起”，然后出面单。
-   */
-  if(
-    isMultiPieceOrder(order.id) &&
-    !confirmMultiPiecePack(order,'扫码')
-  ){
+  if(!confirmMultiPiecePack(order,'扫码')){
     renderPackPoolStatus();
     showInfo(
-      `⚠️ 一票多件 ${order.order_no} 已扫齐，但尚未确认打印；货物池已保留，不会丢失扫码进度`
+      `⚠️ 多件订单 ${order.order_no} 已扫齐，但尚未确认打印；货物池已保留`
     );
     return;
   }
 
-  /*
-   * 形成完整订单：
-   * 先打印；只有确认实际出纸并标记 packed 后，才从货物池扣掉该订单数量。
-   */
-  const printed=
-    await printShippingLabelByOrderId(
-      order.id,
-      true
-    );
+  const printed=await printShippingLabelByOrderId(order.id,true);
 
   if(printed===false){
     renderPackPoolStatus();
@@ -16239,14 +16430,11 @@ async function handlePackingScan(code){
   renderPackPoolStatus();
 
   showOk(
-    `✅ 已组成订单 ${order.order_no}：${describeOrderRequirement(order.id)}`
+    `✅ 多件订单 ${order.order_no} 已完成：${describeOrderRequirement(order.id)}`
   );
 
-  const manual=
-    $('packManualCode');
-
-  if(manual){
-    manual.value='';
+  if(manualInput){
+    manualInput.value='';
   }
 }
 
@@ -16648,13 +16836,18 @@ async function confirmPrintedPaperV102(order,printToken){
 }
 
 
-async function printShippingLabelByOrderId(orderId, markPacked=false){
+async function printShippingLabelByOrderId(orderId, markPacked=false, options={}){
   const order=APP.shippingOrders.find(x=>x.id===orderId);
   const label=APP.shippingLabels.find(x=>x.order_id===orderId);
   if(!order) return showError('订单不存在');
   if(!label) return showError(`订单 ${order.order_no} 还没有上传面单`);
 
+  const batchMode=options?.batchMode===true;
+  const suppressPostRefresh=options?.suppressPostRefresh===true;
+  const suppressSuccessToast=options?.suppressSuccessToast===true;
+
   let printToken=null;
+  let physicalPrintSubmitted=false;
 
   if(markPacked){
 
@@ -16727,14 +16920,17 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 
         silentPrinted=true;
         autoPrintStarted=true;
+        physicalPrintSubmitted=true;
 
         playWarehouseTone(
           'print'
         );
 
-        showOk(
-          `✅ ${order.order_no} 已直接发送到面单打印机`
-        );
+        if(!suppressSuccessToast){
+          showOk(
+            `✅ ${order.order_no} 已直接发送到面单打印机`
+          );
+        }
 
       }catch(error){
 
@@ -16820,28 +17016,30 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
       order.status='packed';
       printToken=null;
 
-      showOk(
-        `✅ ${order.order_no} 打印桥返回成功，已自动标记“已贴单”；库存数量保持不变`
-      );
+      if(!suppressSuccessToast){
+        showOk(
+          `✅ ${order.order_no} 打印桥返回成功，已自动标记“已贴单”；库存数量保持不变`
+        );
+      }
 
       renderPackingQueue();
       updateShippingCloudSummary();
       saveShippingProgressSnapshot();
 
-      await syncShippingBatchSummaries();
-      await loadShippingBatchHistory(true);
-      await refreshPackingProgressCenter();
+      if(!suppressPostRefresh){
+        await syncShippingBatchSummaries();
+        await loadShippingBatchHistory(true);
+        await refreshPackingProgressCenter();
+      }
     }
 
     const progress=getBatchProgressForOrder(order.id);
-    if(markPacked && progress){
+    if(markPacked && progress && !suppressSuccessToast){
       showOk(
-        order.status==='shipped'
-        ? `✅ 面单已打印并标记已贴单 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
-        : `✅ 面单已打印并标记已贴单 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
+        `✅ 面单已打印并标记已贴单 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
       );
     }else{
-      if(!silentPrinted){
+      if(!silentPrinted && !suppressSuccessToast){
 
         playWarehouseTone(
           'print'
@@ -16861,7 +17059,7 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
 
     console.error(error);
 
-    if(printToken){
+    if(printToken && !physicalPrintSubmitted){
       try{
         await APP.sb.rpc(
           'release_shipping_print_lock',
@@ -16874,6 +17072,11 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
         console.warn('释放打印锁失败',e);
       }
       printToken=null;
+    }else if(printToken && physicalPrintSubmitted){
+      console.warn(
+        '面单已提交打印，但云端完成标记失败；保留打印锁，禁止自动重打',
+        order.order_no
+      );
     }
 
     if(printWin){
@@ -16887,8 +17090,9 @@ async function printShippingLabelByOrderId(orderId, markPacked=false){
     );
 
     showError(
-      '打开面单失败：'+
-      (error.message||'')
+      physicalPrintSubmitted
+        ? `⚠️ ${order.order_no} 已经提交到打印机，但云端完成标记失败。为了防止重复面单，系统保留打印锁；请先检查实际纸张，不要重新扫描。错误：${error.message||''}`
+        : '打开面单失败：'+(error.message||'')
     );
 
     return false;
