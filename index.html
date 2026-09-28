@@ -1038,7 +1038,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.5 · Stable Warehouse
+          版本 V10.6 · Stable Warehouse
         </div>
 
       </div>
@@ -1168,7 +1168,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.5-20260926-SINGLE-MULTI-PACKING-MODES';
+const APP_VERSION = 'V10.6-20260928-STRICT-BATCH-SCAN';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -7191,6 +7191,29 @@ function getStoredShippingActiveBatch(){
   }
 }
 
+/*
+ * V10.6：所有“扫码临时状态”都按当前订单批次隔离。
+ * 两个不同订单文件即使同时未归档，也绝不共用同一个本机扫码池。
+ */
+function shippingBatchLocalToken(source=null){
+  const raw=String(
+    source ||
+    APP.shippingActiveBatchSource ||
+    getStoredShippingActiveBatch() ||
+    'no-batch'
+  ).trim();
+
+  let hash=2166136261;
+
+  for(let i=0;i<raw.length;i++){
+    hash^=raw.charCodeAt(i);
+    hash=Math.imul(hash,16777619);
+  }
+
+  return (hash>>>0).toString(36);
+}
+
+
 function chooseLatestShippingBatchSource(orders){
   const valid=(orders||[])
     .filter(o=>{
@@ -9775,6 +9798,17 @@ async function loadShippingWorkspace(silent=false){
     APP.shippingItems=items;
     APP.shippingLabels=labels;
 
+    /*
+     * V10.6：工作区硬隔离校验。
+     * 任何内存订单只要 source_file 不等于当前批次，直接报错，不允许继续扫码。
+     */
+    const mixedOrders=(APP.shippingOrders||[])
+      .filter(o=>String(o.source_file||'')!==String(active||''));
+
+    if(mixedOrders.length){
+      throw new Error(`批次隔离失败：发现 ${mixedOrders.length} 个其它批次订单`);
+    }
+
     loadPackPool();
     buildCloudPickingRows();
     renderPackingQueue();
@@ -10032,6 +10066,164 @@ function buildShippingBatchHistory(){
 }
 
 
+
+function activeShippingBatchChoices(){
+  return buildShippingBatchHistory()
+    .filter(b=>b.status!=='archived' && String(b.sourceFile||'').trim());
+}
+
+async function switchShippingActiveBatchV106(source, options={}){
+  const nextSource=String(source||'').trim();
+
+  if(!nextSource){
+    return showError('没有选择订单批次');
+  }
+
+  if(APP.singleSkuBatchBusy){
+    return showError('正在批量打印单件订单，完成后才能切换批次');
+  }
+
+  const oldSource=String(APP.shippingActiveBatchSource||getStoredShippingActiveBatch()||'').trim();
+
+  if(nextSource===oldSource){
+    if(!options.silent){
+      showOk(`✅ 当前已经是：${shippingActiveBatchName()||nextSource}`);
+    }
+    return true;
+  }
+
+  /*
+   * 先保存旧批次自己的本机货物池。
+   * packPoolStorageKey 已包含 batch token，因此不会写到新批次。
+   */
+  try{
+    savePackPool();
+  }catch(e){}
+
+  deactivateHardwareScanner();
+
+  try{
+    if(!options.silent){
+      showInfo('正在切换订单批次...');
+    }
+
+    setShippingActiveBatch(nextSource);
+
+    /*
+     * 清空内存后重新读“新批次自己的”本机扫码池。
+     * 这里只清内存，不删除任何批次的 localStorage。
+     */
+    APP.packPool={};
+    APP.packingProgressData=null;
+    APP.shippingManualLabelPages?.clear?.();
+
+    await loadShippingWorkspace(true);
+
+    /*
+     * 双重校验：切换后内存里的订单必须全部属于当前 source_file。
+     */
+    const wrong=(APP.shippingOrders||[])
+      .filter(o=>String(o.source_file||'')!==nextSource);
+
+    if(wrong.length){
+      throw new Error(`批次隔离校验失败：发现 ${wrong.length} 单不属于当前批次`);
+    }
+
+    loadPackPool();
+    buildCloudPickingRows();
+    renderPackingQueue();
+    renderPackPoolStatus();
+    updateShippingCloudSummary();
+
+    try{
+      await loadShippingBatchHistory(true);
+    }catch(e){}
+
+    if(typeof renderPackingBatchHeaderV106==='function'){
+      renderPackingBatchHeaderV106();
+    }
+
+    try{
+      await refreshPackingProgressCenter();
+    }catch(e){}
+
+    if(!options.silent){
+      showOk(`✅ 已切换批次：${shippingActiveBatchName()||nextSource}`);
+    }
+
+    return true;
+
+  }catch(error){
+    console.error('切换订单批次失败',error);
+
+    /*
+     * 切换失败时恢复旧批次，不让页面停在半切换状态。
+     */
+    if(oldSource){
+      setShippingActiveBatch(oldSource);
+      APP.packPool={};
+
+      try{
+        await loadShippingWorkspace(true);
+        loadPackPool();
+      }catch(e){}
+    }
+
+    showError('切换批次失败：'+(error.message||'未知错误'));
+    return false;
+
+  }finally{
+    activateHardwareScanner();
+  }
+}
+
+async function switchShippingActiveBatchFromHistory(encodedSource){
+  const source=decodeURIComponent(encodedSource||'');
+  const ok=await switchShippingActiveBatchV106(source);
+
+  if(ok){
+    renderShippingBatchHistory();
+  }
+}
+
+function packingBatchOptionsHtmlV106(){
+  const batches=activeShippingBatchChoices();
+  const current=String(APP.shippingActiveBatchSource||'').trim();
+
+  return batches.map(b=>{
+    const source=String(b.sourceFile||'');
+    const selected=source===current?' selected':'';
+    const label=`${b.name||source} · ${safeNumber(b.totalOrders,0)}单`;
+    return `<option value="${escapeHtml(encodeURIComponent(source))}"${selected}>${escapeHtml(label)}</option>`;
+  }).join('');
+}
+
+function renderPackingBatchHeaderV106(){
+  const wrap=$('packingBatchHeaderV106');
+  const select=$('packingBatchSelectV106');
+
+  if(wrap){
+    wrap.innerHTML=`
+      <div class="font-bold">🎯 当前扫描批次</div>
+      <div class="mt-1 break-all text-blue-700 font-bold">
+        ${escapeHtml(shippingActiveBatchName()||APP.shippingActiveBatchSource||'未选择')}
+      </div>
+      <div class="small mt-1">
+        扫码、面单匹配、单件/多件、已完成记录都只属于这个批次。
+      </div>`;
+  }
+
+  if(select){
+    select.innerHTML=packingBatchOptionsHtmlV106();
+    select.value=encodeURIComponent(String(APP.shippingActiveBatchSource||''));
+  }
+}
+
+async function switchPackingBatchV106(encodedSource){
+  const source=decodeURIComponent(encodedSource||'');
+  await switchShippingActiveBatchV106(source);
+}
+
 function renderShippingBatchHistory(){
 
   const el=$('shippingBatchHistory');
@@ -10095,6 +10287,10 @@ function renderShippingBatchHistory(){
     const pieces=safeNumber(b.totalPieces,0);
     const incomplete=Math.max(0,total-completed);
     const encodedKey=encodeURIComponent(b.key);
+    const isCurrentBatch=
+      b.status!=='archived' &&
+      String(APP.shippingActiveBatchSource||'')===String(b.sourceFile||'');
+    const encodedSource=encodeURIComponent(String(b.sourceFile||''));
 
     return `
       <div class="w-full border rounded-2xl p-3 bg-white">
@@ -10115,6 +10311,11 @@ function renderShippingBatchHistory(){
                 ${escapeHtml(formatDate(b.createdAt))}
                 ${b.orderDate?` · ${escapeHtml(String(b.orderDate).slice(0,10))}`:''}
               </div>
+              ${
+                isCurrentBatch
+                  ? '<div class="mt-2"><span class="badge badge-blue">🎯 当前扫描批次</span></div>'
+                  : ''
+              }
 
             </div>
 
@@ -10172,6 +10373,21 @@ function renderShippingBatchHistory(){
           </button>
 
           ${
+            b.status!=='archived'
+              ? `
+                <button
+                  class="btn ${isCurrentBatch?'btn-green':'btn-blue'} w-full"
+                  onclick="switchShippingActiveBatchFromHistory('${encodedSource}')">
+                  ${isCurrentBatch?'✅ 当前正在扫描这个批次':'🎯 切换到这个批次扫描'}
+                </button>
+                <div class="small text-blue-700">
+                  切换后扫码页只读取这个订单文件；其他未归档批次不会参与匹配。
+                </div>
+              `
+              : ''
+          }
+
+          ${
             b.status==='archived'
               ? `
                 <button
@@ -10219,7 +10435,7 @@ function renderShippingBatchHistory(){
           <div>
             <div class="font-bold text-lg">🚚 当前 / 进行中批次</div>
             <div class="small mt-1">
-              正在工作的批次显示在这里。导入错批次时，可直接在批次卡片下方用管理员密码清除。
+              每个订单文件都是独立批次。蓝色“当前扫描批次”才会进入扫码/贴单；其他进行中批次不会混进来。
             </div>
           </div>
 
@@ -14035,7 +14251,7 @@ async function uploadShippingLabels(){
     }
 
     if(!APP.shippingActiveBatchSource || !APP.shippingOrders.length){
-      throw new Error('请先导入正确的客户订单清单，再上传面单。面单不能自动创建订单。');
+      throw new Error('请先选择正确的当前订单批次，再上传面单。面单只会匹配当前批次，不能自动创建订单。');
     }
 
     const resultEl=$('labelUploadResult');
@@ -14633,7 +14849,11 @@ async function refreshShippingOrderStatuses(){
 }
 
 
-function shippingProgressSnapshotKey(){
+function shippingProgressSnapshotKey(source=null){
+  return `warehouse_shipping_progress_snapshot_${APP.warehouse?.id||'none'}_${shippingBatchLocalToken(source)}`;
+}
+
+function legacyShippingProgressSnapshotKey(){
   return `warehouse_shipping_progress_snapshot_${APP.warehouse?.id||'none'}`;
 }
 
@@ -14712,12 +14932,32 @@ function saveShippingProgressSnapshot(){
 
 function loadShippingProgressSnapshot(){
   try{
-    const raw=
+    let raw=
       localStorage.getItem(
         shippingProgressSnapshotKey()
       );
 
-    return raw ? JSON.parse(raw) : null;
+    /*
+     * 兼容升级前旧版本最后一次快照。
+     * 只作为只读兜底，不会把旧批次写进当前批次。
+     */
+    if(!raw){
+      raw=localStorage.getItem(
+        legacyShippingProgressSnapshotKey()
+      );
+    }
+
+    const parsed=raw ? JSON.parse(raw) : null;
+
+    if(
+      parsed?.batchSource &&
+      APP.shippingActiveBatchSource &&
+      String(parsed.batchSource)!==String(APP.shippingActiveBatchSource)
+    ){
+      return null;
+    }
+
+    return parsed;
 
   }catch(error){
     console.warn('读取本机出货安全快照失败',error);
@@ -14726,7 +14966,7 @@ function loadShippingProgressSnapshot(){
 }
 
 function packPoolStorageKey(){
-  return `warehouse_pack_pool_${APP.warehouse?.id||'none'}`;
+  return `warehouse_pack_pool_${APP.warehouse?.id||'none'}_${shippingBatchLocalToken()}`;
 }
 
 function packPoolBackupStorageKey(){
@@ -15958,6 +16198,30 @@ function renderPackingProgressSearchList(){
 async function openPackingScanner(){
   if(!APP.shippingCloudReady) return showError('请先同步云端订单');
 
+  try{
+    await loadShippingBatchHistory(true);
+  }catch(e){}
+
+  const activeBatches=activeShippingBatchChoices();
+
+  if(!activeBatches.length){
+    return showError('当前没有可扫描的进行中订单批次');
+  }
+
+  /*
+   * 当前批次如果不存在于进行中列表，要求明确选择一个。
+   * 正常导入后会自动把新导入文件设为当前批次。
+   */
+  if(
+    !APP.shippingActiveBatchSource ||
+    !activeBatches.some(b=>String(b.sourceFile||'')===String(APP.shippingActiveBatchSource||''))
+  ){
+    await switchShippingActiveBatchV106(
+      activeBatches[0].sourceFile,
+      {silent:true}
+    );
+  }
+
   APP.packingModalLocked=true;
   APP.packingScanMode=APP.packingScanMode||'single';
   APP.singleSkuBatchBusy=false;
@@ -15967,6 +16231,29 @@ async function openPackingScanner(){
     <div class="flex items-center justify-between mb-3">
       <h2 class="text-xl font-bold">🖨️ 扫码贴单</h2>
       <button onclick="closePackingScanner()" class="text-gray-400 text-2xl">×</button>
+    </div>
+
+    <div class="bg-blue-50 rounded-xl p-3 mb-3">
+      <div id="packingBatchHeaderV106">
+        <div class="font-bold">🎯 当前扫描批次</div>
+        <div class="mt-1 break-all text-blue-700 font-bold">
+          ${escapeHtml(shippingActiveBatchName()||APP.shippingActiveBatchSource||'未选择')}
+        </div>
+        <div class="small mt-1">
+          扫码、面单匹配、单件/多件、已完成记录都只属于这个批次。
+        </div>
+      </div>
+
+      <select
+        id="packingBatchSelectV106"
+        class="mt-3"
+        onchange="switchPackingBatchV106(this.value)">
+        ${packingBatchOptionsHtmlV106()}
+      </select>
+
+      <div class="small mt-2 text-red-700">
+        ⚠️ 换订单文件时请先在这里切换批次。不同批次不会共用扫码货物池。
+      </div>
     </div>
 
     <div class="grid grid-cols-2 gap-2 mb-3">
@@ -16012,6 +16299,7 @@ async function openPackingScanner(){
     <button class="btn btn-gray w-full mt-2" onclick="closePackingScanner()">关闭</button>
   `);
 
+  renderPackingBatchHeaderV106();
   setPackingScanMode(APP.packingScanMode||'single',true);
   refreshPackingProgressCenter();
 
@@ -16256,6 +16544,25 @@ async function printSingleSkuBatch(sku){
 }
 
 async function handlePackingScan(code){
+
+  const currentBatch=String(
+    APP.shippingActiveBatchSource ||
+    getStoredShippingActiveBatch() ||
+    ''
+  ).trim();
+
+  if(!currentBatch){
+    return packingScanError('❌ 没有选择当前扫描批次，请先选择订单批次');
+  }
+
+  const mixed=(APP.shippingOrders||[])
+    .filter(o=>String(o.source_file||'')!==currentBatch);
+
+  if(mixed.length){
+    return packingScanError(
+      `❌ 检测到其它批次订单混入当前内存（${mixed.length} 单），已停止扫码。请点云端同步后重新选择批次。`
+    );
+  }
 
   if(APP.singleSkuBatchBusy){
     return showInfo('当前正在批量打印单件订单，请等待完成');
