@@ -808,7 +808,7 @@ th{
           退出登录
         </button>
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.7 · Stable Warehouse
+          版本 V10.7.1 · Stable Warehouse
         </div>
       </div>
     </section>
@@ -893,7 +893,7 @@ th{
 /* =========================================================
    基础配置
 ========================================================= */
-const APP_VERSION = 'V10.7-20260928-FAST-SCAN-PIPELINE';
+const APP_VERSION = 'V10.7.1-20260928-NO-SAME-SKU-RECOUNT';
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
 const SUPABASE_KEY =
@@ -11492,7 +11492,7 @@ function renderPackPoolStatus(){
             : '<div class="small mt-2">当前没有重复 SKU 的单件订单</div>'
         }
         <div class="small mt-2">
-          重复 SKU 也按实物逐件扫描：每扫 1 件，只出 1 张面单，不再一次连续打印多张。
+          重复 SKU 也按实物逐件扫描：每扫 1 件，只出 1 张面单。
         </div>
       </div>
     `;
@@ -12436,13 +12436,13 @@ async function printSingleSkuOneByOne(sku){
     );
   if(printed===true){
     scheduleLabelPrefetchV107(20);
-    const left=
-      Math.max(
-        0,
-        eligibleSingleOrdersForSku(sku).length
-      );
+    /*
+     * V10.7.1：
+     * 不再为了显示“同 SKU 还剩几单”而重新遍历全部订单。
+     * 扫描成功只显示最必要的信息，减少每枪额外计算。
+     */
     showOk(
-      `✅ ${sku} 已打印 1 单；同 SKU 还剩 ${left} 个单件订单待扫`
+      `✅ ${sku} 已打印 1 单`
     );
   }
   return printed;
