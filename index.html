@@ -808,7 +808,7 @@ th{
           退出登录
         </button>
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.7.1 · Stable Warehouse
+          版本 V10.7.2 · Stable Warehouse
         </div>
       </div>
     </section>
@@ -893,7 +893,7 @@ th{
 /* =========================================================
    基础配置
 ========================================================= */
-const APP_VERSION = 'V10.7.1-20260928-NO-SAME-SKU-RECOUNT';
+const APP_VERSION = 'V10.7.2-20260928-FAST-SKU-INDEX';
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
 const SUPABASE_KEY =
@@ -7083,6 +7083,9 @@ async function loadShippingWorkspace(silent=false){
     APP.shippingOrders=orders;
     APP.shippingItems=items;
     APP.shippingLabels=labels;
+    if(typeof buildFastSingleOrderIndexV1072==='function'){
+      buildFastSingleOrderIndexV1072();
+    }
     /*
      * V10.6：工作区硬隔离校验。
      * 任何内存订单只要 source_file 不等于当前批次，直接报错，不允许继续扫码。
@@ -11291,6 +11294,9 @@ function persistPackPoolBeforeLeave(){
   }catch(e){}
 }
 window.addEventListener('beforeunload',persistPackPoolBeforeLeave);
+window.addEventListener('beforeunload',()=>{
+  try{ saveShippingProgressSnapshot(); }catch(e){}
+});
 window.addEventListener('pagehide',persistPackPoolBeforeLeave);
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='hidden'){
@@ -12285,7 +12291,7 @@ async function openPackingScanner(){
       <div id="reader" style="width:100%;"></div>
     </div>
     <div id="desktopScannerOnlyBox" class="hidden bg-blue-50 rounded-xl p-3 mb-3 text-sm">
-      💻 电脑贴单台已关闭摄像头，只监听 USB / 蓝牙扫码枪。已开启极速面单缓存。
+      💻 电脑贴单台已关闭摄像头，只监听 USB / 蓝牙扫码枪。已开启极速面单缓存 + SKU快速索引。
     </div>
     <input id="packManualCode" class="mt-3" placeholder="也可以手动输入 SKU / 订单号 / Tracking No.">
     <button class="btn btn-blue w-full mt-2" onclick="handlePackingScan($('packManualCode').value)">
@@ -12409,8 +12415,13 @@ function nextCompletableMultiPackingOrder(){
   return ready[0]||null;
 }
 async function printSingleSkuOneByOne(sku){
-  const orders=eligibleSingleOrdersForSku(sku);
-  if(!orders.length){
+  /*
+   * V10.7.2：
+   * 扫码热路径直接查 SKU -> 待打印订单索引，
+   * 不再每枪遍历全部订单 + 全部商品明细。
+   */
+  const order=nextSingleOrderFastV1072(sku);
+  if(!order){
     const multiCount=eligibleMultiOrdersForSku(sku).length;
     return packingScanError(
       multiCount
@@ -12419,12 +12430,9 @@ async function printSingleSkuOneByOne(sku){
     );
   }
   /*
-   * V10.6.2：
-   * 单件订单严格“一扫一单”。
-   * 同一个 SKU 即使有很多订单，每次扫描也只取 1 个未完成订单。
-   * 下一件实物必须再次扫描，才会打印下一张面单。
+   * 单件订单严格“一扫一单”：
+   * 每扫描 1 件实物，只处理 1 个订单。
    */
-  const order=orders[0];
   const printed=
     await printShippingLabelByOrderId(
       order.id,
@@ -12681,6 +12689,83 @@ const FAST_LABEL_BLOB_LOADING = new Map();
 let FAST_BRIDGE_HEALTH_OK_UNTIL = 0;
 let FAST_BACKGROUND_REFRESH_TIMER = null;
 let FAST_PREFETCH_TIMER = null;
+let FAST_PACKING_UI_TIMER = null;
+let FAST_SNAPSHOT_TIMER = null;
+const FAST_SINGLE_ORDER_INDEX = new Map();
+const FAST_ORDER_BY_ID = new Map();
+const FAST_ITEMS_BY_ORDER = new Map();
+function buildFastSingleOrderIndexV1072(){
+  FAST_SINGLE_ORDER_INDEX.clear();
+  FAST_ORDER_BY_ID.clear();
+  FAST_ITEMS_BY_ORDER.clear();
+  for(const order of (APP.shippingOrders||[])){
+    if(order?.id){
+      FAST_ORDER_BY_ID.set(order.id,order);
+    }
+  }
+  for(const item of (APP.shippingItems||[])){
+    if(!item?.order_id) continue;
+    const arr=FAST_ITEMS_BY_ORDER.get(item.order_id)||[];
+    arr.push(item);
+    FAST_ITEMS_BY_ORDER.set(item.order_id,arr);
+  }
+  const sorted=(APP.shippingOrders||[])
+    .slice()
+    .sort((a,b)=>
+      String(a.created_at||'')
+        .localeCompare(String(b.created_at||''))
+    );
+  for(const order of sorted){
+    if(!isOrderPackingEligible(order)) continue;
+    if(isMultiPieceOrder(order.id)) continue;
+    const items=FAST_ITEMS_BY_ORDER.get(order.id)||[];
+    if(items.length!==1) continue;
+    const item=items[0];
+    if(safeNumber(item.qty,0)!==1) continue;
+    const key=normalizeShippingKey(item.sku);
+    if(!key) continue;
+    const queue=FAST_SINGLE_ORDER_INDEX.get(key)||[];
+    queue.push(order.id);
+    FAST_SINGLE_ORDER_INDEX.set(key,queue);
+  }
+}
+function nextSingleOrderFastV1072(sku){
+  const key=normalizeShippingKey(sku);
+  const queue=FAST_SINGLE_ORDER_INDEX.get(key)||[];
+  while(queue.length){
+    const order=FAST_ORDER_BY_ID.get(queue[0]);
+    if(
+      order &&
+      isOrderPackingEligible(order) &&
+      !isMultiPieceOrder(order.id)
+    ){
+      return order;
+    }
+    queue.shift();
+  }
+  return null;
+}
+function schedulePackingUiRefreshV1072(delay=350){
+  clearTimeout(FAST_PACKING_UI_TIMER);
+  FAST_PACKING_UI_TIMER=setTimeout(()=>{
+    try{
+      renderPackingQueue();
+      updateShippingCloudSummary();
+    }catch(e){
+      console.warn('延迟刷新贴单界面失败',e);
+    }
+  },delay);
+}
+function scheduleShippingSnapshotV1072(delay=1000){
+  clearTimeout(FAST_SNAPSHOT_TIMER);
+  FAST_SNAPSHOT_TIMER=setTimeout(()=>{
+    try{
+      saveShippingProgressSnapshot();
+    }catch(e){
+      console.warn('延迟保存出货快照失败',e);
+    }
+  },delay);
+}
 function trimFastLabelCacheV107(max=30){
   while(FAST_LABEL_BLOB_CACHE.size>max){
     const firstKey=FAST_LABEL_BLOB_CACHE.keys().next().value;
@@ -13160,14 +13245,21 @@ async function printShippingLabelByOrderId(orderId, markPacked=false, options={}
           `✅ ${order.order_no} 打印桥返回成功，已自动标记“已贴单”；库存数量保持不变`
         );
       }
-      renderPackingQueue();
-      updateShippingCloudSummary();
-      saveShippingProgressSnapshot();
+      /*
+       * V10.7.2：
+       * 云端 finish 已经成功，所以防重复状态立即生效。
+       * 下面这些只是界面/本机快照，不再阻塞下一枪。
+       */
+      schedulePackingUiRefreshV1072(300);
+      scheduleShippingSnapshotV1072(1000);
       if(!suppressPostRefresh){
-        schedulePackingBackgroundRefreshV107(900);
+        schedulePackingBackgroundRefreshV107(1200);
       }
     }
-    const progress=getBatchProgressForOrder(order.id);
+    const progress=
+      !suppressSuccessToast
+        ? getBatchProgressForOrder(order.id)
+        : null;
     if(markPacked && progress && !suppressSuccessToast){
       showOk(
         `✅ 面单已打印并标记已贴单 · 已完成 ${progress.completed}/${progress.total}，未完成 ${progress.incomplete}`
