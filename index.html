@@ -808,7 +808,7 @@ th{
           退出登录
         </button>
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.6.2 · Stable Warehouse
+          版本 V10.7 · Stable Warehouse
         </div>
       </div>
     </section>
@@ -893,7 +893,7 @@ th{
 /* =========================================================
    基础配置
 ========================================================= */
-const APP_VERSION = 'V10.6.2-20260928-SINGLE-ONE-SCAN-ONE-LABEL';
+const APP_VERSION = 'V10.7-20260928-FAST-SCAN-PIPELINE';
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
 const SUPABASE_KEY =
@@ -12285,7 +12285,7 @@ async function openPackingScanner(){
       <div id="reader" style="width:100%;"></div>
     </div>
     <div id="desktopScannerOnlyBox" class="hidden bg-blue-50 rounded-xl p-3 mb-3 text-sm">
-      💻 电脑贴单台已关闭摄像头，只监听 USB / 蓝牙扫码枪。
+      💻 电脑贴单台已关闭摄像头，只监听 USB / 蓝牙扫码枪。已开启极速面单缓存。
     </div>
     <input id="packManualCode" class="mt-3" placeholder="也可以手动输入 SKU / 订单号 / Tracking No.">
     <button class="btn btn-blue w-full mt-2" onclick="handlePackingScan($('packManualCode').value)">
@@ -12296,6 +12296,7 @@ async function openPackingScanner(){
   renderPackingBatchHeaderV106();
   setPackingScanMode(APP.packingScanMode||'single',true);
   refreshPackingProgressCenter();
+  scheduleLabelPrefetchV107(50);
   activateHardwareScanner();
   const cameraBox=$('packingCameraBox');
   const desktopOnlyBox=$('desktopScannerOnlyBox');
@@ -12427,9 +12428,14 @@ async function printSingleSkuOneByOne(sku){
   const printed=
     await printShippingLabelByOrderId(
       order.id,
-      true
+      true,
+      {
+        suppressPostRefresh:false,
+        suppressSuccessToast:true
+      }
     );
   if(printed===true){
+    scheduleLabelPrefetchV107(20);
     const left=
       Math.max(
         0,
@@ -12667,20 +12673,130 @@ async function manualConfirmPackOrder(orderId){
   }
 }
 const LOCAL_PRINT_BRIDGE_URL = 'http://127.0.0.1:17891';
+/* =========================================================
+   V10.7 极速贴单：缓存 + 后台刷新
+========================================================= */
+const FAST_LABEL_BLOB_CACHE = new Map();
+const FAST_LABEL_BLOB_LOADING = new Map();
+let FAST_BRIDGE_HEALTH_OK_UNTIL = 0;
+let FAST_BACKGROUND_REFRESH_TIMER = null;
+let FAST_PREFETCH_TIMER = null;
+function trimFastLabelCacheV107(max=30){
+  while(FAST_LABEL_BLOB_CACHE.size>max){
+    const firstKey=FAST_LABEL_BLOB_CACHE.keys().next().value;
+    if(firstKey===undefined) break;
+    FAST_LABEL_BLOB_CACHE.delete(firstKey);
+  }
+}
+async function getLabelBlobFastV107(label){
+  const key=String(label?.storage_path||'').trim();
+  if(!key) throw new Error('面单文件路径为空');
+  if(FAST_LABEL_BLOB_CACHE.has(key)){
+    const blob=FAST_LABEL_BLOB_CACHE.get(key);
+    FAST_LABEL_BLOB_CACHE.delete(key);
+    FAST_LABEL_BLOB_CACHE.set(key,blob);
+    return blob;
+  }
+  if(FAST_LABEL_BLOB_LOADING.has(key)){
+    return await FAST_LABEL_BLOB_LOADING.get(key);
+  }
+  const task=(async()=>{
+    const {data,error}=await APP.sb.storage
+      .from('shipping-labels')
+      .createSignedUrl(key,300);
+    if(error) throw error;
+    const url=data?.signedUrl;
+    if(!url) throw new Error('无法生成面单地址');
+    const res=await fetch(url,{cache:'force-cache'});
+    if(!res.ok) throw new Error('面单下载失败');
+    const blob=await res.blob();
+    FAST_LABEL_BLOB_CACHE.set(key,blob);
+    trimFastLabelCacheV107(30);
+    return blob;
+  })();
+  FAST_LABEL_BLOB_LOADING.set(key,task);
+  try{
+    return await task;
+  }finally{
+    FAST_LABEL_BLOB_LOADING.delete(key);
+  }
+}
+async function prefetchPendingSingleLabelsV107(limit=12){
+  if(
+    !APP.warehouse ||
+    APP.packingScanMode==='multi' ||
+    !APP.shippingOrders?.length
+  ){
+    return;
+  }
+  const pending=(APP.shippingOrders||[])
+    .filter(o=>isOrderPackingEligible(o) && !isMultiPieceOrder(o.id))
+    .slice(0,Math.max(1,limit));
+  for(const order of pending){
+    const label=APP.shippingLabels.find(x=>x.order_id===order.id);
+    const path=String(label?.storage_path||'').trim();
+    if(
+      !path ||
+      FAST_LABEL_BLOB_CACHE.has(path) ||
+      FAST_LABEL_BLOB_LOADING.has(path)
+    ){
+      continue;
+    }
+    try{
+      await getLabelBlobFastV107(label);
+    }catch(e){
+      console.warn('预缓存面单失败',order.order_no,e);
+    }
+  }
+}
+function scheduleLabelPrefetchV107(delay=80){
+  clearTimeout(FAST_PREFETCH_TIMER);
+  FAST_PREFETCH_TIMER=setTimeout(()=>{
+    prefetchPendingSingleLabelsV107(12).catch(e=>
+      console.warn('后台预缓存失败',e)
+    );
+  },delay);
+}
+function schedulePackingBackgroundRefreshV107(delay=1200){
+  clearTimeout(FAST_BACKGROUND_REFRESH_TIMER);
+  FAST_BACKGROUND_REFRESH_TIMER=setTimeout(async()=>{
+    try{
+      await syncShippingBatchSummaries();
+      await loadShippingBatchHistory(true);
+      await refreshPackingProgressCenter();
+      updateShippingCloudSummary();
+    }catch(e){
+      console.warn('后台刷新贴单进度失败',e);
+    }
+  },delay);
+}
 async function localPrintBridgeReady(){
   if(!isDesktopPackingStation()) return false;
+  if(Date.now()<FAST_BRIDGE_HEALTH_OK_UNTIL){
+    return true;
+  }
   try{
     const controller = new AbortController();
-    const timer = setTimeout(()=>controller.abort(),1200);
+    const timer = setTimeout(()=>controller.abort(),900);
     const res = await fetch(LOCAL_PRINT_BRIDGE_URL + '/health',{
       method:'GET',
-      signal:controller.signal
+      signal:controller.signal,
+      cache:'no-store'
     });
     clearTimeout(timer);
-    if(!res.ok) return false;
-    const data = await res.json();
-    return data?.ok === true;
+    if(!res.ok){
+      FAST_BRIDGE_HEALTH_OK_UNTIL=0;
+      return false;
+    }
+    const data=await res.json();
+    if(data?.ok===true){
+      FAST_BRIDGE_HEALTH_OK_UNTIL=Date.now()+20000;
+      return true;
+    }
+    FAST_BRIDGE_HEALTH_OK_UNTIL=0;
+    return false;
   }catch(e){
+    FAST_BRIDGE_HEALTH_OK_UNTIL=0;
     return false;
   }
 }
@@ -12941,16 +13057,8 @@ async function printShippingLabelByOrderId(orderId, markPacked=false, options={}
       ? '正在准备面单打印...'
       : '正在打开面单...'
     );
-    const {data,error}=await APP.sb.storage
-      .from('shipping-labels')
-      .createSignedUrl(label.storage_path,60);
-    if(error) throw error;
-    const url=data?.signedUrl;
-    if(!url) throw new Error('无法生成面单地址');
-    const res=await fetch(url);
-    if(!res.ok) throw new Error('面单下载失败');
     const blob=
-      await res.blob();
+      await getLabelBlobFastV107(label);
     let autoPrintStarted=false;
     let silentPrinted=false;
     /*
@@ -12966,6 +13074,7 @@ async function printShippingLabelByOrderId(orderId, markPacked=false, options={}
           blob,
           order.order_no
         );
+        FAST_BRIDGE_HEALTH_OK_UNTIL=Date.now()+20000;
         silentPrinted=true;
         autoPrintStarted=true;
         physicalPrintSubmitted=true;
@@ -13055,9 +13164,7 @@ async function printShippingLabelByOrderId(orderId, markPacked=false, options={}
       updateShippingCloudSummary();
       saveShippingProgressSnapshot();
       if(!suppressPostRefresh){
-        await syncShippingBatchSummaries();
-        await loadShippingBatchHistory(true);
-        await refreshPackingProgressCenter();
+        schedulePackingBackgroundRefreshV107(900);
       }
     }
     const progress=getBatchProgressForOrder(order.id);
