@@ -1038,7 +1038,7 @@ th{
         </button>
 
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.6 · Stable Warehouse
+          版本 V10.6.1 · Stable Warehouse
         </div>
 
       </div>
@@ -1168,7 +1168,7 @@ th{
    基础配置
 ========================================================= */
 
-const APP_VERSION = 'V10.6-20260928-STRICT-BATCH-SCAN';
+const APP_VERSION = 'V10.6.1-20260928-OVER1000-ORDERS-FIX';
 
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
@@ -9702,6 +9702,106 @@ async function shippingFetchByOrderIds(tableName,orderIds,options={}){
   return rows;
 }
 
+/*
+ * V10.6.1：
+ * Supabase/PostgREST 单次 select 默认最多返回约 1000 行。
+ * 出货批次超过 1000 单时，所有关键 shipping_orders 读取必须分页，
+ * 否则会出现“应有 1027 单，云端实际 1000 单”的假失败，
+ * 并且扫码工作区会漏掉 1000 单以后的订单。
+ */
+async function shippingFetchOrdersPagedV1061(options={}){
+
+  const pageSize=1000;
+  let from=0;
+  const rows=[];
+
+  while(true){
+
+    let q=APP.sb
+      .from('shipping_orders')
+      .select(options.select || '*');
+
+    const warehouseId=
+      options.warehouseId ||
+      APP.warehouse?.id;
+
+    if(warehouseId){
+      q=q.eq(
+        'warehouse_id',
+        warehouseId
+      );
+    }
+
+    if(options.sourceFile!==undefined && options.sourceFile!==null){
+      q=q.eq(
+        'source_file',
+        String(options.sourceFile)
+      );
+    }
+
+    if(options.orderDate){
+      q=q.eq(
+        'order_date',
+        String(options.orderDate).slice(0,10)
+      );
+    }
+
+    if(options.isArchived!==undefined){
+      q=q.eq(
+        'is_archived',
+        !!options.isArchived
+      );
+    }
+
+    if(options.status){
+      q=q.eq(
+        'status',
+        options.status
+      );
+    }
+
+    if(options.notStatus){
+      q=q.neq(
+        'status',
+        options.notStatus
+      );
+    }
+
+    if(options.orderColumn){
+      q=q.order(
+        options.orderColumn,
+        {
+          ascending:
+            options.ascending!==false
+        }
+      );
+    }
+
+    q=q.range(
+      from,
+      from+pageSize-1
+    );
+
+    const {data,error}=await q;
+
+    if(error){
+      throw error;
+    }
+
+    const pageRows=data||[];
+    rows.push(...pageRows);
+
+    if(pageRows.length<pageSize){
+      break;
+    }
+
+    from+=pageSize;
+  }
+
+  return rows;
+}
+
+
 async function loadShippingWorkspace(silent=false){
 
   if(!APP.warehouse) return;
@@ -9732,17 +9832,15 @@ async function loadShippingWorkspace(silent=false){
      * 3. 商品明细/面单按 50 个 order_id 分块读取，避免 300~500 单时 URL 过长出现 Bad Request。
      * 4. 整个过程只读，不会因为同步失败删除任何云端订单。
      */
-    const {data:allOrders,error:orderError} = await APP.sb
-      .from('shipping_orders')
-      .select('*')
-      .eq('warehouse_id',APP.warehouse.id)
-      .eq('is_archived',false)
-      .neq('status','shipped')
-      .order('created_at',{ascending:true});
-
-    if(orderError) throw orderError;
-
-    const all=allOrders||[];
+    const all=
+      await shippingFetchOrdersPagedV1061({
+        select:'*',
+        warehouseId:APP.warehouse.id,
+        isArchived:false,
+        notStatus:'shipped',
+        orderColumn:'created_at',
+        ascending:true
+      });
 
     let active=
       APP.shippingActiveBatchSource ||
@@ -10558,29 +10656,13 @@ async function permanentDeleteCurrentBatch(encodedKey){
 
     showInfo('正在检查当前批次是否已经开始贴单/出库...');
 
-    let orderQuery=
-      APP.sb
-        .from('shipping_orders')
-        .select('id,status,print_count,is_archived')
-        .eq('warehouse_id',APP.warehouse.id)
-        .eq('source_file',batch.sourceFile);
-
-    if(batch.orderDate){
-      orderQuery=
-        orderQuery.eq(
-          'order_date',
-          String(batch.orderDate).slice(0,10)
-        );
-    }
-
-    const {
-      data:batchOrders,
-      error:orderReadError
-    }=await orderQuery;
-
-    if(orderReadError){
-      throw orderReadError;
-    }
+    const batchOrders=
+      await shippingFetchOrdersPagedV1061({
+        select:'id,status,print_count,is_archived',
+        warehouseId:APP.warehouse.id,
+        sourceFile:batch.sourceFile,
+        orderDate:batch.orderDate||''
+      });
 
     const orders=batchOrders||[];
 
@@ -10798,29 +10880,13 @@ async function forceDeleteTestBatchV1022(encodedKey){
 
     showInfo('正在检查测试批次，并读取面单文件清单...');
 
-    let orderQuery=
-      APP.sb
-        .from('shipping_orders')
-        .select('id,status')
-        .eq('warehouse_id',APP.warehouse.id)
-        .eq('source_file',batch.sourceFile);
-
-    if(batch.orderDate){
-      orderQuery=
-        orderQuery.eq(
-          'order_date',
-          String(batch.orderDate).slice(0,10)
-        );
-    }
-
-    const {
-      data:batchOrders,
-      error:orderReadError
-    }=await orderQuery;
-
-    if(orderReadError){
-      throw orderReadError;
-    }
+    const batchOrders=
+      await shippingFetchOrdersPagedV1061({
+        select:'id,status',
+        warehouseId:APP.warehouse.id,
+        sourceFile:batch.sourceFile,
+        orderDate:batch.orderDate||''
+      });
 
     const orders=batchOrders||[];
 
@@ -11013,29 +11079,13 @@ async function permanentDeleteArchivedBatch(encodedKey){
 
     showInfo('正在读取该批次面单文件清单...');
 
-    let orderQuery=
-      APP.sb
-        .from('shipping_orders')
-        .select('id')
-        .eq('warehouse_id',APP.warehouse.id)
-        .eq('source_file',batch.sourceFile);
-
-    if(batch.orderDate){
-      orderQuery=
-        orderQuery.eq(
-          'order_date',
-          String(batch.orderDate).slice(0,10)
-        );
-    }
-
-    const {
-      data:batchOrders,
-      error:orderReadError
-    }=await orderQuery;
-
-    if(orderReadError){
-      throw orderReadError;
-    }
+    const batchOrders=
+      await shippingFetchOrdersPagedV1061({
+        select:'id',
+        warehouseId:APP.warehouse.id,
+        sourceFile:batch.sourceFile,
+        orderDate:batch.orderDate||''
+      });
 
     const orderIds=
       (batchOrders||[])
@@ -11163,19 +11213,15 @@ async function openShippingBatchDetail(encodedKey){
 
     showInfo('正在读取批次订单...');
 
-    let q=APP.sb
-      .from('shipping_orders')
-      .select('*')
-      .eq('warehouse_id',APP.warehouse.id)
-      .eq('source_file',batch.sourceFile);
-
-    if(batch.orderDate){
-      q=q.eq('order_date',String(batch.orderDate).slice(0,10));
-    }
-
-    const {data:orders,error}=await q.order('created_at',{ascending:true});
-
-    if(error) throw error;
+    const orders=
+      await shippingFetchOrdersPagedV1061({
+        select:'*',
+        warehouseId:APP.warehouse.id,
+        sourceFile:batch.sourceFile,
+        orderDate:batch.orderDate||'',
+        orderColumn:'created_at',
+        ascending:true
+      });
 
     openModal(`
       <div class="flex items-center justify-between mb-3">
@@ -12123,18 +12169,16 @@ async function saveImportedOrdersToCloud(parsedOrders, sourceFile){
     );
   }
 
-  const {data:verifyOrders,error:vOrderErr}=
-    await APP.sb
-      .from('shipping_orders')
-      .select('id,order_no')
-      .eq('warehouse_id',warehouseId)
-      .eq('source_file',sourceFile)
-      .eq('is_archived',false)
-      .neq('status','shipped');
-
-  if(vOrderErr){
-    throw vOrderErr;
-  }
+  const verifyOrders=
+    await shippingFetchOrdersPagedV1061({
+      select:'id,order_no',
+      warehouseId,
+      sourceFile,
+      isArchived:false,
+      notStatus:'shipped',
+      orderColumn:'created_at',
+      ascending:true
+    });
 
   if(
     (verifyOrders||[]).length!==
@@ -15972,14 +16016,14 @@ async function loadPackingProgressData(){
     };
   }
 
-  const {data:orders,error:orderError}=await APP.sb
-    .from('shipping_orders')
-    .select('*')
-    .eq('warehouse_id',APP.warehouse.id)
-    .eq('source_file',source)
-    .order('created_at',{ascending:true});
-
-  if(orderError) throw orderError;
+  const orders=
+    await shippingFetchOrdersPagedV1061({
+      select:'*',
+      warehouseId:APP.warehouse.id,
+      sourceFile:source,
+      orderColumn:'created_at',
+      ascending:true
+    });
 
   const orderIds=(orders||[]).map(x=>x.id);
 
