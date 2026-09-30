@@ -592,6 +592,11 @@ th{
           id="inventorySearch"
           placeholder="搜索 SKU / 商品名称 / 货位"
           oninput="renderInventoryList()">
+        <button
+          class="btn btn-blue w-full mt-3"
+          onclick="openBinLookupV1081()">
+          📍 按库位查看有哪些货
+        </button>
       </div>
       <div id="inventoryList"></div>
       <button
@@ -673,7 +678,7 @@ th{
               📥 导出 Excel（全部 + 快递分表）
             </button>
             <button class="btn btn-red" onclick="clearPickingList()">
-              📦 本批处理完成 → 仅归档（不扣库存）
+              📦 本批处理完成 → 归档并扣已录入库存
             </button>
           </div>
           <div class="small mt-2">
@@ -808,7 +813,7 @@ th{
           退出登录
         </button>
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.7.2 · Stable Warehouse
+          版本 V10.8.2 · Stable Warehouse
         </div>
       </div>
     </section>
@@ -893,7 +898,7 @@ th{
 /* =========================================================
    基础配置
 ========================================================= */
-const APP_VERSION = 'V10.7.2-20260928-FAST-SKU-INDEX';
+const APP_VERSION = 'V10.8.2-20260930-ARCHIVE-SEARCH-SORT-BIN-LOOKUP';
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
 const SUPABASE_KEY =
@@ -2305,6 +2310,141 @@ function searchFromHome(){
     value;
   renderInventoryList();
 }
+/* =========================================================
+   V10.8.1 按库位查看库存
+========================================================= */
+function normalizeBinLookupV1081(value){
+  return String(value||'')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g,'');
+}
+function openBinLookupV1081(){
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h2 class="text-xl font-bold">📍 按库位查看货物</h2>
+        <div class="small mt-1">
+          输入完整库位，例如 A1-1-01；也可以只输入 A1-1 查看这一段货架。
+        </div>
+      </div>
+      <button
+        class="text-gray-400 text-2xl"
+        onclick="closeModal()">
+        ×
+      </button>
+    </div>
+    <input
+      id="binLookupInputV1081"
+      placeholder="输入库位，例如：A1-1-01"
+      autocomplete="off"
+      oninput="renderBinLookupV1081()">
+    <div
+      id="binLookupSummaryV1081"
+      class="small mt-3">
+      请输入库位
+    </div>
+    <div
+      id="binLookupResultV1081"
+      class="mt-3">
+    </div>
+  `);
+  setTimeout(()=>{
+    const input=$('binLookupInputV1081');
+    if(input){
+      input.focus();
+    }
+  },80);
+}
+function renderBinLookupV1081(){
+  const input=$('binLookupInputV1081');
+  const result=$('binLookupResultV1081');
+  const summary=$('binLookupSummaryV1081');
+  if(!input || !result || !summary){
+    return;
+  }
+  const raw=String(input.value||'').trim();
+  const key=normalizeBinLookupV1081(raw);
+  if(!key){
+    summary.textContent='请输入库位';
+    result.innerHTML='';
+    return;
+  }
+  const all=activeInventory();
+  const exact=all.filter(x=>
+    normalizeBinLookupV1081(x.bin)===key
+  );
+  const matches=
+    exact.length
+      ? exact
+      : all.filter(x=>
+          normalizeBinLookupV1081(x.bin).startsWith(key)
+        );
+  matches.sort((a,b)=>{
+    const binCmp=warehouseBinCompare(a.bin||'',b.bin||'');
+    if(binCmp!==0) return binCmp;
+    return naturalCompare(a.sku||'',b.sku||'');
+  });
+  if(!matches.length){
+    summary.innerHTML=
+      `库位 <b>${escapeHtml(raw)}</b> 没有找到已录入商品`;
+    result.innerHTML=`
+      <div class="bg-gray-50 rounded-xl p-5 text-center text-gray-500">
+        没有货物记录
+      </div>
+    `;
+    return;
+  }
+  const totalQty=
+    matches.reduce(
+      (sum,x)=>sum+safeNumber(x.qty,0),
+      0
+    );
+  const binCount=
+    new Set(
+      matches
+        .map(x=>String(x.bin||'').trim())
+        .filter(Boolean)
+    ).size;
+  summary.innerHTML=`
+    找到 <b>${matches.length}</b> 个 SKU
+    · <b>${totalQty}</b> 件
+    ${exact.length ? '' : `· ${binCount} 个匹配库位`}
+  `;
+  result.innerHTML=
+    matches.map(x=>{
+      const qty=safeNumber(x.qty,0);
+      const sku=String(x.sku||'');
+      return `
+        <div class="border rounded-xl p-3 mb-2 bg-white">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="font-bold text-blue-700">
+                📍 ${escapeHtml(x.bin||'未设置')}
+              </div>
+              <div class="font-bold mt-1 break-all">
+                ${escapeHtml(sku||'—')}
+              </div>
+              <div class="small mt-1 break-all">
+                ${escapeHtml(getItemName(x))}
+              </div>
+              ${
+                getItemNote(x)
+                  ? `<div class="small mt-1">备注：${escapeHtml(getItemNote(x))}</div>`
+                  : ''
+              }
+            </div>
+            <div class="text-right shrink-0">
+              <div class="text-2xl font-bold">
+                ${qty}
+              </div>
+              <div class="small">库存</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+}
 function renderInventoryList(){
   const container =
     $('inventoryList');
@@ -2984,49 +3124,195 @@ async function restoreInventory(id){
     );
   }
 }
-function showArchivedInventory(){
-  const items =
-    archivedInventory();
-  let html = `
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-xl font-bold">
-        🗂️ 已下架商品
-      </h2>
+async function showArchivedInventory(){
+  /*
+   * V10.8.2：
+   * 下架商品支持搜索，并严格按“下架时间”最新 -> 最旧排列。
+   * 下架时间优先读取 warehouse_audit_logs 中的“下架商品”流水；
+   * 没有旧流水时，才回退 inventory.updated_at / created_at。
+   */
+  if(!APP.logsLoadedOnce && !APP.logsLoading){
+    try{
+      await loadLogs({silent:true});
+    }catch(e){}
+  }
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h2 class="text-xl font-bold">🗂️ 已下架商品</h2>
+        <div class="small mt-1">按下架时间：最新的排最上面</div>
+      </div>
       <button
         onclick="closeModal()"
         class="text-gray-400 text-2xl">
         ×
       </button>
     </div>
-  `;
-  if(!items.length){
-    html += `
+    <input
+      id="archivedInventorySearchV1082"
+      placeholder="搜索 SKU / 商品名称 / 货位 / 备注 / 日期"
+      autocomplete="off"
+      oninput="renderArchivedInventoryV1082()">
+    <div
+      id="archivedInventorySummaryV1082"
+      class="small mt-3">
+    </div>
+    <div
+      id="archivedInventoryListV1082"
+      class="mt-3">
+    </div>
+  `);
+  renderArchivedInventoryV1082();
+  setTimeout(()=>{
+    const input=$('archivedInventorySearchV1082');
+    if(input) input.focus();
+  },80);
+}
+function archivedInventoryTimeV1082(item){
+  const logs=
+    (APP.logs||[])
+      .filter(log=>{
+        const sameId=
+          String(log.inventory_id||'')===
+          String(item?.id||'');
+        const action=
+          String(log.action||log.type||'')
+            .trim();
+        return sameId && action==='下架商品';
+      })
+      .sort((a,b)=>
+        new Date(b.created_at||0)-
+        new Date(a.created_at||0)
+      );
+  const auditTime=logs[0]?.created_at;
+  return (
+    auditTime ||
+    item?.updated_at ||
+    item?.created_at ||
+    null
+  );
+}
+function formatArchivedDateV1082(value){
+  if(!value) return '时间未知';
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime())){
+    return '时间未知';
+  }
+  return d.toLocaleString('zh-CN',{
+    year:'numeric',
+    month:'2-digit',
+    day:'2-digit',
+    hour:'2-digit',
+    minute:'2-digit'
+  });
+}
+function renderArchivedInventoryV1082(){
+  const container=$('archivedInventoryListV1082');
+  const summary=$('archivedInventorySummaryV1082');
+  if(!container || !summary){
+    return;
+  }
+  const search=
+    String(
+      $('archivedInventorySearchV1082')?.value||
+      ''
+    )
+    .trim()
+    .toLowerCase();
+  const items=
+    archivedInventory()
+      .slice()
+      .sort((a,b)=>{
+        const ta=
+          Date.parse(
+            archivedInventoryTimeV1082(a)||
+            ''
+          )||0;
+        const tb=
+          Date.parse(
+            archivedInventoryTimeV1082(b)||
+            ''
+          )||0;
+        if(ta!==tb){
+          return tb-ta;
+        }
+        return naturalCompare(
+          a.sku||'',
+          b.sku||''
+        );
+      });
+  const filtered=
+    items.filter(x=>{
+      if(!search){
+        return true;
+      }
+      const time=
+        formatArchivedDateV1082(
+          archivedInventoryTimeV1082(x)
+        );
+      const haystack=[
+        x.sku,
+        x.name,
+        x.bin,
+        getItemNote(x),
+        time
+      ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+      return haystack.includes(search);
+    });
+  summary.innerHTML=
+    `已下架 <b>${items.length}</b> 个`+
+    (
+      search
+        ? ` · 当前找到 <b>${filtered.length}</b> 个`
+        : ''
+    );
+  if(!filtered.length){
+    container.innerHTML=`
       <div class="text-center py-8 text-gray-500">
-        <div class="text-4xl mb-3">
-          📦
-        </div>
-        暂时没有下架商品
+        <div class="text-4xl mb-3">📦</div>
+        ${
+          items.length
+            ? '没有找到匹配的下架商品'
+            : '暂时没有下架商品'
+        }
       </div>
     `;
-  }else{
-    html += `<div>`;
-    items.forEach(x => {
-      html += `
+    return;
+  }
+  container.innerHTML=
+    filtered.map(x=>{
+      const archivedTime=
+        formatArchivedDateV1082(
+          archivedInventoryTimeV1082(x)
+        );
+      return `
         <div class="border rounded-xl p-3 mb-2">
-          <div class="font-bold">
-            ${escapeHtml(
-              getItemName(x)
-            )}
-          </div>
-          <div class="small mt-1">
-            SKU：${escapeHtml(
-              x.sku || ''
-            )}
-          </div>
-          <div class="small mt-1">
-            货位：${escapeHtml(
-              x.bin || '未设置'
-            )}
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="font-bold break-all">
+                ${escapeHtml(getItemName(x))}
+              </div>
+              <div class="small mt-1 break-all">
+                SKU：${escapeHtml(x.sku||'')}
+              </div>
+              <div class="small mt-1">
+                货位：${escapeHtml(x.bin||'未设置')}
+              </div>
+              <div class="small mt-1">
+                库存：${safeNumber(x.qty,0)}
+              </div>
+              ${
+                getItemNote(x)
+                  ? `<div class="small mt-1 break-all">备注：${escapeHtml(getItemNote(x))}</div>`
+                  : ''
+              }
+              <div class="small mt-2 font-semibold text-gray-600">
+                🕒 下架时间：${escapeHtml(archivedTime)}
+              </div>
+            </div>
           </div>
           <div class="flex gap-2 mt-3">
             <button
@@ -3042,10 +3328,7 @@ function showArchivedInventory(){
           </div>
         </div>
       `;
-    });
-    html += `</div>`;
-  }
-  openModal(html);
+    }).join('');
 }
 async function deleteInventory(id){
   const item =
@@ -6109,14 +6392,6 @@ async function clearPickingList(){
   if(!source){
     return showError('没有当前批次，不能归档');
   }
-  /*
-   * V10.4.1：
-   * 归档只负责把当前批次移入历史。
-   * 不调用任何库存扣减 RPC，不修改 inventory 数量。
-   *
-   * 已经绑定面单的订单仍要求先完成贴单；
-   * 没有面单的订单允许作为“本次不发”一起归档。
-   */
   const labelOrderIds=
     new Set(
       (APP.shippingLabels||[])
@@ -6142,36 +6417,45 @@ async function clearPickingList(){
     return;
   }
   const totalOrders=(APP.shippingOrders||[]).length;
+  const shippedPieces=
+    (APP.shippingOrders||[])
+      .filter(o=>['packed','shipped'].includes(String(o.status||'')))
+      .reduce((sum,o)=>{
+        return sum+
+          (APP.shippingItems||[])
+            .filter(x=>x.order_id===o.id)
+            .reduce((s,x)=>s+safeNumber(x.qty,0),0);
+      },0);
   const ok=confirm(
-    `确认把这个批次移入历史归档吗？\n\n`+
+    `确认归档并扣减库存吗？\n\n`+
     `批次：${shippingActiveBatchName()}\n`+
     `总订单：${totalOrders} 单\n`+
-    `有面单/已处理：${ordersWithLabel.length} 单\n`+
+    `已贴单/出货商品：${shippedPieces} 件\n`+
     `没有面单/本次不发：${noLabelOrders.length} 单\n\n`+
-    `⚠️ 这次归档【不会扣减任何库存】。\n`+
-    `只会把本批次从“当前批次”移动到“历史/已归档”。\n\n`+
+    `✅ 已录入库存系统的 SKU：按本批次实际已贴单数量扣库存。\n`+
+    `⏭️ 库存系统里完全找不到的 SKU：自动跳过，先不扣库存。\n`+
+    `⚠️ 不会自动创建缺失 SKU，也不会把库存扣成负数。\n\n`+
     `确定继续吗？`
   );
   if(!ok) return;
   try{
     saveShippingProgressSnapshot();
-    showInfo('正在归档当前批次，不会修改库存...');
-    const now=new Date().toISOString();
+    showInfo('正在归档并安全扣减已录入系统的库存...');
     const {data,error}=
-      await APP.sb
-        .from('shipping_orders')
-        .update({
-          is_archived:true,
-          archived_at:now,
-          archived_by:APP.user.id
-        })
-        .eq('warehouse_id',APP.warehouse.id)
-        .eq('source_file',source)
-        .eq('is_archived',false)
-        .select('id');
+      await APP.sb.rpc(
+        'archive_shipping_batch_deduct_existing_v108',
+        {
+          p_warehouse_id:APP.warehouse.id,
+          p_source_file:String(source)
+        }
+      );
     if(error){
       throw error;
     }
+    const result=
+      Array.isArray(data)
+        ? (data[0]||{})
+        : (data||{});
     APP.pickingRows=[];
     APP.pickingFileName='';
     APP.pickingOrderNo='';
@@ -6182,18 +6466,38 @@ async function clearPickingList(){
     APP.shippingPickAudit=null;
     setShippingActiveBatch('');
     clearPackPool();
+    await loadInventory();
     await loadShippingWorkspace(true);
     await loadShippingBatchHistory(true);
     renderHome();
+    renderInventoryList();
     renderPickingEmpty();
     updateShippingCloudSummary();
-    showOk(
-      `✅ 批次已归档，共 ${safeNumber(data?.length,totalOrders)} 单；库存数量没有变化`
-    );
+    const archivedOrders=safeNumber(result.archived_orders,totalOrders);
+    const deductedQty=safeNumber(result.deducted_qty,0);
+    const missingQty=safeNumber(result.missing_sku_qty,0);
+    const shortageQty=safeNumber(result.insufficient_qty,0);
+    const missingSkus=Array.isArray(result.missing_skus)?result.missing_skus:[];
+    let msg=
+      `✅ 批次已归档：${archivedOrders} 单\n`+
+      `📦 已扣库存：${deductedQty} 件`;
+    if(missingQty>0){
+      msg+=
+        `\n⏭️ 未录入系统，暂未扣：${missingQty} 件`+
+        (missingSkus.length
+          ? `\nSKU：${missingSkus.slice(0,12).join('、')}${missingSkus.length>12?'…':''}`
+          : '');
+    }
+    if(shortageQty>0){
+      msg+=
+        `\n⚠️ 系统已有 SKU 但库存数量不足，未能扣完：${shortageQty} 件`;
+    }
+    showOk(msg);
   }catch(error){
-    console.error('归档失败',error);
+    console.error('归档并扣库存失败',error);
     showError(
-      `❌ 归档失败：${error.message||'未知错误'}。没有修改库存。`
+      `❌ 归档失败：${error.message||'未知错误'}。\n`+
+      `本次云端事务失败时，库存和归档状态会一起回滚。`
     );
   }
 }
@@ -11703,7 +12007,7 @@ function renderPackingQueue(){
                       : ''
                     }
                     <div class="small text-gray-500 text-center px-2 py-2">
-                      当前版本归档不扣库存
+                      当前版本归档扣已录入库存
                     </div>
                   </div>
                 </div>
@@ -12278,7 +12582,7 @@ async function openPackingScanner(){
     <div class="bg-green-50 rounded-xl p-3 mb-3 text-sm">
       <div id="hardwareScannerStatus" class="font-bold text-green-700">🟢 扫码枪监听中</div>
       <div class="small mt-2">
-        V10.5：单件和多件彻底分开处理。打印桥成功后自动标记“已贴单”；当前版本归档不扣库存。
+        V10.5：单件和多件彻底分开处理。打印桥成功后自动标记“已贴单”；当前版本归档扣已录入库存。
       </div>
       <div id="hardwareScannerLast" class="small mt-2 text-gray-600">等待扫码...</div>
     </div>
@@ -13246,9 +13550,8 @@ async function printShippingLabelByOrderId(orderId, markPacked=false, options={}
         );
       }
       /*
-       * V10.7.2：
-       * 云端 finish 已经成功，所以防重复状态立即生效。
-       * 下面这些只是界面/本机快照，不再阻塞下一枪。
+       * V10.7.2：云端 finish 成功后，界面和本机快照延迟合并刷新，
+       * 不阻塞下一枪。
        */
       schedulePackingUiRefreshV1072(300);
       scheduleShippingSnapshotV1072(1000);
