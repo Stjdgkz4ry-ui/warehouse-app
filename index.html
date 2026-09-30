@@ -766,6 +766,19 @@ th{
       <h1 class="text-2xl font-bold mb-4">
         设置
       </h1>
+      <div
+        id="systemApprovalCardV109"
+        class="card p-4 mb-4 hidden">
+        <h2 class="font-bold mb-2">🛡️ 系统审批中心</h2>
+        <div class="small mb-3">
+          审核新用户、创建/加入仓库申请、员工库存操作申请。
+        </div>
+        <button
+          class="btn btn-red w-full"
+          onclick="openApprovalCenterV109()">
+          🛡️ 打开审批中心
+        </button>
+      </div>
       <div class="card p-4 mb-4">
         <h2 class="font-bold mb-3">
           🏭 仓库管理
@@ -813,7 +826,7 @@ th{
           退出登录
         </button>
         <div class="text-center text-xs text-gray-400 mt-4">
-          版本 V10.8.2 · Stable Warehouse
+          版本 V10.9A · Approval Security
         </div>
       </div>
     </section>
@@ -898,7 +911,7 @@ th{
 /* =========================================================
    基础配置
 ========================================================= */
-const APP_VERSION = 'V10.8.2-20260930-ARCHIVE-SEARCH-SORT-BIN-LOOKUP';
+const APP_VERSION = 'V10.9A-20260930-APPROVAL-CENTER';
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
 const SUPABASE_KEY =
@@ -906,6 +919,7 @@ const SUPABASE_KEY =
 const APP = {
   sb:null,
   user:null,
+  systemAccess:null,
   warehouses:[],
   warehouse:null,
   inventory:[],
@@ -1324,6 +1338,286 @@ document.addEventListener(
     }
   }
 );
+
+/* =========================================================
+   V10.9A 系统权限 / 审批中心
+========================================================= */
+
+function isSystemSuperAdminV109(){
+  return !!APP.systemAccess?.is_super_admin;
+}
+
+async function loadSystemAccessV109(){
+  const {data,error}=await APP.sb.rpc('system_access_status_v109');
+  if(error) throw error;
+
+  APP.systemAccess=
+    Array.isArray(data)
+      ? (data[0]||{})
+      : (data||{});
+
+  const card=$('systemApprovalCardV109');
+  if(card){
+    card.classList.toggle(
+      'hidden',
+      !isSystemSuperAdminV109()
+    );
+  }
+
+  return APP.systemAccess;
+}
+
+function showSystemAccessBlockedV109(status){
+  $('appPage')?.classList.add('hidden');
+  $('authPage')?.classList.add('hidden');
+
+  const disabled=String(status||'')==='disabled';
+
+  openModal(`
+    <div class="text-center py-4">
+      <div class="text-5xl mb-3">🛡️</div>
+      <h2 class="text-xl font-bold">
+        ${disabled?'账号已停用':'等待系统管理员审核'}
+      </h2>
+      <div class="text-gray-500 mt-3">
+        ${
+          disabled
+            ? '这个账号目前不能使用仓库系统。'
+            : '账号已经注册成功，但还没有获得系统使用权限。管理员批准后才能进入。'
+        }
+      </div>
+      <div class="small mt-3">
+        当前账号：${escapeHtml(APP.user?.email||'')}
+      </div>
+      <button
+        class="btn btn-gray w-full mt-5"
+        onclick="closeModal();logout()">
+        退出登录
+      </button>
+    </div>
+  `);
+}
+
+async function submitInventoryActionV109(action,inventoryId,payload={}){
+  if(!APP.warehouse?.id){
+    throw new Error('请先选择仓库');
+  }
+
+  const {data,error}=await APP.sb.rpc(
+    'system_inventory_action_v109',
+    {
+      p_action:String(action||''),
+      p_warehouse_id:APP.warehouse.id,
+      p_inventory_id:inventoryId||null,
+      p_payload:payload||{}
+    }
+  );
+
+  if(error) throw error;
+
+  return Array.isArray(data)
+    ? (data[0]||{})
+    : (data||{});
+}
+
+function formatApprovalTimeV109(value){
+  if(!value) return '';
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString('zh-CN');
+}
+
+function operationTitleV109(action){
+  const map={
+    create:'➕ 新建商品',
+    edit:'✏️ 编辑商品',
+    stock_in:'📥 增加库存',
+    stock_out:'📤 减少库存',
+    archive:'📦 下架商品',
+    restore:'♻️ 恢复/上架商品',
+    delete:'🗑️ 永久删除商品'
+  };
+  return map[action]||action||'库存操作';
+}
+
+async function openApprovalCenterV109(){
+  if(!isSystemSuperAdminV109()){
+    return showError('只有系统总管理员可以打开审批中心');
+  }
+
+  showInfo('正在读取审批申请...');
+
+  try{
+    const {data,error}=await APP.sb.rpc('admin_list_approvals_v109');
+    if(error) throw error;
+
+    const d=
+      Array.isArray(data)
+        ? (data[0]||{})
+        : (data||{});
+
+    const users=Array.isArray(d.users)?d.users:[];
+    const warehouses=Array.isArray(d.warehouse_requests)?d.warehouse_requests:[];
+    const operations=Array.isArray(d.operation_requests)?d.operation_requests:[];
+
+    const userHtml=
+      users.length
+        ? users.map(x=>`
+          <div class="border rounded-xl p-3 mb-2">
+            <div class="font-bold">${escapeHtml(x.email||'未知邮箱')}</div>
+            <div class="small mt-1">注册：${escapeHtml(formatApprovalTimeV109(x.created_at))}</div>
+            <div class="flex gap-2 mt-3">
+              <button class="btn btn-green btn-small"
+                onclick="reviewSystemUserV109('${x.user_id}','approved')">
+                ✅ 允许使用
+              </button>
+              <button class="btn btn-red btn-small"
+                onclick="reviewSystemUserV109('${x.user_id}','disabled')">
+                ❌ 拒绝/停用
+              </button>
+            </div>
+          </div>
+        `).join('')
+        : '<div class="small text-gray-500">暂无待审核用户</div>';
+
+    const warehouseHtml=
+      warehouses.length
+        ? warehouses.map(x=>`
+          <div class="border rounded-xl p-3 mb-2">
+            <div class="font-bold">
+              ${x.request_type==='create'?'➕ 创建仓库':'🔗 加入仓库'}
+            </div>
+            <div class="small mt-1">申请人：${escapeHtml(x.email||'')}</div>
+            <div class="small mt-1">
+              ${
+                x.request_type==='create'
+                  ? `仓库：${escapeHtml(x.requested_name||'')}`
+                  : `目标仓库：${escapeHtml(x.warehouse_name||'')} · 加入码 ${escapeHtml(x.join_code||'')}`
+              }
+            </div>
+            <div class="small mt-1">时间：${escapeHtml(formatApprovalTimeV109(x.created_at))}</div>
+            <div class="flex gap-2 mt-3">
+              <button class="btn btn-green btn-small"
+                onclick="reviewWarehouseRequestV109('${x.id}',true)">
+                ✅ 通过
+              </button>
+              <button class="btn btn-red btn-small"
+                onclick="reviewWarehouseRequestV109('${x.id}',false)">
+                ❌ 拒绝
+              </button>
+            </div>
+          </div>
+        `).join('')
+        : '<div class="small text-gray-500">暂无仓库申请</div>';
+
+    const opHtml=
+      operations.length
+        ? operations.map(x=>`
+          <div class="border rounded-xl p-3 mb-2">
+            <div class="font-bold">${escapeHtml(operationTitleV109(x.action))}</div>
+            <div class="small mt-1">申请人：${escapeHtml(x.email||'')}</div>
+            <div class="small mt-1">仓库：${escapeHtml(x.warehouse_name||'')}</div>
+            <div class="small mt-1">SKU：${escapeHtml(x.sku||x.payload?.sku||'—')}</div>
+            <div class="small mt-1">库位：${escapeHtml(x.bin||x.payload?.bin||'—')}</div>
+            <div class="small mt-1">数量：${escapeHtml(String(x.payload?.qty??x.payload?.target_qty??'—'))}</div>
+            <div class="small mt-1">备注：${escapeHtml(x.payload?.note||'无')}</div>
+            <div class="small mt-1">时间：${escapeHtml(formatApprovalTimeV109(x.created_at))}</div>
+            <div class="flex gap-2 mt-3">
+              <button class="btn btn-green btn-small"
+                onclick="reviewOperationRequestV109('${x.id}',true)">
+                ✅ 通过并执行
+              </button>
+              <button class="btn btn-red btn-small"
+                onclick="reviewOperationRequestV109('${x.id}',false)">
+                ❌ 拒绝
+              </button>
+            </div>
+          </div>
+        `).join('')
+        : '<div class="small text-gray-500">暂无库存操作申请</div>';
+
+    openModal(`
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h2 class="text-xl font-bold">🛡️ 系统审批中心</h2>
+          <div class="small mt-1">所有危险操作由你最终批准</div>
+        </div>
+        <button class="text-gray-400 text-2xl" onclick="closeModal()">×</button>
+      </div>
+
+      <div class="bg-blue-50 rounded-xl p-3 mb-4">
+        <div class="font-bold">👤 新用户审核（${users.length}）</div>
+        <div class="mt-2">${userHtml}</div>
+      </div>
+
+      <div class="bg-purple-50 rounded-xl p-3 mb-4">
+        <div class="font-bold">🏭 仓库申请（${warehouses.length}）</div>
+        <div class="mt-2">${warehouseHtml}</div>
+      </div>
+
+      <div class="bg-yellow-50 rounded-xl p-3">
+        <div class="font-bold">📦 库存操作申请（${operations.length}）</div>
+        <div class="mt-2">${opHtml}</div>
+      </div>
+    `);
+
+  }catch(error){
+    console.error(error);
+    showError('审批中心读取失败：'+(error.message||''));
+  }
+}
+
+async function reviewSystemUserV109(userId,status){
+  try{
+    const {error}=await APP.sb.rpc(
+      'review_system_user_v109',
+      {p_user_id:userId,p_status:status}
+    );
+    if(error) throw error;
+    showOk(status==='approved'?'✅ 已允许这个账号使用系统':'✅ 已拒绝/停用这个账号');
+    await openApprovalCenterV109();
+  }catch(error){
+    showError(error.message||'审核失败');
+  }
+}
+
+async function reviewWarehouseRequestV109(id,approve){
+  try{
+    const {error}=await APP.sb.rpc(
+      'review_warehouse_request_v109',
+      {p_request_id:id,p_approve:!!approve}
+    );
+    if(error) throw error;
+    showOk(approve?'✅ 仓库申请已通过':'✅ 仓库申请已拒绝');
+    await loadWarehouses();
+    await openApprovalCenterV109();
+  }catch(error){
+    showError(error.message||'审核失败');
+  }
+}
+
+async function reviewOperationRequestV109(id,approve){
+  try{
+    const {error}=await APP.sb.rpc(
+      'review_inventory_operation_v109',
+      {p_request_id:id,p_approve:!!approve}
+    );
+    if(error) throw error;
+
+    if(APP.warehouse){
+      await loadInventory();
+      renderInventoryList();
+      renderHome();
+      await loadLogs({silent:true});
+    }
+
+    showOk(approve?'✅ 已批准并执行':'✅ 已拒绝，不会修改库存');
+    await openApprovalCenterV109();
+  }catch(error){
+    showError(error.message||'审核失败');
+  }
+}
+
 async function bootApp(){
   try{
     const {data} =
@@ -1337,6 +1631,14 @@ async function bootApp(){
         .classList.remove('hidden');
       return;
     }
+    const access=
+      await loadSystemAccessV109();
+
+    if(String(access?.status||'pending')!=='approved'){
+      showSystemAccessBlockedV109(access?.status||'pending');
+      return;
+    }
+
     $('authPage')
       .classList.add('hidden');
     $('appPage')
@@ -1608,40 +1910,40 @@ function createWarehousePrompt(){
   `);
 }
 async function createWarehouse(){
-  const name =
-    $('newWarehouseName')
-      .value
-      .trim();
+  const name=$('newWarehouseName').value.trim();
   if(!name){
-    return showError(
-      '请输入仓库名称'
-    );
+    return showError('请输入仓库名称');
   }
+
   try{
     showInfo(
-      '正在创建仓库...'
+      isSystemSuperAdminV109()
+        ? '正在创建仓库...'
+        : '正在提交创建仓库申请...'
     );
-    const {data,error} =
-      await APP.sb.rpc(
-        'create_warehouse',
-        {
-          p_name:name
-        }
-      );
-    if(error){
-      throw error;
-    }
-    await loadWarehouses();
+
+    const {data,error}=await APP.sb.rpc(
+      'request_warehouse_create_v109',
+      {p_name:name}
+    );
+
+    if(error) throw error;
+
+    const result=
+      Array.isArray(data)?(data[0]||{}):(data||{});
+
     closeModal();
-    showOk(
-      '仓库创建成功'
-    );
+
+    if(result.executed){
+      await loadWarehouses();
+      showOk('✅ 仓库创建成功');
+    }else{
+      showOk('✅ 创建仓库申请已提交，等待系统管理员批准');
+    }
+
   }catch(error){
     console.error(error);
-    showError(
-      error.message ||
-      '创建仓库失败'
-    );
+    showError(error.message||'提交失败');
   }
 }
 function joinWarehousePrompt(){
@@ -1668,113 +1970,41 @@ function joinWarehousePrompt(){
   `);
 }
 async function joinWarehouse(){
-  const code =
-    $('joinCode')
-      .value
-      .trim();
+  const code=$('joinCode').value.trim();
+
   if(!code){
-    return showError(
-      '请输入加入码'
-    );
+    return showError('请输入加入码');
   }
-  try{
-    showInfo('正在加入...');
-    const {data,error} =
-      await APP.sb.rpc(
-        'join_warehouse',
-        {
-          p_join_code:code
-        }
-      );
-    if(error){
-      throw error;
-    }
-    await loadWarehouses();
-    closeModal();
-    showOk(
-      '加入仓库成功'
-    );
-  }catch(error){
-    console.error(error);
-    showError(
-      error.message ||
-      '加入失败'
-    );
-  }
-}
-function showWarehouseCode(id){
-  const w =
-    APP.warehouses.find(
-      x => x.id === id
-    );
-  if(!w){
-    return;
-  }
-  openModal(`
-    <h2 class="text-xl font-bold mb-4">
-      仓库加入码
-    </h2>
-    <div class="bg-gray-100 rounded-xl p-5 text-center">
-      <div class="text-sm text-gray-500">
-        ${escapeHtml(w.name)}
-      </div>
-      <div class="text-3xl font-bold mt-3 tracking-widest">
-        ${escapeHtml(w.join_code || '—')}
-      </div>
-    </div>
-    <button
-      class="btn btn-blue w-full mt-4"
-      onclick="closeModal()">
-      完成
-    </button>
-  `);
-}
-async function deleteWarehouse(id){
-  const w =
-    APP.warehouses.find(
-      x => x.id === id
-    );
-  if(!w){
-    return;
-  }
-  if(w.role !== 'owner'){
-    return showError(
-      '只有仓库所有者可以删除仓库'
-    );
-  }
-  const ok =
-    confirm(
-      `确定删除仓库「${w.name}」吗？\n\n删除后相关数据可能受到数据库关联限制。`
-    );
-  if(!ok){
-    return;
-  }
+
   try{
     showInfo(
-      '正在删除仓库...'
+      isSystemSuperAdminV109()
+        ? '正在加入仓库...'
+        : '正在提交加入仓库申请...'
     );
-    const {error} =
-      await APP.sb
-        .from('warehouses')
-        .delete()
-        .eq('id',id);
-    if(error){
-      throw error;
-    }
-    if(APP.warehouse?.id === id){
-      APP.warehouse = null;
-    }
-    await loadWarehouses();
-    showOk(
-      '仓库已删除'
+
+    const {data,error}=await APP.sb.rpc(
+      'request_warehouse_join_v109',
+      {p_join_code:code}
     );
+
+    if(error) throw error;
+
+    const result=
+      Array.isArray(data)?(data[0]||{}):(data||{});
+
+    closeModal();
+
+    if(result.executed){
+      await loadWarehouses();
+      showOk('✅ 已加入仓库');
+    }else{
+      showOk('✅ 加入仓库申请已提交，等待系统管理员批准');
+    }
+
   }catch(error){
     console.error(error);
-    showError(
-      '删除失败：' +
-      (error.message ||
-       '可能存在关联数据')
-    );
+    showError(error.message||'提交失败');
   }
 }
 /* =========================================================
@@ -2713,161 +2943,56 @@ const note =
   `);
 }
 async function saveItem(id){
-  const sku = $('itemSku').value.trim();
-  const name = $('itemName').value.trim();
-  const bin = $('itemBin').value.trim();
-  const qty = Math.max(0, safeNumber($('itemQty').value, 0));
-  const alert = Math.max(0, safeNumber($('itemAlert').value, 10));
-const note = $('itemNote').value.trim();
+  const sku=$('itemSku').value.trim();
+  const name=$('itemName').value.trim();
+  const bin=$('itemBin').value.trim();
+  const qty=Math.max(0,safeNumber($('itemQty').value,0));
+  const alert=Math.max(0,safeNumber($('itemAlert').value,10));
+  const note=$('itemNote').value.trim();
+
   if(!sku){
     return showError('SKU不能为空');
   }
-  const finalName = name || sku;
+
+  const finalName=name||sku;
+
   try{
-    showInfo('正在保存，请稍候...');
-    /* 修改已有商品 */
-    if(id){
-      const oldItem = APP.inventory.find(x => x.id === id);
-      if(!oldItem){
-        throw new Error('找不到这个商品，可能已经被其他手机删除或修改');
-      }
-      const oldQty = safeNumber(oldItem.qty, 0);
-      const diff = qty - oldQty;
-      /* V9.6：库存增减不再要求管理员密码。 */
-      /* 保存 SKU、名称、货位、低库存提醒 */
-      const { error: infoError } = await APP.sb.rpc(
-        'update_inventory_info',
-        {
-          p_inventory_id: id,
-          p_name: finalName,
-          p_sku: sku,
-          p_alert: alert,
-          p_note: note,
-          p_bin: bin
-        }
-      );
-      if(infoError){
-        throw infoError;
-      }
-      /*
-       * 备注二次保险：
-       * 某些旧版数据库函数虽然接受 p_note，但旧定义可能没有真正写入。
-       * RPC 成功后直接同步 inventory.note，确保页面和流水都能读到最新备注。
-       */
-      const {error:noteSyncError} =
-        await APP.sb
-          .from('inventory')
-          .update({note:note})
-          .eq('id',id)
-          .eq('warehouse_id',APP.warehouse.id);
-      if(noteSyncError){
-        console.warn('备注直接同步失败，将继续使用 RPC 结果：', noteSyncError);
-      }
-      /* 修改库存数量 */
-      if(diff !== 0){
-        const { error: stockError } = await APP.sb.rpc(
-          'adjust_inventory',
-          {
-            p_inventory_id: id,
-            p_type: diff > 0 ? 'in' : 'out',
-            p_qty: Math.abs(diff),
-            p_note: '编辑商品时调整库存'
-          }
-        );
-        if(stockError){
-          throw stockError;
-        }
-      }
-      await writeWarehouseAuditLog(
-        '编辑商品',
-        {
-          id,
-          sku,
-          name:finalName,
-          bin
-        },
-        {
-          qty:diff,
-          note:
-            `库存 ${oldQty} → ${qty}` +
-            (note ? `；备注：${note}` : '')
-        }
-      );
-      closeModal();
-      await loadInventory();
-      await loadLogs();
-      renderInventoryList();
-      renderLogs();
-      renderHome();
-      showOk('商品修改成功，备注、SKU和库存已同步');
-    }else{
-      /* V9.6：新建商品并录入初始库存不再要求管理员密码。 */
-      /* 新建商品 */
-      const { error } = await APP.sb.rpc(
-        'create_inventory',
-        {
-          p_warehouse_id: APP.warehouse.id,
-          p_name: finalName,
-          p_sku: sku,
-          p_qty: qty,
-          p_alert: alert,
-          p_bin: bin,
-          p_note: note
-        }
-      );
-      if(error){
-        throw error;
-      }
-      /*
-       * 新建商品备注二次保险：
-       * 按当前仓库 + SKU + 货位找到刚创建的记录，再同步 note。
-       */
-      if(note){
-        let noteQuery =
-          APP.sb
-            .from('inventory')
-            .update({note:note})
-            .eq('warehouse_id',APP.warehouse.id)
-            .eq('sku',sku);
-        if(bin){
-          noteQuery = noteQuery.eq('bin',bin);
-        }else{
-          noteQuery = noteQuery.or('bin.is.null,bin.eq.');
-        }
-        const {error:noteCreateSyncError} =
-          await noteQuery;
-        if(noteCreateSyncError){
-          console.warn('新商品备注直接同步失败，将继续使用 RPC 结果：', noteCreateSyncError);
-        }
-      }
-      await writeWarehouseAuditLog(
-        '新建商品',
-        {
-          sku,
-          name:finalName,
-          bin
-        },
-        {
-          qty,
-          note:
-            `初始库存 ${qty}` +
-            (note ? `；备注：${note}` : '')
-        }
-      );
-      closeModal();
-      await loadInventory();
-      await loadLogs();
-      renderInventoryList();
-      renderLogs();
-      renderHome();
-      showOk('商品创建成功');
-    }
-  }catch(error){
-    console.error('保存商品失败:', error);
-    showError(
-      error.message ||
-      '保存商品失败，请检查网络后重试'
+    showInfo(
+      isSystemSuperAdminV109()
+        ? '正在保存...'
+        : '正在提交修改申请...'
     );
+
+    const result=
+      await submitInventoryActionV109(
+        id?'edit':'create',
+        id||null,
+        {
+          sku,
+          name:finalName,
+          bin,
+          qty,
+          target_qty:qty,
+          alert,
+          note
+        }
+      );
+
+    closeModal();
+
+    if(result.executed){
+      await loadInventory();
+      renderInventoryList();
+      renderHome();
+      await loadLogs({silent:true});
+      showOk(id?'✅ 商品修改成功':'✅ 商品创建成功');
+    }else{
+      showOk('✅ 已提交申请，管理员批准后才会真正修改库存');
+    }
+
+  }catch(error){
+    console.error(error);
+    showError(error.message||'保存失败');
   }
 }
 /* =========================================================
@@ -2954,174 +3079,131 @@ function stockAction(id,type){
   `);
 }
 async function saveStockAction(id,type){
-  const qty =
-    Math.floor(
-      safeNumber(
-        $('stockQty').value,
-        0
-      )
-    );
-  const note =
-    $('stockNote')
-      .value
-      .trim();
-  if(qty <= 0){
-    return showError(
-      '数量必须大于0'
-    );
+  const qty=Math.floor(safeNumber($('stockQty').value,0));
+  const note=$('stockNote').value.trim();
+
+  if(qty<=0){
+    return showError('数量必须大于0');
   }
-  const item =
-    APP.inventory.find(
-      x => x.id === id
-    );
+
+  const item=APP.inventory.find(x=>x.id===id);
   if(!item){
-    return showError(
-      '商品不存在'
-    );
+    return showError('商品不存在');
   }
-  const current =
-    safeNumber(
-      item.qty,
-      0
-    );
-  if(
-    type === 'out' &&
-    qty > current
-  ){
-    return showError(
-      `库存不足，目前只有 ${current}`
-    );
+
+  if(type==='out' && qty>safeNumber(item.qty,0)){
+    return showError(`库存不足，目前只有 ${safeNumber(item.qty,0)}`);
   }
-  /* V9.6：手工入库 / 出库不再要求管理员密码。 */
+
   try{
     showInfo(
-      '正在更新库存...'
+      isSystemSuperAdminV109()
+        ? '正在更新库存...'
+        : '正在提交库存操作申请...'
     );
-    const {data,error} =
-      await APP.sb.rpc(
-        'adjust_inventory',
+
+    const result=
+      await submitInventoryActionV109(
+        type==='in'?'stock_in':'stock_out',
+        id,
         {
-          p_inventory_id:id,
-          p_type:type,
-          p_qty:qty,
-          p_note:note
+          qty,
+          note,
+          sku:item.sku,
+          bin:item.bin,
+          current_qty:safeNumber(item.qty,0)
         }
       );
-    if(error){
-      throw error;
-    }
+
     closeModal();
-    await loadInventory();
-    await loadLogs();
-    renderInventoryList();
-    renderLogs();
-    renderHome();
-    showOk(
-      type === 'in'
-      ? '入库成功'
-      : '出库成功'
-    );
+
+    if(result.executed){
+      await loadInventory();
+      await loadLogs();
+      renderInventoryList();
+      renderLogs();
+      renderHome();
+      showOk(type==='in'?'✅ 入库成功':'✅ 出库成功');
+    }else{
+      showOk('✅ 申请已提交，管理员批准后库存才会变化');
+    }
+
   }catch(error){
     console.error(error);
-    showError(
-      error.message ||
-      '库存更新失败'
-    );
+    showError(error.message||'提交失败');
   }
 }
 /* =========================================================
    下架 / 恢复
 ========================================================= */
 async function archiveInventory(id){
-  const item =
-    APP.inventory.find(
-      x => x.id === id
-    );
+  const item=APP.inventory.find(x=>x.id===id);
   if(!item){
-    return showError(
-      '商品不存在'
-    );
+    return showError('商品不存在');
   }
-  const ok =
-    confirm(
-      `确定把「${getItemName(item)}」下架吗？\n\n下架后不会出现在正常库存列表，但数据不会被删除。`
-    );
-  if(!ok){
-    return;
-  }
+
+  const ok=confirm(`确定申请下架「${getItemName(item)}」吗？`);
+  if(!ok) return;
+
   try{
-    showInfo(
-      '正在下架...'
-    );
-    const {error} =
-      await APP.sb.rpc(
-        'archive_inventory',
+    const result=
+      await submitInventoryActionV109(
+        'archive',
+        id,
         {
-          p_inventory_id:id
+          sku:item.sku,
+          bin:item.bin,
+          qty:safeNumber(item.qty,0),
+          note:'商品下架'
         }
       );
-    if(error){
-      throw error;
+
+    if(result.executed){
+      await loadInventory();
+      renderInventoryList();
+      renderHome();
+      await loadLogs({silent:true});
+      showOk('✅ 商品已下架');
+    }else{
+      showOk('✅ 下架申请已提交，管理员批准后才会下架');
     }
-    await writeWarehouseAuditLog(
-      '下架商品',
-      item,
-      {
-        qty:item.qty,
-        note:'商品下架'
-      }
-    );
-    await loadInventory();
-    renderInventoryList();
-    renderHome();
-    await loadLogs({silent:true});
-    showOk(
-      '商品已下架'
-    );
+
   }catch(error){
     console.error(error);
-    showError(
-      error.message ||
-      '下架失败'
-    );
+    showError(error.message||'提交失败');
   }
 }
 async function restoreInventory(id){
-  const item =
-    APP.inventory.find(
-      x => x.id === id
-    );
+  const item=APP.inventory.find(x=>x.id===id);
   if(!item){
-    return showError(
-      '商品不存在'
-    );
+    return showError('商品不存在');
   }
+
   try{
-    showInfo(
-      '正在恢复...'
-    );
-    const {error} =
-      await APP.sb.rpc(
-        'restore_inventory',
+    const result=
+      await submitInventoryActionV109(
+        'restore',
+        id,
         {
-          p_inventory_id:id
+          sku:item.sku,
+          bin:item.bin,
+          qty:safeNumber(item.qty,0),
+          note:'恢复/上架商品'
         }
       );
-    if(error){
-      throw error;
+
+    if(result.executed){
+      await loadInventory();
+      renderInventoryList();
+      renderHome();
+      showOk('✅ 商品已恢复');
+    }else{
+      showOk('✅ 恢复/上架申请已提交，管理员批准后才会执行');
     }
-    await loadInventory();
-    renderInventoryList();
-    renderHome();
-    showOk(
-      '商品已恢复'
-    );
+
   }catch(error){
     console.error(error);
-    showError(
-      error.message ||
-      '恢复失败'
-    );
+    showError(error.message||'提交失败');
   }
 }
 async function showArchivedInventory(){
@@ -3331,66 +3413,42 @@ function renderArchivedInventoryV1082(){
     }).join('');
 }
 async function deleteInventory(id){
-  const item =
-    APP.inventory.find(
-      x => x.id === id
-    );
+  const item=APP.inventory.find(x=>x.id===id);
   if(!item){
-    return showError(
-      '商品不存在'
-    );
+    return showError('商品不存在');
   }
-  const ok =
-    confirm(
-      `确定永久删除「${getItemName(item)}」吗？\n\n此操作不可恢复。\n\n如果只是暂时不用，建议选择“下架”。`
-    );
-  if(!ok){
-    return;
-  }
+
+  const ok=confirm(
+    `确定申请永久删除「${getItemName(item)}」吗？\n\n此操作风险很高。`
+  );
+  if(!ok) return;
+
   try{
-    showInfo(
-      '正在删除...'
-    );
-    const {error} =
-      await APP.sb
-        .from('inventory')
-        .delete()
-        .eq(
-          'id',
-          id
-        )
-        .eq(
-          'warehouse_id',
-          APP.warehouse.id
-        );
-    if(error){
-      throw error;
+    const result=
+      await submitInventoryActionV109(
+        'delete',
+        id,
+        {
+          sku:item.sku,
+          bin:item.bin,
+          qty:safeNumber(item.qty,0),
+          note:'永久删除商品'
+        }
+      );
+
+    if(result.executed){
+      await loadInventory();
+      renderInventoryList();
+      renderHome();
+      await loadLogs({silent:true});
+      showOk('✅ 商品已永久删除');
+    }else{
+      showOk('✅ 删除申请已提交，管理员批准后才会真正删除');
     }
-    await writeWarehouseAuditLog(
-      '删除商品',
-      item,
-      {
-        qty:item.qty,
-        note:'永久删除商品'
-      }
-    );
-    closeModal();
-    await loadInventory();
-    renderInventoryList();
-    renderHome();
-    await loadLogs({silent:true});
-    showOk(
-      '商品已删除'
-    );
+
   }catch(error){
     console.error(error);
-    showError(
-      '删除失败：' +
-      (
-        error.message ||
-        '数据库可能存在库存流水关联。建议使用“下架”。'
-      )
-    );
+    showError(error.message||'提交失败');
   }
 }
 /* =========================================================
@@ -4560,6 +4618,9 @@ function updateImportProgress(current,total,stats={}){
   }
 }
 async function runImport(type){
+  if(!isSystemSuperAdminV109()){
+    return showError('批量导入库存属于高风险操作，目前只允许系统总管理员使用');
+  }
   if(type !== 'items'){
     return;
   }
