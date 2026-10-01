@@ -617,3 +617,214 @@
   );
 
 })();
+/* =========================================================
+   V10.9A.6 已完成订单管理员重打
+   - 已完成订单再次出单必须输入管理员密码
+   - 不重复扣库存
+   - 不改变 packed / shipped 状态
+   ========================================================= */
+
+async function adminReprintCompletedOrderV1096(orderId){
+  const order=
+    (APP.shippingOrders||[])
+      .find(x=>x.id===orderId);
+
+  if(!order){
+    return showError(
+      '订单不存在或不在当前批次'
+    );
+  }
+
+  const status=
+    String(order.status||'')
+      .toLowerCase();
+
+  if(
+    status!=='packed' &&
+    status!=='shipped'
+  ){
+    return showError(
+      '这个订单还没有完成贴单，不需要管理员重打'
+    );
+  }
+
+  const label=
+    (APP.shippingLabels||[])
+      .find(x=>x.order_id===orderId);
+
+  if(!label){
+    return showError(
+      '这个已完成订单没有找到已绑定面单'
+    );
+  }
+
+  const pin=
+    await verifyWarehouseAdminPassword(
+      `已完成订单再次出单：${order.order_no}`
+    );
+
+  if(!pin){
+    return;
+  }
+
+  const ok=
+    confirm(
+      `⚠️ 管理员重新出单\n\n`+
+      `订单：${order.order_no}\n`+
+      `当前状态：${order.status||'—'}\n\n`+
+      `确认后会再次打印/打开这一张面单。\n\n`+
+      `✅ 不重复扣库存\n`+
+      `✅ 不改变订单完成状态\n`+
+      `✅ 不会重新标记 packed\n\n`+
+      `确定继续吗？`
+    );
+
+  if(!ok){
+    return;
+  }
+
+  const printed=
+    await printShippingLabelByOrderId(
+      orderId,
+      false,
+      {
+        adminReprint:true
+      }
+    );
+
+  if(printed===false){
+    return;
+  }
+
+  try{
+    if(
+      typeof writeWarehouseAuditLog
+      ===
+      'function'
+    ){
+      await writeWarehouseAuditLog(
+        '管理员重打已完成订单面单',
+        {
+          id:null,
+          sku:'',
+          name:order.order_no,
+          bin:''
+        },
+        {
+          qty:1,
+          note:
+            `管理员密码已验证；`+
+            `订单状态 ${order.status||'—'}；`+
+            `仅重打面单，不改库存、不改状态`
+        }
+      );
+    }
+  }catch(e){
+    console.warn(
+      '管理员重打流水记录失败',
+      e
+    );
+  }
+}
+
+function protectCompletedPrintButtonsV1096(){
+  const packedOrders=
+    (APP.shippingOrders||[])
+      .filter(o=>{
+        const s=
+          String(o.status||'')
+            .toLowerCase();
+
+        return (
+          s==='packed' ||
+          s==='shipped'
+        );
+      });
+
+  packedOrders.forEach(order=>{
+    const buttons=
+      document.querySelectorAll(
+        'button'
+      );
+
+    buttons.forEach(btn=>{
+      const onclick=
+        String(
+          btn.getAttribute(
+            'onclick'
+          )||''
+        );
+
+      if(
+        onclick.includes(
+          `printShippingLabelByOrderId('${order.id}')`
+        ) ||
+        onclick.includes(
+          `printShippingLabelByOrderId("${order.id}")`
+        )
+      ){
+        btn.textContent=
+          '🔐 管理员重打';
+
+        btn.classList.remove(
+          'btn-blue'
+        );
+
+        btn.classList.add(
+          'btn-red'
+        );
+
+        btn.setAttribute(
+          'onclick',
+          `adminReprintCompletedOrderV1096('${order.id}')`
+        );
+      }
+    });
+  });
+}
+
+/* 原“已贴单订单”列表每次重新渲染后，再保护按钮 */
+if(
+  typeof renderPackingQueue
+  ===
+  'function'
+){
+  const oldRenderPackingQueueV1096=
+    renderPackingQueue;
+
+  renderPackingQueue=
+    function(){
+      const result=
+        oldRenderPackingQueueV1096
+          .apply(
+            this,
+            arguments
+          );
+
+      setTimeout(
+        protectCompletedPrintButtonsV1096,
+        50
+      );
+
+      return result;
+    };
+}
+
+/* 页面云端刷新后也检查一次 */
+const completedPrintObserverV1096=
+  new MutationObserver(()=>{
+    protectCompletedPrintButtonsV1096();
+  });
+
+completedPrintObserverV1096.observe(
+  document.body,
+  {
+    childList:true,
+    subtree:true
+  }
+);
+
+setTimeout(
+  protectCompletedPrintButtonsV1096,
+  500
+);
