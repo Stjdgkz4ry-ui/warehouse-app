@@ -911,7 +911,7 @@ th{
 /* =========================================================
    基础配置
 ========================================================= */
-const APP_VERSION = 'V10.9A-20260930-APPROVAL-CENTER';
+const APP_VERSION = 'V10.9A.1-20260930-JOIN-CODE-FIX';
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
 const SUPABASE_KEY =
@@ -1755,7 +1755,7 @@ async function selectWarehouse(id){
   localStorage.setItem(
     'warehouse_id',
     w.id
-  );
+      );
   updateWarehouseHeader();
   closeModal();
   APP.pickingRows = [];
@@ -2005,6 +2005,97 @@ async function joinWarehouse(){
   }catch(error){
     console.error(error);
     showError(error.message||'提交失败');
+  }
+}
+function showWarehouseCode(id){
+  const w =
+    APP.warehouses.find(
+      x => x.id === id
+    );
+
+  if(!w){
+    return showError('仓库不存在');
+  }
+
+  openModal(`
+    <h2 class="text-xl font-bold mb-4">
+      仓库加入码
+    </h2>
+
+    <div class="bg-gray-100 rounded-xl p-5 text-center">
+      <div class="text-sm text-gray-500">
+        ${escapeHtml(w.name)}
+      </div>
+
+      <div class="text-3xl font-bold mt-3 tracking-widest">
+        ${escapeHtml(w.join_code || '—')}
+      </div>
+    </div>
+
+    <div class="small text-gray-500 mt-3">
+      员工输入这个加入码后，只会提交加入申请；需要系统管理员审核通过后才能真正加入。
+    </div>
+
+    <button
+      class="btn btn-blue w-full mt-4"
+      onclick="closeModal()">
+      完成
+    </button>
+  `);
+}
+
+async function deleteWarehouse(id){
+  const w =
+    APP.warehouses.find(
+      x => x.id === id
+    );
+
+  if(!w){
+    return;
+  }
+
+  if(w.role !== 'owner'){
+    return showError(
+      '只有仓库所有者可以删除仓库'
+    );
+  }
+
+  const ok =
+    confirm(
+      `确定删除仓库「${w.name}」吗？\n\n删除后相关数据可能受到数据库关联限制。`
+    );
+
+  if(!ok){
+    return;
+  }
+
+  try{
+    showInfo('正在删除仓库...');
+
+    const {error} =
+      await APP.sb
+        .from('warehouses')
+        .delete()
+        .eq('id',id);
+
+    if(error){
+      throw error;
+    }
+
+    if(APP.warehouse?.id === id){
+      APP.warehouse = null;
+    }
+
+    await loadWarehouses();
+
+    showOk('仓库已删除');
+
+  }catch(error){
+    console.error(error);
+    showError(
+      '删除失败：' +
+      (error.message || '可能存在关联数据')
+    );
   }
 }
 /* =========================================================
@@ -3421,7 +3512,7 @@ async function deleteInventory(id){
   const ok=confirm(
     `确定申请永久删除「${getItemName(item)}」吗？\n\n此操作风险很高。`
   );
-  if(!ok) return;
+    if(!ok) return;
 
   try{
     const result=
@@ -5178,7 +5269,7 @@ async function runImport(type){
         <div>
           数量原本一致：${unchanged}
         </div>
-        <div>
+                <div>
           恢复已下架：${restored}
         </div>
         <div>
@@ -6935,7 +7026,7 @@ function exportPickingList(){
             当前库存:row.stockQty,
             状态:status
           };
-        }
+                  }
       );
   const wb=
     XLSX.utils.book_new();
@@ -8692,7 +8783,7 @@ function buildCloudPickingRows(){
     });
   const result=[];
   const groups=
-    Array.from(
+      Array.from(
       demand.values()
     )
     .sort((a,b)=>{
@@ -10449,7 +10540,7 @@ async function extractPdfPages(file){
     .promise;
   const srcDoc=await window.PDFLib.PDFDocument.load(
     pdfLibBytes,
-    {ignoreEncryption:true}
+        {ignoreEncryption:true}
   );
   const pages=[];
   for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
@@ -12206,7 +12297,7 @@ function isProbablyHardwareScannerInput(target){
     target.isContentEditable
   ){
     return false;
-  }
+      }
   return true;
 }
 function resetHardwareScannerBuffer(){
