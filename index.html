@@ -911,7 +911,7 @@ th{
 /* =========================================================
    基础配置
 ========================================================= */
-const APP_VERSION = 'V10.9A.1-20260930-JOIN-CODE-FIX';
+const APP_VERSION = 'V10.9A.4-20261001-USPS-MATCH-ADMIN-REPRINT';
 const SUPABASE_URL =
   'https://veqzicbdvodonkbsbyrt.supabase.co';
 const SUPABASE_KEY =
@@ -1755,7 +1755,7 @@ async function selectWarehouse(id){
   localStorage.setItem(
     'warehouse_id',
     w.id
-      );
+  );
   updateWarehouseHeader();
   closeModal();
   APP.pickingRows = [];
@@ -3512,7 +3512,7 @@ async function deleteInventory(id){
   const ok=confirm(
     `确定申请永久删除「${getItemName(item)}」吗？\n\n此操作风险很高。`
   );
-    if(!ok) return;
+  if(!ok) return;
 
   try{
     const result=
@@ -5269,7 +5269,7 @@ async function runImport(type){
         <div>
           数量原本一致：${unchanged}
         </div>
-                <div>
+        <div>
           恢复已下架：${restored}
         </div>
         <div>
@@ -7026,7 +7026,7 @@ function exportPickingList(){
             当前库存:row.stockQty,
             状态:status
           };
-                  }
+        }
       );
   const wb=
     XLSX.utils.book_new();
@@ -7378,7 +7378,7 @@ async function shippingFetchByOrderIds(tableName,orderIds,options={}){
     const {data,error}=await q;
     if(error) throw error;
     rows.push(...(data||[]));
-  }
+      }
   return rows;
 }
 /*
@@ -7800,6 +7800,7 @@ async function switchShippingActiveBatchV106(source, options={}){
     APP.packingProgressData=null;
     APP.shippingManualLabelPages?.clear?.();
     await loadShippingWorkspace(true);
+    await restorePendingManualLabelsV1092();
     /*
      * 双重校验：切换后内存里的订单必须全部属于当前 source_file。
      */
@@ -8783,7 +8784,7 @@ function buildCloudPickingRows(){
     });
   const result=[];
   const groups=
-      Array.from(
+    Array.from(
       demand.values()
     )
     .sort((a,b)=>{
@@ -10206,7 +10207,7 @@ function openLabelUpload(){
       <div id="labelUploadProgressText" class="small mt-2">
         0 / 0 页
       </div>
-      <div class="grid grid-cols-4 gap-2 mt-3 text-center text-xs">
+      <div class="grid grid-cols-5 gap-2 mt-3 text-center text-xs">
         <div class="bg-white rounded-lg p-2">
           <div class="font-bold" id="labelProgressProcessed">0</div>
           <div>已处理</div>
@@ -10323,7 +10324,32 @@ function extractLabelSkuItems(rawText){
     }
   }
   /*
-   * 其他快递，或者 Yanwen Ref2 提取失败时，
+   * V10.9A.4：
+   * USPS / SwiftX / Yanwen 多 SKU 经常使用分号：
+   *   A;B;C*1;
+   *   A*2 ; B*2 ; C*1;
+   * 旧逻辑偏向逗号，会只识别最后一个 SKU。
+   * 这里优先抓取“连续分号 SKU 组”，每个没有显式 *数量 的 SKU 默认数量 1。
+   */
+  if(!candidate){
+    const skuTail=raw.slice(-1200);
+    const semicolonGroups=[
+      ...skuTail.matchAll(
+        /([A-Za-z0-9._+\-]+(?:\*\d+)?(?:\s*;\s*[A-Za-z0-9._+\-]+(?:\*\d+)?)+)\s*;/g
+      )
+    ];
+    if(semicolonGroups.length){
+      candidate=
+        String(
+          semicolonGroups[
+            semicolonGroups.length-1
+          ][1]||''
+        ).trim();
+    }
+  }
+
+  /*
+   * 其他快递，或者上面的多 SKU 提取失败时，
    * 回退到之前 V7.5 已经验证过的“最后一个 SKU 字段”逻辑。
    */
   if(!candidate){
@@ -10360,7 +10386,7 @@ function extractLabelSkuItems(rawText){
    */
   const parts=
     candidate
-      .split(',')
+      .split(/[;,]/)
       .map(x=>x.trim())
       .filter(Boolean);
   if(
@@ -10413,12 +10439,59 @@ function extractShippingLabelInfo(text){
   else if(/\bECO\b|\bGFUS\d+/i.test(flat)) service='ECO';
   else if(/JFK\s*-?\s*CBS/i.test(flat)) service='JFK-CBS';
   let tracking='';
-  // USPS：允许空格/横线，最终统一成纯数字。
-  let tm=raw.match(/USPS\s*TRACKING[\s\S]{0,120}?((?:\d[\s-]*){18,34})/i);
-  if(tm){
-    const digits=String(tm[1]||'').replace(/\D/g,'');
-    if(digits.length>=18 && digits.length<=34) tracking=digits;
+
+  /*
+   * V10.9A.4 USPS：
+   * 这类 USPS PDF 的文字层经常是“倒序”的：
+   * 真正 USPS Tracking 会出现在 “USPS TRACKING #” 文字之前，
+   * 所以旧版从 USPS TRACKING 往后找会抓不到。
+   *
+   * 优先找以 9 开头、20~22 位的 USPS 数字段，并保留页面里的空格分组。
+   * 这样不会再误把 “FC2610... + 255869xx” 拼成假的 Tracking。
+   */
+  if(/USPS/i.test(flat)){
+    const uspsCandidates=
+      raw.match(
+        /(?<!\d)(9(?:\d[\s-]*){19,21})(?!\d)/g
+      ) || [];
+
+    for(const c of uspsCandidates){
+      const digits=
+        String(c||'').replace(/\D/g,'');
+
+      if(
+        digits.length>=20 &&
+        digits.length<=22
+      ){
+        tracking=digits;
+        break;
+      }
+    }
   }
+
+  // 兼容其它 USPS 文字层：Tracking 标题在号码前面。
+  if(!tracking){
+    let uspsAfter=
+      raw.match(
+        /USPS\s*TRACKING[\s\S]{0,160}?((?:\d[\s-]*){18,34})/i
+      );
+
+    if(uspsAfter){
+      const digits=
+        String(uspsAfter[1]||'')
+          .replace(/\D/g,'');
+
+      if(
+        digits.length>=18 &&
+        digits.length<=34
+      ){
+        tracking=digits;
+      }
+    }
+  }
+
+  let tm=null;
+
   // SwiftX / Yanwen / ECO。
   if(!tracking){
     tm=flat.match(/\b(SWX\d{10,})\b/i) ||
@@ -10427,19 +10500,64 @@ function extractShippingLabelInfo(text){
     if(tm) tracking=String(tm[1]||'').trim();
   }
   if(!tracking){
-    const candidates=raw.match(/(?:\d[\s-]*){20,22}/g) || [];
+    const candidates=
+      raw.match(
+        /(?:\d[\s-]*){20,22}/g
+      ) || [];
+
     for(const c of candidates){
-      const digits=String(c).replace(/\D/g,'');
-      if(digits.length>=20 && digits.length<=22){ tracking=digits; break; }
+      const digits=
+        String(c).replace(/\D/g,'');
+
+      /*
+       * USPS 数字单号通常以 9 开头。
+       * USPS 页面若候选不是 9 开头，不接受，防止 FC号+尾部参考号被拼成假 Tracking。
+       */
+      if(
+        digits.length>=20 &&
+        digits.length<=22 &&
+        (
+          !/USPS/i.test(flat) ||
+          /^9/.test(digits)
+        )
+      ){
+        tracking=digits;
+        break;
+      }
     }
   }
   // 客户订单号：SwiftX / ECO 的 JSON，USPS 可能被 PDF 拆成两段。
   let orderNo='';
   let om=flat.match(/orderno\s*[\"'}:]*\s*[\"']?([A-Za-z0-9_-]{8,})/i);
   if(om) orderNo=String(om[1]||'').trim();
-  // USPS 常见：orderno:QYEAH011 0219392YQ -> 合并成完整订单号。
-  const splitOm=flat.match(/orderno\s*:\s*(QYEAH\d+)\s+(\d+YQ)\b/i);
-  if(splitOm) orderNo=String(splitOm[1]||'')+String(splitOm[2]||'');
+  // USPS 形式 A：orderno:QYEAH011 0219392YQ
+  const splitOm=
+    flat.match(
+      /orderno\s*:\s*(QYEAH\d+)\s+(\d+YQ)\b/i
+    );
+
+  if(splitOm){
+    orderNo=
+      String(splitOm[1]||'')+
+      String(splitOm[2]||'');
+  }
+
+  /*
+   * V10.9A.4 USPS 形式 B：
+   * PDF.js 常把同一张面单读成：
+   *   0218120YQ orderno:QYEAH011
+   * 即订单后半段在前、QYEAH 前缀在后。
+   */
+  const reverseSplitOm=
+    flat.match(
+      /\b(\d{5,12}YQ)\s+orderno\s*:\s*(QYEAH\d+)\b/i
+    );
+
+  if(reverseSplitOm){
+    orderNo=
+      String(reverseSplitOm[2]||'')+
+      String(reverseSplitOm[1]||'');
+  }
   // 内部打单号 / Ref2。Yanwen 页面不一定印 orderno，用 FC 号作为订单唯一键兜底。
   const fcMatch=flat.match(/\b(FC\d{10,})\b/i);
   const referenceNo=fcMatch ? String(fcMatch[1]||'') : '';
@@ -10540,7 +10658,7 @@ async function extractPdfPages(file){
     .promise;
   const srcDoc=await window.PDFLib.PDFDocument.load(
     pdfLibBytes,
-        {ignoreEncryption:true}
+    {ignoreEncryption:true}
   );
   const pages=[];
   for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
@@ -10557,11 +10675,73 @@ async function extractPdfPages(file){
   }
   return pages;
 }
+function shippingOrderHasBoundLabelV1093(orderId){
+  return (APP.shippingLabels||[])
+    .some(x=>x.order_id===orderId);
+}
+
+function findExistingBoundOrderForLabelV1093(info){
+  const candidates=
+    (APP.shippingOrders||[])
+      .filter(o=>
+        o.is_archived!==true &&
+        (
+          shippingOrderHasBoundLabelV1093(o.id) ||
+          ['packed','shipped'].includes(String(o.status||''))
+        )
+      );
+
+  const orderKey=
+    normalizeShippingKey(
+      info?.orderNo||''
+    );
+
+  if(orderKey){
+    const matches=
+      candidates.filter(o=>
+        normalizeShippingKey(
+          o.order_no
+        )===orderKey
+      );
+
+    if(matches.length===1){
+      return {
+        order:matches[0],
+        reason:'该订单已经有面单或已经完成贴单，重新上传时已安全跳过'
+      };
+    }
+  }
+
+  const trackingKey=
+    normalizeTrackingValue(
+      info?.tracking||''
+    );
+
+  if(trackingKey){
+    const matches=
+      candidates.filter(o=>
+        normalizeTrackingValue(
+          o.tracking_no||''
+        )===trackingKey
+      );
+
+    if(matches.length===1){
+      return {
+        order:matches[0],
+        reason:'该 Tracking 对应订单已经有面单或已经完成贴单，重新上传时已安全跳过'
+      };
+    }
+  }
+
+  return {order:null,reason:''};
+}
+
 function findOrderForLabelContent(info, alreadyAssigned=new Set()){
   const available=
     APP.shippingOrders.filter(o=>
-      o.status!=='shipped' &&
+      !['packed','shipped'].includes(String(o.status||'')) &&
       o.is_archived!==true &&
+      !shippingOrderHasBoundLabelV1093(o.id) &&
       !alreadyAssigned.has(o.id)
     );
   const orderKey=
@@ -10740,20 +10920,248 @@ async function uploadOneShippingLabelPage(order,page,fileName){
   }
   return path;
 }
-function storeManualLabelPage(file,page,reason){
-  const id=
-    `manual_${Date.now()}_${Math.random().toString(36).slice(2,9)}`;
-  APP.shippingManualLabelPages.set(
-    id,
-    {
-      id,
-      fileName:file.name,
-      pageNo:page.pageNo,
-      page,
-      info:page.info || {},
-      reason:String(reason||'').trim()
-    }
+/* =========================================================
+   V10.9A.2：未匹配面单持久保存
+   - 关弹窗 / 切页面不会丢
+   - 刷新网页后可从 IndexedDB 恢复
+   - 按 仓库 + 当前批次 隔离
+========================================================= */
+const MANUAL_LABEL_DB_V1092='warehouse_manual_labels_v1092';
+const MANUAL_LABEL_STORE_V1092='pending_labels';
+
+function manualLabelScopeV1092(){
+  return {
+    warehouseId:String(APP.warehouse?.id||''),
+    batchSource:String(
+      APP.shippingActiveBatchSource ||
+      getStoredShippingActiveBatch() ||
+      ''
+    )
+  };
+}
+
+function manualLabelHashV1092(value){
+  let h=2166136261;
+  const s=String(value||'');
+  for(let i=0;i<s.length;i++){
+    h^=s.charCodeAt(i);
+    h=Math.imul(h,16777619);
+  }
+  return (h>>>0).toString(36);
+}
+
+function manualLabelStableIdV1092(fileName,pageNo){
+  const scope=manualLabelScopeV1092();
+  return 'manual_'+manualLabelHashV1092(
+    [
+      scope.warehouseId,
+      scope.batchSource,
+      String(fileName||''),
+      String(pageNo||'')
+    ].join('|')
   );
+}
+
+function openManualLabelDbV1092(){
+  return new Promise((resolve,reject)=>{
+    if(!window.indexedDB){
+      reject(new Error('当前浏览器不支持本地面单缓存'));
+      return;
+    }
+    const req=indexedDB.open(MANUAL_LABEL_DB_V1092,1);
+    req.onupgradeneeded=()=>{
+      const db=req.result;
+      if(!db.objectStoreNames.contains(MANUAL_LABEL_STORE_V1092)){
+        const store=db.createObjectStore(
+          MANUAL_LABEL_STORE_V1092,
+          {keyPath:'id'}
+        );
+        store.createIndex(
+          'scope',
+          ['warehouseId','batchSource'],
+          {unique:false}
+        );
+      }
+    };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error||new Error('打开面单缓存失败'));
+  });
+}
+
+async function persistManualLabelEntryV1092(entry){
+  if(!entry?.id || !entry?.page?.blob){
+    return;
+  }
+  const db=await openManualLabelDbV1092();
+  try{
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(
+        MANUAL_LABEL_STORE_V1092,
+        'readwrite'
+      );
+      const store=tx.objectStore(MANUAL_LABEL_STORE_V1092);
+      store.put({
+        id:entry.id,
+        warehouseId:String(entry.warehouseId||''),
+        batchSource:String(entry.batchSource||''),
+        fileName:String(entry.fileName||''),
+        pageNo:Number(entry.pageNo||0),
+        info:entry.info||{},
+        reason:String(entry.reason||''),
+        blob:entry.page.blob,
+        createdAt:Number(entry.createdAt||Date.now())
+      });
+      tx.oncomplete=()=>resolve();
+      tx.onerror=()=>reject(tx.error||new Error('保存待人工面单失败'));
+      tx.onabort=()=>reject(tx.error||new Error('保存待人工面单被中断'));
+    });
+  }finally{
+    db.close();
+  }
+}
+
+async function deletePendingManualLabelV1092(id){
+  try{
+    const db=await openManualLabelDbV1092();
+    try{
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction(
+          MANUAL_LABEL_STORE_V1092,
+          'readwrite'
+        );
+        tx.objectStore(MANUAL_LABEL_STORE_V1092).delete(id);
+        tx.oncomplete=()=>resolve();
+        tx.onerror=()=>reject(tx.error||new Error('删除缓存失败'));
+      });
+    }finally{
+      db.close();
+    }
+  }catch(e){
+    console.warn('删除待人工面单缓存失败：',e);
+  }
+}
+
+function manualLabelReportKeyV1092(){
+  const scope=manualLabelScopeV1092();
+  return `manual_label_report_v1092_${scope.warehouseId}_${manualLabelHashV1092(scope.batchSource)}`;
+}
+
+function persistShippingLabelReportV1092(){
+  try{
+    const key=manualLabelReportKeyV1092();
+    if(!APP.shippingLastLabelReport){
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(
+      key,
+      JSON.stringify(APP.shippingLastLabelReport)
+    );
+  }catch(e){
+    console.warn('保存面单处理报告失败：',e);
+  }
+}
+
+function restoreShippingLabelReportV1092(){
+  try{
+    const raw=localStorage.getItem(
+      manualLabelReportKeyV1092()
+    );
+    APP.shippingLastLabelReport=
+      raw ? JSON.parse(raw) : null;
+  }catch(e){
+    APP.shippingLastLabelReport=null;
+  }
+}
+
+async function restorePendingManualLabelsV1092(){
+  const scope=manualLabelScopeV1092();
+
+  APP.shippingManualLabelPages.clear();
+
+  if(!scope.warehouseId || !scope.batchSource){
+    APP.shippingLastLabelReport=null;
+    renderShippingLabelReviewPanel();
+    return;
+  }
+
+  try{
+    const db=await openManualLabelDbV1092();
+    let rows=[];
+    try{
+      rows=await new Promise((resolve,reject)=>{
+        const tx=db.transaction(
+          MANUAL_LABEL_STORE_V1092,
+          'readonly'
+        );
+        const store=tx.objectStore(MANUAL_LABEL_STORE_V1092);
+        const req=store.getAll();
+        req.onsuccess=()=>resolve(req.result||[]);
+        req.onerror=()=>reject(req.error||new Error('读取缓存失败'));
+      });
+    }finally{
+      db.close();
+    }
+
+    rows
+      .filter(row=>
+        String(row.warehouseId||'')===scope.warehouseId &&
+        String(row.batchSource||'')===scope.batchSource
+      )
+      .forEach(row=>{
+        APP.shippingManualLabelPages.set(
+          row.id,
+          {
+            id:row.id,
+            warehouseId:row.warehouseId,
+            batchSource:row.batchSource,
+            fileName:row.fileName,
+            pageNo:row.pageNo,
+            info:row.info||{},
+            reason:row.reason||'',
+            createdAt:row.createdAt||0,
+            page:{
+              pageNo:row.pageNo,
+              info:row.info||{},
+              blob:row.blob
+            }
+          }
+        );
+      });
+
+    restoreShippingLabelReportV1092();
+  }catch(e){
+    console.warn('恢复待人工面单失败：',e);
+    restoreShippingLabelReportV1092();
+  }
+
+  renderShippingLabelReviewPanel();
+}
+
+function storeManualLabelPage(file,page,reason){
+  const scope=manualLabelScopeV1092();
+  const id=manualLabelStableIdV1092(
+    file?.name||'label.pdf',
+    page?.pageNo||0
+  );
+  const entry={
+    id,
+    warehouseId:scope.warehouseId,
+    batchSource:scope.batchSource,
+    fileName:file?.name||'label.pdf',
+    pageNo:page?.pageNo||0,
+    page,
+    info:page?.info || {},
+    reason:String(reason||'').trim(),
+    createdAt:Date.now()
+  };
+
+  APP.shippingManualLabelPages.set(id,entry);
+
+  // IndexedDB 写入在后台完成，不阻塞整批 PDF 识别。
+  persistManualLabelEntryV1092(entry)
+    .catch(e=>console.warn('待人工面单持久保存失败：',e));
+
   return id;
 }
 function describeOrderForManualBind(order){
@@ -10809,7 +11217,7 @@ function openManualLabelBind(id){
     </div>
     <div id="manualLabelOrderChoices" class="mt-3"></div>
     <div class="bg-red-50 text-red-700 rounded-xl p-3 text-sm mt-3">
-      ⚠️ 人工确认会把这一页 PDF 直接绑定到你选择的订单。请先核对收件地址/Tracking/商品，再确认。
+      ⚠️ 普通待处理订单可以人工绑定；已经有面单或已经完成的订单不能普通绑定，必须使用管理员密码强制出单。请先核对 Tracking / 商品 / 收件信息。
     </div>
   `);
   setTimeout(
@@ -10817,6 +11225,175 @@ function openManualLabelBind(id){
     0
   );
 }
+function isProtectedCompletedOrderV1094(order){
+  if(!order) return false;
+
+  const hasLabel=
+    (APP.shippingLabels||[])
+      .some(x=>x.order_id===order.id);
+
+  const status=
+    String(order.status||'').toLowerCase();
+
+  return (
+    hasLabel ||
+    status==='packed' ||
+    status==='shipped'
+  );
+}
+
+async function adminForcePrintManualPageV1094(id,orderId){
+  const entry=
+    APP.shippingManualLabelPages.get(id);
+
+  if(!entry?.page?.blob){
+    return showError(
+      '这张待人工面单已经失效，请重新上传原 PDF'
+    );
+  }
+
+  const order=
+    (APP.shippingOrders||[])
+      .find(x=>x.id===orderId);
+
+  if(!order){
+    return showError(
+      '当前批次找不到这个订单'
+    );
+  }
+
+  /*
+   * 已完成/已有面单属于高风险重打：
+   * 每次必须重新输入管理员密码。
+   */
+  const pin=
+    await verifyWarehouseAdminPassword(
+      `已完成订单人工强制出单：${order.order_no}`
+    );
+
+  if(!pin){
+    return;
+  }
+
+  const ok=
+    confirm(
+      `⚠️ 管理员强制出单\n\n`+
+      `订单：${order.order_no}\n`+
+      `状态：${order.status||'—'}\n`+
+      `面单：${entry.fileName} 第${entry.pageNo}页\n\n`+
+      `这个操作允许“已经完成/已经有面单”的订单再次出纸。\n`+
+      `不会修改库存，也不会把订单状态退回。\n\n`+
+      `确认这就是你要重打的那一张吗？`
+    );
+
+  if(!ok){
+    return;
+  }
+
+  try{
+    showInfo(
+      '管理员已授权，正在强制出单...'
+    );
+
+    let printed=false;
+
+    if(isDesktopPackingStation()){
+      const ready=
+        await localPrintBridgeReady();
+
+      if(!ready){
+        throw new Error(
+          '打印桥未连接。管理员强制出单不会使用浏览器备用打印，避免误操作。'
+        );
+      }
+
+      await sendPdfToLocalPrinter(
+        entry.page.blob,
+        `${order.order_no}_ADMIN_REPRINT`
+      );
+
+      printed=true;
+    }else{
+      const url=
+        URL.createObjectURL(
+          entry.page.blob
+        );
+
+      window.open(
+        url,
+        '_blank'
+      );
+
+      setTimeout(
+        ()=>URL.revokeObjectURL(url),
+        60000
+      );
+
+      printed=true;
+    }
+
+    if(!printed){
+      return;
+    }
+
+    try{
+      await writeWarehouseAuditLog(
+        '管理员人工强制出单',
+        {
+          id:null,
+          sku:'',
+          name:order.order_no,
+          bin:''
+        },
+        {
+          qty:1,
+          note:
+            `${entry.fileName} 第${entry.pageNo}页；`+
+            `订单状态 ${order.status||'—'}；`+
+            `管理员密码已验证；库存不变，订单状态不变`
+        }
+      );
+    }catch(e){
+      console.warn(
+        '管理员强制出单流水记录失败：',
+        e
+      );
+    }
+
+    APP.shippingManualLabelPages.delete(id);
+    await deletePendingManualLabelV1092(id);
+
+    if(APP.shippingLastLabelReport?.issues){
+      APP.shippingLastLabelReport.issues=
+        APP.shippingLastLabelReport.issues.filter(
+          x=>x.manualId!==id
+        );
+
+      persistShippingLabelReportV1092();
+    }
+
+    closeModal();
+    renderShippingLabelReviewPanel();
+
+    showOk(
+      isDesktopPackingStation()
+      ? `✅ 管理员强制出单成功：${order.order_no}；库存和订单状态未改变`
+      : `✅ 已打开管理员重打面单：${order.order_no}`
+    );
+
+  }catch(error){
+    console.error(
+      '管理员强制出单失败',
+      error
+    );
+
+    showError(
+      '管理员强制出单失败：'+
+      (error.message||'未知错误')
+    );
+  }
+}
+
 function renderManualLabelOrderChoices(id){
   const container=
     $('manualLabelOrderChoices');
@@ -10861,29 +11438,52 @@ function renderManualLabelOrderChoices(id){
           .some(
             x=>x.order_id===order.id
           );
+
+      const protectedOrder=
+        isProtectedCompletedOrderV1094(order);
+
       return `
         <div class="border rounded-xl p-3 mb-2">
           <div class="font-bold break-all">
             ${escapeHtml(order.order_no || '无订单号')}
           </div>
+
           <div class="small mt-1 break-all">
             Tracking：
             ${escapeHtml(order.tracking_no || '—')}
           </div>
+
           <div class="small mt-1 break-all">
             商品：
             ${escapeHtml(describeOrderRequirement(order.id) || '—')}
           </div>
+
+          <div class="small mt-1">
+            状态：
+            ${escapeHtml(order.status || '待处理')}
+          </div>
+
           ${
-            hasLabel
-            ? `<div class="text-xs text-orange-600 mt-1">⚠️ 这个订单已经有面单，确认后会替换</div>`
-            : ''
+            protectedOrder
+            ? `
+              <div class="text-xs text-red-700 bg-red-50 rounded-lg p-2 mt-2">
+                🔐 此订单已经有面单或已经完成贴单。普通人工绑定已锁定；只有管理员输入密码后才能强制再次出单。
+              </div>
+
+              <button
+                class="btn btn-red w-full mt-2"
+                onclick="adminForcePrintManualPageV1094('${id}','${order.id}')">
+                🔐 管理员确认强制出单
+              </button>
+            `
+            : `
+              <button
+                class="btn btn-blue w-full mt-2"
+                onclick="confirmManualLabelBind('${id}','${order.id}')">
+                ✅ 人工确认绑定此订单
+              </button>
+            `
           }
-          <button
-            class="btn btn-blue w-full mt-2"
-            onclick="confirmManualLabelBind('${id}','${order.id}')">
-            ✅ 人工确认绑定此订单
-          </button>
         </div>
       `;
     }).join('');
@@ -10925,6 +11525,13 @@ async function confirmManualLabelBind(id,orderId){
       '当前批次找不到这个订单'
     );
   }
+
+  if(isProtectedCompletedOrderV1094(order)){
+    return showError(
+      '这个订单已经有面单或已经完成。请使用“🔐 管理员确认强制出单”，并输入管理员密码。'
+    );
+  }
+
   const existingLabel=
     (APP.shippingLabels||[])
       .find(
@@ -10981,6 +11588,17 @@ async function confirmManualLabelBind(id,orderId){
       );
     }
     APP.shippingManualLabelPages.delete(id);
+    await deletePendingManualLabelV1092(id);
+
+    // 同步更新“最近一次处理报告”，已人工处理的页面不再显示为待处理。
+    if(APP.shippingLastLabelReport?.issues){
+      APP.shippingLastLabelReport.issues=
+        APP.shippingLastLabelReport.issues.filter(
+          x=>x.manualId!==id
+        );
+      persistShippingLabelReportV1092();
+    }
+
     closeModal();
     await loadShippingWorkspace(true);
     // 即使上传弹窗被关闭，出货中心仍保留本次异常页面清单。
@@ -11098,8 +11716,9 @@ async function uploadShippingLabels(){
   const files=Array.from(input?.files||[]);
   if(!files.length) return showError('请先选择 PDF 面单');
   try{
-    // 每次新上传一组 PDF，清掉上一次尚未人工确认的临时页。
-    APP.shippingManualLabelPages.clear();
+    // V10.9A.2：保留当前批次尚未人工处理的面单。
+    // 同一 PDF 同一页使用稳定 ID；重新上传会覆盖该页缓存，不会无限重复。
+    await restorePendingManualLabelsV1092();
     const ready=await checkShippingCloud();
     if(!ready) throw new Error('云端订单表尚未初始化');
     await loadShippingWorkspace(true);
@@ -11114,7 +11733,7 @@ async function uploadShippingLabels(){
       resultEl.innerHTML='<div class="font-bold">正在准备面单...</div>';
     }
     setLabelUploadBusy(true);
-    let matched=0,created=0,unmatched=0,totalPages=0,mismatch=0;
+    let matched=0,created=0,unmatched=0,totalPages=0,mismatch=0,skippedExisting=0;
     let processedPages=0;
     let failedPages=0;
     const details=[];
@@ -11181,6 +11800,42 @@ async function uploadShippingLabels(){
           resolve=>setTimeout(resolve,0)
         );
         const info=page.info;
+
+        /*
+         * V10.9A.3：重新上传同一份 PDF 时，先检查这页是否已经属于
+         * “已有面单 / 已 packed / 已 shipped”的订单。
+         * 一旦精确找到，就直接跳过：
+         * - 不替换旧面单
+         * - 不重新上传 PDF
+         * - 不重新进入贴单池
+         * - 不计入未匹配
+         */
+        const existingMatch=
+          findExistingBoundOrderForLabelV1093(info);
+
+        if(existingMatch.order){
+          skippedExisting++;
+          processedPages++;
+
+          details.push({
+            kind:'skip',
+            text:
+              `⏭️ ${file.name} 第${page.pageNo}页：`+
+              `订单 ${existingMatch.order.order_no} 已有面单/已完成，已安全跳过`
+          });
+
+          updateLabelUploadProgress({
+            stage:'已存在，安全跳过',
+            processed:processedPages,
+            total:totalPages,
+            matched,
+            manual:unmatched,
+            failed:failedPages
+          });
+
+          continue;
+        }
+
         let match=findOrderForLabelContent(info,alreadyAssigned);
         let order=match.order;
         /*
@@ -11304,10 +11959,8 @@ async function uploadShippingLabels(){
           manual:unmatched,
           failed:failedPages
         });
-        const hadOldLabel=
-          APP.shippingLabels.some(
-            x=>x.order_id===order.id
-          );
+        // V10.9A.3：正常自动绑定路径只允许“尚未绑定”的订单进入这里。
+        const hadOldLabel=false;
         const skuReviewNeeded=
           trackingExact &&
           (
@@ -11336,6 +11989,7 @@ async function uploadShippingLabels(){
       fileNames:files.map(x=>x.name).join('、'),
       total:totalPages,
       matched,
+      skippedExisting,
       failed:failedPages,
       issues:details
         .filter(d=>d && typeof d!=='string' && d.kind==='manual')
@@ -11353,10 +12007,11 @@ async function uploadShippingLabels(){
         }),
       createdAt:Date.now()
     };
+    persistShippingLabelReportV1092();
     renderShippingLabelReviewPanel();
     if(resultEl){
       resultEl.innerHTML=`
-        <div class="font-bold">共 ${totalPages} 页 · 已绑定 ${matched} · 未匹配 ${unmatched}${mismatch?` · 需人工确认 ${mismatch}`:''}</div>
+        <div class="font-bold">共 ${totalPages} 页 · 新绑定 ${matched} · 已有面单跳过 ${skippedExisting} · 未匹配 ${unmatched}${mismatch?` · 需人工确认 ${mismatch}`:''}</div>
         <div class="mt-2 small leading-6">
           ${details.map(d=>{
             const obj=
@@ -11403,8 +12058,8 @@ async function uploadShippingLabels(){
     await loadShippingWorkspace(true);
     showOk(
       unmatched
-      ? `面单处理完成：已绑定 ${matched} / ${totalPages}，待人工 ${unmatched}`
-      : `面单处理完成：${matched}/${totalPages} 页全部绑定`
+      ? `面单处理完成：新绑定 ${matched}，已存在跳过 ${skippedExisting}，待人工 ${unmatched}`
+      : `面单处理完成：新绑定 ${matched}，已存在跳过 ${skippedExisting}，没有待人工页面`
     );
   }catch(error){
     console.error(error);
@@ -11994,81 +12649,128 @@ function renderPackPoolStatus(){
 function renderShippingLabelReviewPanel(){
   const el=$('shippingLabelReviewPanel');
   if(!el) return;
+
   const r=APP.shippingLastLabelReport;
-  if(!r){
+  const pending=
+    Array.from(APP.shippingManualLabelPages.values())
+      .sort((a,b)=>{
+        const f=String(a.fileName||'').localeCompare(
+          String(b.fileName||''),
+          'zh-CN',
+          {numeric:true,sensitivity:'base'}
+        );
+        if(f!==0) return f;
+        return safeNumber(a.pageNo,0)-safeNumber(b.pageNo,0);
+      });
+
+  if(!r && !pending.length){
     el.innerHTML='';
     return;
   }
-  const issues=(r.issues||[]);
+
+  const reportTotal=safeNumber(r?.total,0);
+  const reportMatched=safeNumber(r?.matched,0);
+  const reportSkipped=safeNumber(r?.skippedExisting,0);
+  const reportFailed=safeNumber(r?.failed,0);
+
   el.innerHTML=`
     <div class="card p-4">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <div class="font-bold text-lg">📄 最近一次面单处理结果</div>
+          <div class="font-bold text-lg">
+            ⚠️ 待人工绑定面单
+            ${pending.length ? `（${pending.length}）` : ''}
+          </div>
           <div class="small mt-1">
-            ${escapeHtml(r.fileNames||'')}
+            ${pending.length
+              ? '这里会一直保留到人工绑定成功；关弹窗、切页面、刷新后仍可恢复。'
+              : '当前批次没有待人工绑定面单。'}
           </div>
         </div>
-        <span class="badge ${issues.length?'badge-yellow':'badge-green'}">
-          ${issues.length?'⚠️ 有待处理':'✅ 全部通过'}
+        <span class="badge ${pending.length?'badge-yellow':'badge-green'}">
+          ${pending.length?'待处理':'✅ 已处理'}
         </span>
       </div>
-      <div class="grid grid-cols-4 gap-2 mt-3 text-center text-xs">
-        <div class="bg-gray-50 rounded-lg p-2">
-          <div class="font-bold">${r.total||0}</div>
-          <div>总页数</div>
-        </div>
-        <div class="bg-green-50 rounded-lg p-2">
-          <div class="font-bold text-green-700">${r.matched||0}</div>
-          <div>已绑定</div>
-        </div>
-        <div class="bg-yellow-50 rounded-lg p-2">
-          <div class="font-bold text-yellow-700">${issues.length}</div>
-          <div>待人工</div>
-        </div>
-        <div class="bg-red-50 rounded-lg p-2">
-          <div class="font-bold text-red-700">${r.failed||0}</div>
-          <div>失败</div>
-        </div>
-      </div>
+
       ${
-        issues.length
+        pending.length
         ? `
           <div class="mt-3">
-            <div class="font-bold mb-2">需要处理的页面</div>
-            ${issues.map(issue=>`
+            ${pending.map(entry=>`
               <div class="bg-red-50 rounded-xl p-3 mb-2">
                 <div class="font-semibold">
-                  ${escapeHtml(issue.fileName)} · 第 ${issue.pageNo} 页
+                  ${escapeHtml(entry.fileName)} · 第 ${entry.pageNo} 页
                 </div>
+
                 <div class="small mt-1 break-all">
-                  ${escapeHtml(issue.reason||'无法自动确认')}
+                  订单：
+                  ${escapeHtml(entry.info?.orderNo || '未识别')}
                 </div>
-                ${
-                  issue.manualId &&
-                  APP.shippingManualLabelPages.has(issue.manualId)
-                  ? `
-                    <button
-                      class="btn btn-yellow btn-small mt-2"
-                      onclick="openManualLabelBind('${issue.manualId}')">
-                      🧑‍💼 人工确认
-                    </button>
-                  `
-                  : `
-                    <div class="small text-gray-500 mt-2">
-                      如已刷新网页，请重新上传原 PDF 后再人工确认。
-                    </div>
-                  `
-                }
+
+                <div class="small mt-1 break-all">
+                  Tracking：
+                  ${escapeHtml(entry.info?.tracking || '未识别')}
+                </div>
+
+                <div class="small mt-1 break-all">
+                  SKU：
+                  ${escapeHtml(labelItemsForDisplay(entry.info||{}))}
+                </div>
+
+                <div class="small text-red-700 mt-1 break-all">
+                  ${escapeHtml(entry.reason || '无法自动确认')}
+                </div>
+
+                <button
+                  class="btn btn-yellow btn-small mt-2"
+                  onclick="openManualLabelBind('${entry.id}')">
+                  🧑‍💼 人工确认绑定
+                </button>
               </div>
             `).join('')}
           </div>
         `
         : `
           <div class="mt-3 bg-green-50 rounded-xl p-3 text-sm text-green-700">
-            本次面单全部自动核对通过。
+            当前批次的异常面单已经全部处理。
           </div>
         `
+      }
+
+      ${
+        r
+        ? `
+          <div class="border-t mt-4 pt-3">
+            <div class="font-bold">📄 最近一次面单处理结果</div>
+            <div class="small mt-1 break-all">
+              ${escapeHtml(r.fileNames||'')}
+            </div>
+
+            <div class="grid grid-cols-4 gap-2 mt-3 text-center text-xs">
+              <div class="bg-gray-50 rounded-lg p-2">
+                <div class="font-bold">${reportTotal}</div>
+                <div>总页数</div>
+              </div>
+              <div class="bg-green-50 rounded-lg p-2">
+                <div class="font-bold text-green-700">${reportMatched}</div>
+                <div>新绑定</div>
+              </div>
+              <div class="bg-blue-50 rounded-lg p-2">
+                <div class="font-bold text-blue-700">${reportSkipped}</div>
+                <div>已存在跳过</div>
+              </div>
+              <div class="bg-yellow-50 rounded-lg p-2">
+                <div class="font-bold text-yellow-700">${pending.length}</div>
+                <div>待人工</div>
+              </div>
+              <div class="bg-red-50 rounded-lg p-2">
+                <div class="font-bold text-red-700">${reportFailed}</div>
+                <div>失败</div>
+              </div>
+            </div>
+          </div>
+        `
+        : ''
       }
     </div>
   `;
@@ -12297,7 +12999,7 @@ function isProbablyHardwareScannerInput(target){
     target.isContentEditable
   ){
     return false;
-      }
+  }
   return true;
 }
 function resetHardwareScannerBuffer(){
@@ -13802,7 +14504,9 @@ const _v3ShowPage = showPage;
 showPage = function(page){
   _v3ShowPage(page);
   if(page==='picking' && APP.warehouse){
-    loadShippingWorkspace(true);
+    loadShippingWorkspace(true)
+      .then(()=>restorePendingManualLabelsV1092())
+      .catch(e=>console.warn('加载待人工面单失败：',e));
   }
 };
 const _v3SelectWarehouse = selectWarehouse;
@@ -13814,6 +14518,7 @@ selectWarehouse = async function(id){
   APP.shippingCloudReady=null;
   updateShippingCloudBadge();
   await loadShippingWorkspace(true);
+  await restorePendingManualLabelsV1092();
 };
 /* =========================================================
    Realtime
