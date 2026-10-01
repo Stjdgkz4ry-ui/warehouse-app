@@ -828,3 +828,97 @@ setTimeout(
   protectCompletedPrintButtonsV1096,
   500
 );
+/* =========================================================
+   V10.9A.7 “查询未贴 / 已完成”增加管理员重新出单
+   ========================================================= */
+
+if(typeof renderPackingProgressSearchList === 'function'){
+
+  const oldRenderPackingProgressSearchListV1097 =
+    renderPackingProgressSearchList;
+
+  renderPackingProgressSearchList = function(){
+
+    const result =
+      oldRenderPackingProgressSearchListV1097
+        .apply(this, arguments);
+
+    setTimeout(()=>{
+      const el =
+        document.getElementById(
+          'packingProgressSearchList'
+        );
+
+      if(!el) return;
+
+      const data =
+        APP.packingProgressData || {
+          orders:[],
+          labels:[]
+        };
+
+      const completedOrders =
+        (data.orders || [])
+          .filter(o=>{
+            const s =
+              String(o.status||'')
+                .toLowerCase();
+
+            return (
+              s === 'packed' ||
+              s === 'shipped'
+            );
+          });
+
+      completedOrders.forEach(order=>{
+
+        const orderNo =
+          String(order.order_no||'');
+
+        const cards =
+          [...el.querySelectorAll('.card')];
+
+        const card =
+          cards.find(x=>
+            String(x.textContent||'')
+              .includes(orderNo)
+          );
+
+        if(!card) return;
+
+        if(
+          card.querySelector(
+            `[data-admin-reprint="${order.id}"]`
+          )
+        ){
+          return;
+        }
+
+        const wrap =
+          document.createElement('div');
+
+        wrap.className =
+          'mt-3';
+
+        wrap.innerHTML = `
+          <button
+            class="btn btn-red w-full"
+            data-admin-reprint="${order.id}"
+            onclick="adminReprintCompletedOrderV1096('${order.id}')">
+            🔐 管理员重新出单
+          </button>
+          <div class="small text-red-600 mt-2 text-center">
+            已完成订单再次出单必须验证管理员密码；不会重复扣库存，不改变完成状态
+          </div>
+        `;
+
+        card.appendChild(wrap);
+
+      });
+
+    },50);
+
+    return result;
+  };
+
+}
