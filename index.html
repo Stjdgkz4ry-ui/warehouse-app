@@ -15293,56 +15293,102 @@ async function(){
       );
 
 
+ if(
+  existing
+){
+
+  const currentQty =
+    safeNumber(
+      existing.qty,
+      0
+    );
+
+
+  const afterQty =
+    currentQty +
+    qty;
+
+
+  const ok =
+    confirm(
+
+      `📍 这个库位已经有该商品
+
+SKU：${ctx.sku}
+
+库位：${bin}
+
+当前库存：${currentQty} 件
+
+本次增加：${qty} 件
+
+增加后库存：${afterQty} 件
+
+是否直接增加到这个库位？`
+
+    );
+
+
   if(
-    existing
+    !ok
   ){
-
-    showInfo(
-      '这个 SKU 在该库位已经存在，正在切换为原库位入库...'
-    );
-
-    closeModal();
-
-    stockAction(
-      existing.id,
-      'in'
-    );
-
-    setTimeout(()=>{
-
-      const qtyInput =
-        document.getElementById(
-          'stockQty'
-        );
-
-      if(qtyInput){
-
-        qtyInput.value =
-          String(
-            qty
-          );
-
-      }
-
-
-      const noteInput =
-        document.getElementById(
-          'stockNote'
-        );
-
-      if(noteInput){
-
-        noteInput.value =
-          note ||
-          '扫码入库';
-
-      }
-
-    },80);
 
     return;
 
   }
+
+
+  closeModal();
+
+
+  stockAction(
+    existing.id,
+    'in'
+  );
+
+
+  setTimeout(()=>{
+
+    const qtyInput =
+      document.getElementById(
+        'stockQty'
+      );
+
+
+    if(
+      qtyInput
+    ){
+
+      qtyInput.value =
+        String(
+          qty
+        );
+
+    }
+
+
+    const noteInput =
+      document.getElementById(
+        'stockNote'
+      );
+
+
+    if(
+      noteInput
+    ){
+
+      noteInput.value =
+        note ||
+        '扫码入库';
+
+    }
+
+  },80);
+
+
+  return;
+
+}
 
 
   try{
