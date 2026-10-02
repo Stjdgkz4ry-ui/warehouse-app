@@ -1,330 +1,414 @@
 /* =========================================================
-   智能仓库 - 出货统计模块 V1
+   智能仓库 - 出货统计模块 V3
    统计起点：2026-10-01 00:00 America/New_York
 
-   功能：
-   1. 今日 / 本周 / 本月 / 本季度 / 本年 / 自定义
-   2. 所有库存 SKU 都显示，0 出货也显示
-   3. 当前库存
-   4. 最后出货时间
-   5. 7 / 30 / 60 / 90 天无出货筛选
-   6. 未入库商品手工补登记出货
-   7. 查看 SKU 每日出货明细
-   8. 导出 Excel
-
-   注意：
-   - 手工补登记不会修改库存
-   - 依赖 Supabase 已运行 outbound_records_v1 SQL
+   V3：
+   - 页面进入时不自动加载大列表
+   - 选择周期后点“加载统计”
+   - 默认只显示有出货 SKU
+   - 0出货/滞销库存单独点开加载
+   - 正常 packed/shipped 自动统计
+   - 人工增加/减少必须管理员密码
+   - 人工调整不修改 inventory 库存
 ========================================================= */
-
 (function(){
 
-  const OUTBOUND_START_ISO =
-    '2026-10-01T04:00:00.000Z';
+  const START_ISO='2026-10-01T04:00:00.000Z';
+  const START_DATE='2026-10-01';
 
-  const OUTBOUND_START_DATE =
-    '2026-10-01';
-
-  const OUTBOUND = {
+  const OUTBOUND={
     period:'month',
-    customStart:OUTBOUND_START_DATE,
+    customStart:START_DATE,
     customEnd:'',
     search:'',
-    slowDays:'all',
     sort:'out_desc',
+    viewMode:'active', // active | zero | slow7 | slow30 | slow60 | slow90
     rows:[],
-    periodStats:[],
-    allStats:[],
+    loaded:false,
     loading:false
   };
 
-  window.OUTBOUND = OUTBOUND;
+  window.OUTBOUND=OUTBOUND;
 
 
-  /* =========================================================
-     基础工具
-  ========================================================= */
-
-  function outSafeNumber(value,fallback=0){
-    const n = Number(value);
-    return Number.isFinite(n)
-      ? n
-      : fallback;
+  function n(v,d=0){
+    const x=Number(v);
+    return Number.isFinite(x)?x:d;
   }
 
-  function outEscape(value){
-    if(
-      typeof window.escapeHtml ===
-      'function'
-    ){
+
+  function esc(v){
+
+    if(typeof window.escapeHtml==='function'){
+
       return window.escapeHtml(
-        String(value ?? '')
+        String(v??'')
       );
+
     }
 
-    return String(value ?? '')
-      .replace(/&/g,'&amp;')
-      .replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;')
-      .replace(/"/g,'&quot;')
-      .replace(/'/g,'&#039;');
+    return String(v??'')
+
+      .replace(
+        /&/g,
+        '&amp;'
+      )
+
+      .replace(
+        /</g,
+        '&lt;'
+      )
+
+      .replace(
+        />/g,
+        '&gt;'
+      )
+
+      .replace(
+        /"/g,
+        '&quot;'
+      )
+
+      .replace(
+        /'/g,
+        '&#039;'
+      );
+
   }
 
-  function outFormatNumber(value){
+
+  function fmt(v){
+
     return Math.round(
-      outSafeNumber(value,0)
-    ).toLocaleString('zh-CN');
+      n(v,0)
+    ).toLocaleString(
+      'zh-CN'
+    );
+
   }
 
-  function outLocalDateValue(date){
-    const y =
-      date.getFullYear();
 
-    const m =
+  function dateValue(d){
+
+    const y=
+      d.getFullYear();
+
+    const m=
       String(
-        date.getMonth()+1
-      ).padStart(2,'0');
+        d.getMonth()+1
+      ).padStart(
+        2,
+        '0'
+      );
 
-    const d =
+    const day=
       String(
-        date.getDate()
-      ).padStart(2,'0');
+        d.getDate()
+      ).padStart(
+        2,
+        '0'
+      );
 
-    return `${y}-${m}-${d}`;
+    return `${y}-${m}-${day}`;
+
   }
 
-  function outStartOfDay(date){
+
+  function addDays(d,days){
+
+    const x=
+      new Date(d);
+
+    x.setDate(
+      x.getDate()+days
+    );
+
+    return x;
+
+  }
+
+
+  function startOfDay(d){
+
     return new Date(
-      date.getFullYear(),
-      date.getMonth(),
-      date.getDate(),
-      0,0,0,0
+
+      d.getFullYear(),
+
+      d.getMonth(),
+
+      d.getDate(),
+
+      0,
+      0,
+      0,
+      0
+
     );
+
   }
 
-  function outAddDays(date,days){
-    const d =
-      new Date(date);
 
-    d.setDate(
-      d.getDate()+days
-    );
+  function periodLabel(){
 
-    return d;
+    return {
+
+      today:'今日',
+
+      week:'本周',
+
+      month:'本月',
+
+      quarter:'本季度',
+
+      year:'本年',
+
+      custom:'自定义'
+
+    }[
+      OUTBOUND.period
+    ]||'本月';
+
   }
 
 
-  /* =========================================================
-     时间范围
-  ========================================================= */
+  function range(){
 
-  function getOutboundPeriodRange(){
-
-    const now =
+    const now=
       new Date();
 
     let start;
+
     let end;
 
+
     if(
-      OUTBOUND.period ===
+      OUTBOUND.period===
       'today'
     ){
 
-      start =
-        outStartOfDay(now);
+      start=
+        startOfDay(
+          now
+        );
 
-      end =
-        outAddDays(
+      end=
+        addDays(
           start,
           1
         );
 
     }else if(
-      OUTBOUND.period ===
+      OUTBOUND.period===
       'week'
     ){
 
-      const today =
-        outStartOfDay(now);
-
-      const day =
-        today.getDay();
-
-      const diff =
-        day===0
-        ? -6
-        : 1-day;
-
-      start =
-        outAddDays(
-          today,
-          diff
+      const t=
+        startOfDay(
+          now
         );
 
-      end =
-        outAddDays(
+      const day=
+        t.getDay();
+
+      start=
+        addDays(
+          t,
+          day===0
+            ? -6
+            : 1-day
+        );
+
+      end=
+        addDays(
           start,
           7
         );
 
     }else if(
-      OUTBOUND.period ===
+      OUTBOUND.period===
       'month'
     ){
 
-      start =
+      start=
         new Date(
+
           now.getFullYear(),
+
           now.getMonth(),
+
           1
+
         );
 
-      end =
+      end=
         new Date(
+
           now.getFullYear(),
+
           now.getMonth()+1,
+
           1
+
         );
 
     }else if(
-      OUTBOUND.period ===
+      OUTBOUND.period===
       'quarter'
     ){
 
-      const qMonth =
+      const qm=
         Math.floor(
           now.getMonth()/3
         )*3;
 
-      start =
+      start=
         new Date(
+
           now.getFullYear(),
-          qMonth,
+
+          qm,
+
           1
+
         );
 
-      end =
+      end=
         new Date(
+
           now.getFullYear(),
-          qMonth+3,
+
+          qm+3,
+
           1
+
         );
 
     }else if(
-      OUTBOUND.period ===
+      OUTBOUND.period===
       'year'
     ){
 
-      start =
+      start=
         new Date(
+
           now.getFullYear(),
+
           0,
+
           1
+
         );
 
-      end =
+      end=
         new Date(
+
           now.getFullYear()+1,
+
           0,
+
           1
+
         );
 
     }else{
 
-      const startText =
-        OUTBOUND.customStart ||
-        OUTBOUND_START_DATE;
+      const s=
+        OUTBOUND.customStart||
+        START_DATE;
 
-      const endText =
-        OUTBOUND.customEnd ||
-        outLocalDateValue(now);
+      const e=
+        OUTBOUND.customEnd||
+        dateValue(
+          now
+        );
 
-      start =
+      start=
         new Date(
-          `${startText}T00:00:00`
+          `${s}T00:00:00`
         );
 
-      end =
-        outAddDays(
+      end=
+        addDays(
+
           new Date(
-            `${endText}T00:00:00`
+            `${e}T00:00:00`
           ),
+
           1
+
         );
+
     }
 
-    const hardStart =
+
+    const hard=
       new Date(
-        OUTBOUND_START_ISO
+        START_ISO
       );
 
+
     if(
-      start <
-      hardStart
+      start<
+      hard
     ){
-      start =
-        hardStart;
+
+      start=
+        hard;
+
     }
+
 
     return {
       start,
       end
     };
+
   }
 
 
-  function outboundPeriodLabel(){
-
-    const map = {
-      today:'今日',
-      week:'本周',
-      month:'本月',
-      quarter:'本季度',
-      year:'本年',
-      custom:'自定义'
-    };
-
-    return (
-      map[
-        OUTBOUND.period
-      ] ||
-      '本月'
-    );
-  }
-
-
-  /* =========================================================
-     页面 HTML
-  ========================================================= */
-
-  function outboundPageHtml(){
+  function pageHtml(){
 
     return `
+
       <section
         id="pageOutbound"
         class="hidden">
 
+
         <div
           class="flex items-center justify-between mb-3">
 
+
           <div>
+
+
             <h1
               class="text-2xl font-bold">
+
               📊 出货统计
+
             </h1>
+
 
             <div
               class="small">
-              从 2026-10-01 开始统计，库存中 0 出货 SKU 也会显示
+
+              从 2026-10-01 开始 · 正常贴单自动统计 · 人工调整需要管理员密码
+
             </div>
+
+
           </div>
+
 
           <button
             class="btn btn-blue btn-small"
-            onclick="openManualOutboundV1()">
-            ➕ 补登记
+            onclick="openManualOutboundV3()">
+
+            ✏️ 调整出货
+
           </button>
+
 
         </div>
 
@@ -332,184 +416,229 @@
         <div
           class="card p-3 mb-3">
 
+
           <div
             class="grid grid-cols-3 gap-2">
+
 
             <button
               data-out-period="today"
               class="btn btn-gray btn-small"
-              onclick="setOutboundPeriodV1('today')">
+              onclick="setOutboundPeriodV3('today')">
+
               今日
+
             </button>
+
 
             <button
               data-out-period="week"
               class="btn btn-gray btn-small"
-              onclick="setOutboundPeriodV1('week')">
+              onclick="setOutboundPeriodV3('week')">
+
               本周
+
             </button>
+
 
             <button
               data-out-period="month"
               class="btn btn-gray btn-small"
-              onclick="setOutboundPeriodV1('month')">
+              onclick="setOutboundPeriodV3('month')">
+
               本月
+
             </button>
+
 
             <button
               data-out-period="quarter"
               class="btn btn-gray btn-small"
-              onclick="setOutboundPeriodV1('quarter')">
+              onclick="setOutboundPeriodV3('quarter')">
+
               本季度
+
             </button>
+
 
             <button
               data-out-period="year"
               class="btn btn-gray btn-small"
-              onclick="setOutboundPeriodV1('year')">
+              onclick="setOutboundPeriodV3('year')">
+
               本年
+
             </button>
+
 
             <button
               data-out-period="custom"
               class="btn btn-gray btn-small"
-              onclick="setOutboundPeriodV1('custom')">
+              onclick="setOutboundPeriodV3('custom')">
+
               自定义
+
             </button>
+
 
           </div>
 
 
           <div
-            id="outboundCustomRangeV1"
+            id="outboundCustomV3"
             class="hidden mt-3">
+
 
             <div
               class="grid grid-cols-2 gap-2">
 
+
               <div>
-                <label class="small">
+
+
+                <label
+                  class="small">
+
                   开始日期
+
                 </label>
 
+
                 <input
-                  id="outboundStartV1"
+                  id="outStartV3"
                   type="date"
                   min="2026-10-01">
+
+
               </div>
+
 
               <div>
-                <label class="small">
+
+
+                <label
+                  class="small">
+
                   结束日期
+
                 </label>
 
+
                 <input
-                  id="outboundEndV1"
+                  id="outEndV3"
                   type="date"
                   min="2026-10-01">
+
+
               </div>
+
 
             </div>
 
-            <button
-              class="btn btn-blue w-full mt-2"
-              onclick="applyOutboundCustomV1()">
-              查询
-            </button>
 
           </div>
+
+
+          <button
+            class="btn btn-blue w-full mt-3"
+            onclick="loadOutboundV3('active')">
+
+            📊 加载 ${periodLabel()} 出货统计
+
+          </button>
+
 
         </div>
 
 
         <div
-          id="outboundSummaryV1"
+          id="outboundSummaryV3"
           class="stat-grid mb-3">
         </div>
 
 
         <div
-          class="card p-3 mb-3">
+          id="outboundControlsV3"
+          class="card p-3 mb-3 hidden">
+
 
           <input
-            id="outboundSearchV1"
+            id="outSearchV3"
             placeholder="搜索 SKU / 商品名称"
             oninput="
-              OUTBOUND.search =
+              OUTBOUND.search=
                 this.value
                   .trim()
                   .toLowerCase();
-              renderOutboundV1();
+
+              renderOutboundV3();
             ">
 
 
           <div
             class="grid grid-cols-2 gap-2 mt-2">
 
-            <select
-              id="outboundSlowV1"
-              onchange="
-                OUTBOUND.slowDays =
-                  this.value;
-                renderOutboundV1();
-              ">
-
-              <option value="all">
-                全部 SKU
-              </option>
-
-              <option value="0">
-                本周期 0 出货
-              </option>
-
-              <option value="7">
-                7天未出货
-              </option>
-
-              <option value="30">
-                30天未出货
-              </option>
-
-              <option value="60">
-                60天未出货
-              </option>
-
-              <option value="90">
-                90天未出货
-              </option>
-
-            </select>
-
 
             <select
-              id="outboundSortV1"
               onchange="
-                OUTBOUND.sort =
+                OUTBOUND.sort=
                   this.value;
-                renderOutboundV1();
+
+                renderOutboundV3();
               ">
 
-              <option value="out_desc">
+
+              <option
+                value="out_desc">
+
                 出货量：高 → 低
+
               </option>
 
-              <option value="out_asc">
+
+              <option
+                value="out_asc">
+
                 出货量：低 → 高
+
               </option>
 
-              <option value="stock_desc">
+
+              <option
+                value="stock_desc">
+
                 库存量：高 → 低
+
               </option>
 
-              <option value="days_desc">
+
+              <option
+                value="days_desc">
+
                 未出货天数：高 → 低
+
               </option>
 
-              <option value="sku_asc">
+
+              <option
+                value="sku_asc">
+
                 SKU：A → Z
+
               </option>
+
 
             </select>
+
+
+            <button
+              class="btn btn-green"
+              onclick="exportOutboundV3()">
+
+              📤 导出 Excel
+
+            </button>
+
 
           </div>
 
@@ -517,37 +646,98 @@
           <div
             class="grid grid-cols-2 gap-2 mt-2">
 
+
             <button
               class="btn btn-gray"
-              onclick="loadOutboundStatsV1()">
-              🔄 刷新
+              onclick="loadOutboundV3('active')">
+
+              🔄 有出货 SKU
+
             </button>
+
 
             <button
-              class="btn btn-green"
-              onclick="exportOutboundExcelV1()">
-              📤 导出 Excel
+              class="btn btn-yellow"
+              onclick="loadOutboundV3('zero')">
+
+              0 出货 SKU
+
             </button>
 
+
           </div>
+
+
+          <div
+            class="grid grid-cols-4 gap-2 mt-2">
+
+
+            <button
+              class="btn btn-gray btn-small"
+              onclick="loadOutboundV3('slow7')">
+
+              7天
+
+            </button>
+
+
+            <button
+              class="btn btn-gray btn-small"
+              onclick="loadOutboundV3('slow30')">
+
+              30天
+
+            </button>
+
+
+            <button
+              class="btn btn-gray btn-small"
+              onclick="loadOutboundV3('slow60')">
+
+              60天
+
+            </button>
+
+
+            <button
+              class="btn btn-gray btn-small"
+              onclick="loadOutboundV3('slow90')">
+
+              90天
+
+            </button>
+
+
+          </div>
+
 
         </div>
 
 
         <div
-          id="outboundListV1">
+          id="outboundListV3">
+
+
+          <div
+            class="card p-7 text-center text-gray-500">
+
+            请选择时间范围，然后点“加载统计”。
+
+          </div>
+
+
         </div>
 
+
       </section>
+
     `;
+
   }
 
 
-  /* =========================================================
-     注入页面和导航
-  ========================================================= */
+  function inject(){
 
-  function injectOutboundUI(){
 
     if(
       !document.getElementById(
@@ -555,19 +745,21 @@
       )
     ){
 
-      const pageLogs =
+      const logs=
         document.getElementById(
           'pageLogs'
         );
 
-      if(pageLogs){
 
-        pageLogs
-          .insertAdjacentHTML(
-            'beforebegin',
-            outboundPageHtml()
-          );
+      if(logs){
+
+        logs.insertAdjacentHTML(
+          'beforebegin',
+          pageHtml()
+        );
+
       }
+
     }
 
 
@@ -577,447 +769,989 @@
       )
     ){
 
-      const nav =
+      const nav=
         document.querySelector(
           '.bottom-nav-inner'
         );
 
-      const navLogs =
+      const logs=
         document.getElementById(
           'navLogs'
         );
 
+
       if(
-        nav &&
-        navLogs
+        nav&&
+        logs
       ){
 
         nav.style
-          .gridTemplateColumns =
+          .gridTemplateColumns=
           'repeat(6,1fr)';
 
-        navLogs
-          .insertAdjacentHTML(
-            'beforebegin',
-            `
-              <button
-                id="navOutbound"
-                class="nav-btn"
-                onclick="showPage('outbound')">
 
-                <span
-                  class="nav-icon">
-                  📊
-                </span>
+        logs.insertAdjacentHTML(
 
-                统计
+          'beforebegin',
 
-              </button>
-            `
-          );
+          `
+
+            <button
+              id="navOutbound"
+              class="nav-btn"
+              onclick="showPage('outbound')">
+
+              <span
+                class="nav-icon">
+
+                📊
+
+              </span>
+
+              统计
+
+            </button>
+
+          `
+
+        );
+
       }
+
     }
+
   }
 
 
-  /* =========================================================
-     扩展原页面导航
-  ========================================================= */
-
-  const originalNormalizePageName =
+  const oldNormalize=
     window.normalizePageName;
 
-  window.normalizePageName =
+
+  window.normalizePageName=
     function(page){
 
+
       if(
-        page ===
+        page===
         'outbound'
       ){
+
         return 'outbound';
+
       }
 
-      if(
-        typeof
-        originalNormalizePageName ===
+
+      return typeof oldNormalize===
         'function'
-      ){
-        return originalNormalizePageName(
-          page
-        );
-      }
 
-      return page;
+        ? oldNormalize(
+            page
+          )
+
+        : page;
+
     };
 
 
-  const originalEnforce =
+  const oldEnforce=
     window.enforceCurrentPageVisibility;
 
-  window.enforceCurrentPageVisibility =
+
+  window.enforceCurrentPageVisibility=
     function(){
 
+
       if(
-        typeof
-        originalEnforce ===
+        typeof oldEnforce===
         'function'
       ){
-        originalEnforce();
+
+        oldEnforce();
+
       }
 
-      const page =
+
+      const page=
         window.normalizePageName(
-          APP.currentPage ||
+
+          APP.currentPage||
           'home'
+
         );
 
-      const pageOutbound =
+
+      const el=
         document.getElementById(
           'pageOutbound'
         );
 
-      const navOutbound =
+
+      const nav=
         document.getElementById(
           'navOutbound'
         );
 
-      if(pageOutbound){
 
-        pageOutbound
-          .classList
-          .toggle(
-            'hidden',
-            page !== 'outbound'
-          );
+      if(el){
+
+        el.classList.toggle(
+
+          'hidden',
+
+          page!==
+          'outbound'
+
+        );
+
       }
 
-      if(navOutbound){
 
-        navOutbound
-          .classList
-          .toggle(
-            'active',
-            page === 'outbound'
-          );
+      if(nav){
+
+        nav.classList.toggle(
+
+          'active',
+
+          page===
+          'outbound'
+
+        );
+
       }
 
 
       if(
-        page ===
+        page===
         'outbound'
       ){
 
         [
+
           'Home',
+
           'Inventory',
+
           'Picking',
+
           'Logs',
+
           'Settings'
+
         ]
-        .forEach(name=>{
+        .forEach(
+          name=>{
 
-          const el =
-            document.getElementById(
-              'page'+name
-            );
 
-          const nav =
-            document.getElementById(
-              'nav'+name
-            );
+            document
+              .getElementById(
+                'page'+name
+              )
+              ?.classList
+              .add(
+                'hidden'
+              );
 
-          if(el){
-            el.classList.add(
-              'hidden'
-            );
+
+            document
+              .getElementById(
+                'nav'+name
+              )
+              ?.classList
+              .remove(
+                'active'
+              );
+
+
           }
+        );
 
-          if(nav){
-            nav.classList.remove(
-              'active'
-            );
-          }
-
-        });
       }
+
     };
 
 
-  const originalShowPage =
+  const oldShowPage=
     window.showPage;
 
-  window.showPage =
+
+  window.showPage=
     function(
       page,
       options={}
     ){
 
+
       if(
-        page !==
+        page!==
         'outbound'
       ){
 
-        return originalShowPage(
+        return oldShowPage(
           page,
           options
         );
+
       }
 
 
       if(
-        options.remember !==
-        false
+        options.remember!==
+        false &&
+        typeof window.rememberCurrentPage===
+        'function'
       ){
 
-        if(
-          typeof
-          window.rememberCurrentPage ===
-          'function'
-        ){
-
-          rememberCurrentPage(
-            'outbound'
-          );
-
-        }else{
-
-          APP.currentPage =
-            'outbound';
-        }
+        rememberCurrentPage(
+          'outbound'
+        );
 
       }else{
 
-        APP.currentPage =
+        APP.currentPage=
           'outbound';
+
       }
 
 
       window
         .enforceCurrentPageVisibility();
 
-      loadOutboundStatsV1();
+
+      resetPage();
+
     };
 
 
-  /* =========================================================
-     库存 SKU 汇总
-  ========================================================= */
+  function updatePeriodButtons(){
 
-  function buildInventorySkuMap(){
 
-    const map =
-      new Map();
+    document
+      .querySelectorAll(
+        '[data-out-period]'
+      )
+      .forEach(
+        btn=>{
 
-    (
-      APP.inventory ||
-      []
-    )
-    .forEach(item=>{
 
-      if(
-        item?.is_active ===
-        false
-      ){
-        return;
-      }
+          const active=
+            btn.getAttribute(
+              'data-out-period'
+            )===
+            OUTBOUND.period;
 
-      const sku =
-        String(
-          item?.sku ||
-          ''
-        ).trim();
 
-      if(!sku){
-        return;
-      }
+          btn.classList.toggle(
 
-      const key =
-        sku.toLowerCase();
+            'btn-blue',
 
-      if(
-        !map.has(key)
-      ){
+            active
 
-        map.set(
-          key,
-          {
-            sku,
-            name:
-              String(
-                item?.name ||
-                sku
-              ).trim() ||
-              sku,
-            stockQty:0
-          }
-        );
-      }
+          );
 
-      const row =
-        map.get(key);
 
-      row.stockQty +=
-        outSafeNumber(
-          item?.qty,
-          0
-        );
+          btn.classList.toggle(
 
-    });
+            'btn-gray',
 
-    return map;
+            !active
+
+          );
+
+
+        }
+      );
+
+
+    document
+      .getElementById(
+        'outboundCustomV3'
+      )
+      ?.classList
+      .toggle(
+
+        'hidden',
+
+        OUTBOUND.period!==
+        'custom'
+
+      );
+
   }
 
 
-  /* =========================================================
-     合并库存 + 出货
-  ========================================================= */
-
-  function mergeOutboundRows(
-    periodStats,
-    allStats
-  ){
-
-    const map =
-      buildInventorySkuMap();
+  function resetPage(){
 
 
-    const periodMap =
-      new Map(
-        (
-          periodStats ||
-          []
-        ).map(x=>[
-          String(
-            x.sku ||
-            ''
-          )
-          .trim()
-          .toLowerCase(),
-          x
-        ])
+    OUTBOUND.rows=[];
+
+    OUTBOUND.loaded=false;
+
+    OUTBOUND.viewMode=
+      'active';
+
+    OUTBOUND.search='';
+
+
+    updatePeriodButtons();
+
+
+    const summary=
+      document.getElementById(
+        'outboundSummaryV3'
       );
 
 
-    const allMap =
-      new Map(
-        (
-          allStats ||
-          []
-        ).map(x=>[
-          String(
-            x.sku ||
-            ''
-          )
-          .trim()
-          .toLowerCase(),
-          x
-        ])
+    const controls=
+      document.getElementById(
+        'outboundControlsV3'
       );
 
 
-    /*
-     * 手工登记但库存里不存在的 SKU
-     * 也要显示
-     */
-    (
-      allStats ||
-      []
-    )
-    .forEach(x=>{
+    const list=
+      document.getElementById(
+        'outboundListV3'
+      );
 
-      const sku =
-        String(
-          x.sku ||
-          ''
-        ).trim();
 
-      if(!sku){
-        return;
-      }
+    if(summary){
 
-      const key =
-        sku.toLowerCase();
+      summary.innerHTML='';
+
+    }
+
+
+    controls
+      ?.classList
+      .add(
+        'hidden'
+      );
+
+
+    if(list){
+
+      list.innerHTML=`
+
+        <div
+          class="card p-7 text-center text-gray-500">
+
+          已选择：
+          ${esc(
+            periodLabel()
+          )}
+
+          <br>
+
+          点击上面的“加载
+          ${esc(
+            periodLabel()
+          )}
+          出货统计”开始查询。
+
+        </div>
+
+      `;
+
+    }
+
+  }
+
+
+  window.setOutboundPeriodV3=
+    function(period){
+
+
+      OUTBOUND.period=
+        period;
+
 
       if(
-        !map.has(key)
+        period===
+        'custom'
       ){
 
-        map.set(
-          key,
-          {
-            sku,
-            name:
-              String(
-                x.name ||
-                sku
-              ).trim() ||
-              sku,
-            stockQty:0
-          }
-        );
+        const today=
+          dateValue(
+            new Date()
+          );
+
+
+        const s=
+          document.getElementById(
+            'outStartV3'
+          );
+
+
+        const e=
+          document.getElementById(
+            'outEndV3'
+          );
+
+
+        if(
+          s&&
+          !s.value
+        ){
+
+          s.value=
+            OUTBOUND.customStart||
+            START_DATE;
+
+        }
+
+
+        if(
+          e&&
+          !e.value
+        ){
+
+          e.value=
+            OUTBOUND.customEnd||
+            today;
+
+        }
+
       }
 
-    });
+
+      resetPage();
+
+    };
 
 
-    const now =
+  async function fetchStats(){
+
+
+    const r=
+      range();
+
+
+    const tomorrow=
+      addDays(
+        new Date(),
+        1
+      );
+
+
+    const [
+      periodRes,
+      allRes
+    ]=
+    await Promise.all([
+
+
+      APP.sb.rpc(
+
+        'get_outbound_stats_v1',
+
+        {
+
+          p_warehouse_id:
+            APP.warehouse.id,
+
+          p_start:
+            r.start
+              .toISOString(),
+
+          p_end:
+            r.end
+              .toISOString()
+
+        }
+
+      ),
+
+
+      APP.sb.rpc(
+
+        'get_outbound_stats_v1',
+
+        {
+
+          p_warehouse_id:
+            APP.warehouse.id,
+
+          p_start:
+            START_ISO,
+
+          p_end:
+            tomorrow
+              .toISOString()
+
+        }
+
+      )
+
+
+    ]);
+
+
+    if(
+      periodRes.error
+    ){
+
+      throw periodRes.error;
+
+    }
+
+
+    if(
+      allRes.error
+    ){
+
+      throw allRes.error;
+
+    }
+
+
+    return {
+
+      period:
+        periodRes.data||
+        [],
+
+      all:
+        allRes.data||
+        []
+
+    };
+
+  }
+
+
+  function inventoryMap(){
+
+
+    const map=
+      new Map();
+
+
+    (
+      APP.inventory||
+      []
+    )
+    .forEach(
+      item=>{
+
+
+        if(
+          item?.is_active===
+          false
+        ){
+
+          return;
+
+        }
+
+
+        const sku=
+          String(
+            item?.sku||
+            ''
+          ).trim();
+
+
+        if(!sku){
+
+          return;
+
+        }
+
+
+        const key=
+          sku.toLowerCase();
+
+
+        if(
+          !map.has(
+            key
+          )
+        ){
+
+          map.set(
+
+            key,
+
+            {
+
+              sku,
+
+              name:
+                String(
+                  item?.name||
+                  sku
+                ).trim()||
+                sku,
+
+              stockQty:0
+
+            }
+
+          );
+
+        }
+
+
+        map
+          .get(
+            key
+          )
+          .stockQty+=
+          n(
+            item?.qty,
+            0
+          );
+
+
+      }
+    );
+
+
+    return map;
+
+  }
+
+
+  function activeRows(
+    period,
+    all
+  ){
+
+
+    const stock=
+      inventoryMap();
+
+
+    const allMap=
+      new Map(
+
+        all.map(
+          x=>[
+
+            String(
+              x.sku||
+              ''
+            )
+            .trim()
+            .toLowerCase(),
+
+            x
+
+          ]
+        )
+
+      );
+
+
+    return period
+
+      .filter(
+        x=>
+          n(
+            x.total_qty,
+            0
+          )>
+          0
+      )
+
+      .map(
+        x=>{
+
+
+          const sku=
+            String(
+              x.sku||
+              ''
+            ).trim();
+
+
+          const key=
+            sku.toLowerCase();
+
+
+          const inv=
+            stock.get(
+              key
+            );
+
+
+          const last=
+
+            allMap
+              .get(
+                key
+              )
+              ?.last_shipped_at
+
+            ||
+
+            x.last_shipped_at
+
+            ||
+
+            null;
+
+
+          const lastDate=
+            last
+              ? new Date(
+                  last
+                )
+              : null;
+
+
+          const daysSince=
+
+            lastDate&&
+            !Number.isNaN(
+              lastDate.getTime()
+            )
+
+            ? Math.max(
+
+                0,
+
+                Math.floor(
+
+                  (
+                    new Date()-
+                    lastDate
+                  )
+                  /
+                  86400000
+
+                )
+
+              )
+
+            : null;
+
+
+          return {
+
+            sku,
+
+            name:
+              String(
+                x.name||
+                inv?.name||
+                sku
+              ),
+
+            stockQty:
+              n(
+                inv?.stockQty,
+                0
+              ),
+
+            periodQty:
+              n(
+                x.total_qty,
+                0
+              ),
+
+            shipmentCount:
+              n(
+                x.shipment_count,
+                0
+              ),
+
+            lastShippedAt:
+              last,
+
+            daysSince
+
+          };
+
+        }
+      );
+
+  }
+
+
+  function zeroOrSlowRows(
+    period,
+    all,
+    mode
+  ){
+
+
+    const stock=
+      inventoryMap();
+
+
+    const periodMap=
+      new Map(
+
+        period.map(
+          x=>[
+
+            String(
+              x.sku||
+              ''
+            )
+            .trim()
+            .toLowerCase(),
+
+            x
+
+          ]
+        )
+
+      );
+
+
+    const allMap=
+      new Map(
+
+        all.map(
+          x=>[
+
+            String(
+              x.sku||
+              ''
+            )
+            .trim()
+            .toLowerCase(),
+
+            x
+
+          ]
+        )
+
+      );
+
+
+    const now=
       new Date();
 
 
-    return Array
-      .from(
-        map.values()
+    let daysThreshold=
+      null;
+
+
+    if(
+      mode.startsWith(
+        'slow'
       )
-      .map(base=>{
+    ){
 
-        const key =
-          base.sku
-            .toLowerCase();
+      daysThreshold=
+        Number(
+          mode.replace(
+            'slow',
+            ''
+          )
+        );
 
-        const period =
-          periodMap.get(
-            key
-          );
-
-        const all =
-          allMap.get(
-            key
-          );
+    }
 
 
-        const lastDate =
-          all?.last_shipped_at
+    const rows=[];
+
+
+    for(
+      const base
+      of stock.values()
+    ){
+
+
+      const key=
+        base.sku
+          .toLowerCase();
+
+
+      const p=
+        periodMap.get(
+          key
+        );
+
+
+      const a=
+        allMap.get(
+          key
+        );
+
+
+      const periodQty=
+        n(
+          p?.total_qty,
+          0
+        );
+
+
+      const last=
+        a?.last_shipped_at||
+        null;
+
+
+      const lastDate=
+        last
           ? new Date(
-              all.last_shipped_at
+              last
             )
           : null;
 
 
-        let daysSince =
-          null;
+      const daysSince=
 
-        if(
-          lastDate &&
-          !Number.isNaN(
-            lastDate.getTime()
-          )
-        ){
+        lastDate&&
+        !Number.isNaN(
+          lastDate.getTime()
+        )
 
-          daysSince =
-            Math.max(
-              0,
-              Math.floor(
-                (
-                  now -
-                  lastDate
-                ) /
-                86400000
+        ? Math.max(
+
+            0,
+
+            Math.floor(
+
+              (
+                now-
+                lastDate
               )
-            );
-        }
+              /
+              86400000
+
+            )
+
+          )
+
+        : null;
 
 
-        return {
+      let include=
+        false;
+
+
+      if(
+        mode===
+        'zero'
+      ){
+
+        include=
+          periodQty===
+          0;
+
+      }else{
+
+        include=
+
+          daysSince===
+          null
+
+          ||
+
+          daysSince>=
+          daysThreshold;
+
+      }
+
+
+      if(
+        include
+      ){
+
+        rows.push({
 
           sku:
             base.sku,
@@ -1026,162 +1760,352 @@
             base.name,
 
           stockQty:
-            outSafeNumber(
+            n(
               base.stockQty,
               0
             ),
 
-          periodQty:
-            outSafeNumber(
-              period
-                ?.total_qty,
-              0
-            ),
+          periodQty,
 
           shipmentCount:
-            outSafeNumber(
-              period
-                ?.shipment_count,
+            n(
+              p?.shipment_count,
               0
             ),
 
           lastShippedAt:
-            all
-              ?.last_shipped_at ||
-            null,
+            last,
 
           daysSince
-        };
 
-      });
+        });
+
+      }
+
+    }
+
+
+    return rows;
+
   }
 
 
-  /* =========================================================
-     筛选排序
-  ========================================================= */
+  window.loadOutboundV3=
+    async function(
+      mode='active'
+    ){
 
-  function getFilteredOutboundRows(){
 
-    let rows =
-      [
-        ...OUTBOUND.rows
-      ];
+      if(
+        !APP
+          ?.warehouse
+          ?.id
+      ){
+
+        return showError(
+          '请先选择仓库'
+        );
+
+      }
+
+
+      if(
+        OUTBOUND.period===
+        'custom'
+      ){
+
+
+        const s=
+          document
+            .getElementById(
+              'outStartV3'
+            )
+            ?.value
+          ||
+          START_DATE;
+
+
+        const e=
+          document
+            .getElementById(
+              'outEndV3'
+            )
+            ?.value
+          ||
+          dateValue(
+            new Date()
+          );
+
+
+        if(
+          e<
+          s
+        ){
+
+          return showError(
+            '结束日期不能早于开始日期'
+          );
+
+        }
+
+
+        OUTBOUND.customStart=
+
+          s<
+          START_DATE
+
+          ? START_DATE
+
+          : s;
+
+
+        OUTBOUND.customEnd=
+          e;
+
+      }
+
+
+      if(
+        OUTBOUND.loading
+      ){
+
+        return;
+
+      }
+
+
+      OUTBOUND.loading=
+        true;
+
+
+      OUTBOUND.viewMode=
+        mode;
+
+
+      const list=
+        document.getElementById(
+          'outboundListV3'
+        );
+
+
+      if(list){
+
+        list.innerHTML=`
+
+          <div
+            class="card p-6 text-center text-gray-500">
+
+            正在读取统计...
+
+          </div>
+
+        `;
+
+      }
+
+
+      try{
+
+
+        const data=
+          await fetchStats();
+
+
+        OUTBOUND.rows=
+
+          mode===
+          'active'
+
+          ? activeRows(
+
+              data.period,
+
+              data.all
+
+            )
+
+          : zeroOrSlowRows(
+
+              data.period,
+
+              data.all,
+
+              mode
+
+            );
+
+
+        OUTBOUND.loaded=
+          true;
+
+
+        document
+          .getElementById(
+            'outboundControlsV3'
+          )
+          ?.classList
+          .remove(
+            'hidden'
+          );
+
+
+        renderOutboundV3();
+
+
+      }catch(
+        error
+      ){
+
+
+        console.error(
+          error
+        );
+
+
+        if(list){
+
+          list.innerHTML=`
+
+            <div
+              class="card p-4 text-red-600">
+
+              统计读取失败：
+
+              ${
+                esc(
+                  error
+                    ?.message||
+                  '未知错误'
+                )
+              }
+
+            </div>
+
+          `;
+
+        }
+
+
+        showError(
+
+          error
+            ?.message
+          ||
+          '统计读取失败'
+
+        );
+
+
+      }finally{
+
+
+        OUTBOUND.loading=
+          false;
+
+
+      }
+
+    };
+
+
+  function filtered(){
+
+
+    let rows=[
+      ...OUTBOUND.rows
+    ];
 
 
     if(
       OUTBOUND.search
     ){
 
-      rows =
-        rows.filter(row=>{
-
-          const text =
-            [
-              row.sku,
-              row.name
-            ]
-            .join(' ')
-            .toLowerCase();
-
-          return text
-            .includes(
-              OUTBOUND.search
-            );
-        });
-    }
-
-
-    if(
-      OUTBOUND.slowDays ===
-      '0'
-    ){
-
-      rows =
+      rows=
         rows.filter(
-          row =>
-            outSafeNumber(
-              row.periodQty,
-              0
-            ) === 0
+          r=>
+
+            `${r.sku} ${r.name}`
+
+              .toLowerCase()
+
+              .includes(
+                OUTBOUND.search
+              )
+
         );
 
-    }else if(
-      OUTBOUND.slowDays !==
-      'all'
-    ){
-
-      const days =
-        Number(
-          OUTBOUND.slowDays
-        );
-
-      rows =
-        rows.filter(
-          row =>
-
-            row.daysSince ===
-            null ||
-
-            row.daysSince >=
-            days
-        );
     }
 
 
     rows.sort(
-      (a,b)=>{
+      (
+        a,
+        b
+      )=>{
+
 
         if(
-          OUTBOUND.sort ===
+          OUTBOUND.sort===
           'out_asc'
         ){
 
           return (
-            a.periodQty -
+            a.periodQty-
             b.periodQty
           );
+
         }
 
 
         if(
-          OUTBOUND.sort ===
+          OUTBOUND.sort===
           'stock_desc'
         ){
 
           return (
-            b.stockQty -
+            b.stockQty-
             a.stockQty
           );
+
         }
 
 
         if(
-          OUTBOUND.sort ===
+          OUTBOUND.sort===
           'days_desc'
         ){
 
-          const ad =
-            a.daysSince ===
+
+          const ad=
+
+            a.daysSince===
             null
+
             ? 999999
+
             : a.daysSince;
 
-          const bd =
-            b.daysSince ===
+
+          const bd=
+
+            b.daysSince===
             null
+
             ? 999999
+
             : b.daysSince;
 
+
           return (
-            bd -
+            bd-
             ad
           );
+
         }
 
 
         if(
-          OUTBOUND.sort ===
+          OUTBOUND.sort===
           'sku_asc'
         ){
 
@@ -1189,475 +2113,249 @@
             .localeCompare(
               b.sku
             );
+
         }
 
 
         return (
-          b.periodQty -
+          b.periodQty-
           a.periodQty
         );
+
       }
     );
 
 
     return rows;
+
   }
 
 
-  /* =========================================================
-     切换周期
-  ========================================================= */
-
-  function refreshOutboundPeriodButtons(){
-
-    document
-      .querySelectorAll(
-        '[data-out-period]'
-      )
-      .forEach(button=>{
-
-        const active =
-          button
-            .getAttribute(
-              'data-out-period'
-            ) ===
-          OUTBOUND.period;
-
-        button
-          .classList
-          .toggle(
-            'btn-blue',
-            active
-          );
-
-        button
-          .classList
-          .toggle(
-            'btn-gray',
-            !active
-          );
-      });
+  function modeLabel(){
 
 
-    const customBox =
-      document.getElementById(
-        'outboundCustomRangeV1'
-      );
+    if(
+      OUTBOUND.viewMode===
+      'active'
+    ){
 
-    if(customBox){
+      return `${periodLabel()}有出货`;
 
-      customBox
-        .classList
-        .toggle(
-          'hidden',
-          OUTBOUND.period !==
-          'custom'
-        );
     }
+
+
+    if(
+      OUTBOUND.viewMode===
+      'zero'
+    ){
+
+      return `${periodLabel()}0出货`;
+
+    }
+
+
+    if(
+      OUTBOUND.viewMode
+        .startsWith(
+          'slow'
+        )
+    ){
+
+      return `${
+
+        OUTBOUND.viewMode
+          .replace(
+            'slow',
+            ''
+          )
+
+      }天未出货`;
+
+    }
+
+
+    return periodLabel();
+
   }
 
 
-  window.setOutboundPeriodV1 =
-    function(period){
-
-      OUTBOUND.period =
-        period;
-
-      refreshOutboundPeriodButtons();
-
-      if(
-        period !==
-        'custom'
-      ){
-
-        loadOutboundStatsV1();
-      }
-    };
-
-
-  window.applyOutboundCustomV1 =
+  window.renderOutboundV3=
     function(){
 
-      OUTBOUND.customStart =
-        document
-          .getElementById(
-            'outboundStartV1'
-          )
-          ?.value ||
-        OUTBOUND_START_DATE;
+
+      const rows=
+        filtered();
 
 
-      OUTBOUND.customEnd =
-        document
-          .getElementById(
-            'outboundEndV1'
-          )
-          ?.value ||
-        outLocalDateValue(
-          new Date()
+      const summary=
+        document.getElementById(
+          'outboundSummaryV3'
+        );
+
+
+      const list=
+        document.getElementById(
+          'outboundListV3'
         );
 
 
       if(
-        OUTBOUND.customStart <
-        OUTBOUND_START_DATE
-      ){
-
-        OUTBOUND.customStart =
-          OUTBOUND_START_DATE;
-      }
-
-
-      if(
-        OUTBOUND.customEnd <
-        OUTBOUND.customStart
-      ){
-
-        return showError(
-          '结束日期不能早于开始日期'
-        );
-      }
-
-
-      loadOutboundStatsV1();
-    };
-
-
-  /* =========================================================
-     从 Supabase 读取统计
-  ========================================================= */
-
-  window.loadOutboundStatsV1 =
-    async function(){
-
-      if(
-        !APP
-          ?.warehouse
-          ?.id
-      ){
-        return;
-      }
-
-
-      if(
-        OUTBOUND.loading
-      ){
-        return;
-      }
-
-
-      OUTBOUND.loading =
-        true;
-
-
-      const list =
-        document
-          .getElementById(
-            'outboundListV1'
-          );
-
-
-      if(list){
-
-        list.innerHTML = `
-          <div
-            class="card p-6 text-center text-gray-500">
-            正在读取出货统计...
-          </div>
-        `;
-      }
-
-
-      try{
-
-        const range =
-          getOutboundPeriodRange();
-
-
-        const tomorrow =
-          outAddDays(
-            new Date(),
-            1
-          );
-
-
-        const [
-          periodResult,
-          allResult
-        ] =
-        await Promise.all([
-
-          APP.sb.rpc(
-            'get_outbound_stats_v1',
-            {
-              p_warehouse_id:
-                APP.warehouse.id,
-
-              p_start:
-                range.start
-                  .toISOString(),
-
-              p_end:
-                range.end
-                  .toISOString()
-            }
-          ),
-
-          APP.sb.rpc(
-            'get_outbound_stats_v1',
-            {
-              p_warehouse_id:
-                APP.warehouse.id,
-
-              p_start:
-                OUTBOUND_START_ISO,
-
-              p_end:
-                tomorrow
-                  .toISOString()
-            }
-          )
-
-        ]);
-
-
-        if(
-          periodResult.error
-        ){
-          throw periodResult.error;
-        }
-
-
-        if(
-          allResult.error
-        ){
-          throw allResult.error;
-        }
-
-
-        OUTBOUND.periodStats =
-          periodResult.data ||
-          [];
-
-
-        OUTBOUND.allStats =
-          allResult.data ||
-          [];
-
-
-        OUTBOUND.rows =
-          mergeOutboundRows(
-            OUTBOUND.periodStats,
-            OUTBOUND.allStats
-          );
-
-
-        renderOutboundV1();
-
-
-      }catch(error){
-
-        console.error(
-          '出货统计读取失败',
-          error
-        );
-
-
-        if(list){
-
-          list.innerHTML = `
-            <div
-              class="card p-4 text-red-600">
-
-              统计读取失败：
-              ${
-                outEscape(
-                  error
-                    ?.message ||
-                  '未知错误'
-                )
-              }
-
-            </div>
-          `;
-        }
-
-
-        showError(
-          error
-            ?.message ||
-          '统计读取失败'
-        );
-
-
-      }finally{
-
-        OUTBOUND.loading =
-          false;
-      }
-    };
-
-
-  /* =========================================================
-     渲染统计列表
-  ========================================================= */
-
-  window.renderOutboundV1 =
-    function(){
-
-      const rows =
-        getFilteredOutboundRows();
-
-
-      const summary =
-        document
-          .getElementById(
-            'outboundSummaryV1'
-          );
-
-
-      const list =
-        document
-          .getElementById(
-            'outboundListV1'
-          );
-
-
-      if(
-        !summary ||
+        !summary||
         !list
       ){
+
         return;
+
       }
 
 
-      const totalOut =
+      const totalOut=
         rows.reduce(
-          (sum,row)=>
-            sum +
-            outSafeNumber(
-              row.periodQty,
+
+          (
+            s,
+            r
+          )=>
+
+            s+
+            n(
+              r.periodQty,
               0
             ),
+
           0
+
         );
 
 
-      const activeSku =
-        rows.filter(
-          row =>
-            row.periodQty >
-            0
-        ).length;
-
-
-      const zeroSku =
-        rows.filter(
-          row =>
-            row.periodQty <=
-            0
-        ).length;
-
-
-      const currentStock =
+      const stockTotal=
         rows.reduce(
-          (sum,row)=>
-            sum +
-            outSafeNumber(
-              row.stockQty,
+
+          (
+            s,
+            r
+          )=>
+
+            s+
+            n(
+              r.stockQty,
               0
             ),
+
           0
+
         );
 
 
-      summary.innerHTML = `
+      summary.innerHTML=`
 
-        <div class="stat">
+        <div
+          class="stat">
 
-          <div class="small">
+          <div
+            class="small">
+
             ${
-              outEscape(
-                outboundPeriodLabel()
+              esc(
+                modeLabel()
               )
-            }出货
+            }
+
           </div>
 
           <div
             class="stat-number">
+
             ${
-              outFormatNumber(
+              fmt(
+                rows.length
+              )
+            }
+
+          </div>
+
+        </div>
+
+
+        <div
+          class="stat">
+
+          <div
+            class="small">
+
+            ${
+              esc(
+                periodLabel()
+              )
+            }出货
+
+          </div>
+
+          <div
+            class="stat-number">
+
+            ${
+              fmt(
                 totalOut
               )
             }
+
           </div>
 
         </div>
 
 
-        <div class="stat">
+        <div
+          class="stat">
 
-          <div class="small">
-            有出货 SKU
+          <div
+            class="small">
+
+            当前库存合计
+
           </div>
 
           <div
             class="stat-number">
+
             ${
-              outFormatNumber(
-                activeSku
+              fmt(
+                stockTotal
               )
             }
+
           </div>
 
         </div>
 
 
-        <div class="stat">
+        <div
+          class="stat">
 
-          <div class="small">
-            0 出货 SKU
+          <div
+            class="small">
+
+            统计起点
+
           </div>
 
           <div
-            class="stat-number">
-            ${
-              outFormatNumber(
-                zeroSku
-              )
-            }
+            class="text-sm font-bold mt-2">
+
+            2026-10-01
+
           </div>
 
         </div>
 
-
-        <div class="stat">
-
-          <div class="small">
-            当前库存
-          </div>
-
-          <div
-            class="stat-number">
-            ${
-              outFormatNumber(
-                currentStock
-              )
-            }
-          </div>
-
-        </div>
       `;
-
-
-      refreshOutboundPeriodButtons();
 
 
       if(
         !rows.length
       ){
 
-        list.innerHTML = `
+        list.innerHTML=`
 
           <div
             class="card p-8 text-center text-gray-500">
@@ -1665,76 +2363,73 @@
             没有符合条件的 SKU
 
           </div>
+
         `;
 
         return;
+
       }
 
 
-      list.innerHTML =
+      list.innerHTML=
+
         rows
           .map(
             (
-              row,
-              index
+              r,
+              i
             )=>{
 
 
-              const zeroOut =
-                row.periodQty <=
-                0;
-
-
-              const neverOut =
-                !row.lastShippedAt;
-
-
-              let status =
+              let status=
                 '正常';
 
 
-              let statusClass =
+              let cls=
                 'badge-green';
 
 
               if(
-                neverOut
+                !r.lastShippedAt
               ){
 
-                status =
+                status=
                   '从未出货';
 
-                statusClass =
+                cls=
                   'badge-red';
 
               }else if(
-                row.daysSince >=
+                r.daysSince>=
                 30
               ){
 
-                status =
-                  `${row.daysSince}天未出货`;
+                status=
+                  `${r.daysSince}天未出货`;
 
-                statusClass =
+                cls=
                   'badge-red';
 
               }else if(
-                zeroOut
+                r.periodQty===
+                0
               ){
 
-                status =
-                  `${outboundPeriodLabel()}0出货`;
+                status=
+                  `${periodLabel()}0出货`;
 
-                statusClass =
+                cls=
                   'badge-yellow';
+
               }
 
 
-              const lastText =
-                row.lastShippedAt
+              const last=
+
+                r.lastShippedAt
 
                 ? new Date(
-                    row.lastShippedAt
+                    r.lastShippedAt
                   )
                   .toLocaleDateString(
                     'zh-CN'
@@ -1761,12 +2456,12 @@
                         class="font-bold break-all">
 
                         ${
-                          index+1
+                          i+1
                         }.
 
                         ${
-                          outEscape(
-                            row.sku
+                          esc(
+                            r.sku
                           )
                         }
 
@@ -1777,22 +2472,23 @@
                         class="small mt-1 break-all">
 
                         ${
-                          outEscape(
-                            row.name ||
-                            row.sku
+                          esc(
+                            r.name||
+                            r.sku
                           )
                         }
 
                       </div>
 
+
                     </div>
 
 
                     <span
-                      class="badge ${statusClass}">
+                      class="badge ${cls}">
 
                       ${
-                        outEscape(
+                        esc(
                           status
                         )
                       }
@@ -1810,27 +2506,30 @@
                     <div
                       class="bg-gray-50 rounded-xl p-3">
 
+
                       <div
                         class="small">
 
                         ${
-                          outEscape(
-                            outboundPeriodLabel()
+                          esc(
+                            periodLabel()
                           )
                         }出货
 
                       </div>
 
+
                       <div
                         class="text-xl font-bold">
 
                         ${
-                          outFormatNumber(
-                            row.periodQty
+                          fmt(
+                            r.periodQty
                           )
                         }
 
                       </div>
+
 
                     </div>
 
@@ -1838,21 +2537,26 @@
                     <div
                       class="bg-gray-50 rounded-xl p-3">
 
+
                       <div
                         class="small">
+
                         当前库存
+
                       </div>
+
 
                       <div
                         class="text-xl font-bold">
 
                         ${
-                          outFormatNumber(
-                            row.stockQty
+                          fmt(
+                            r.stockQty
                           )
                         }
 
                       </div>
+
 
                     </div>
 
@@ -1863,17 +2567,19 @@
                   <div
                     class="small mt-3">
 
-                    出货次数：
+                    记录次数：
+
                     ${
-                      outFormatNumber(
-                        row.shipmentCount
+                      fmt(
+                        r.shipmentCount
                       )
                     }
 
                     · 最后出货：
+
                     ${
-                      outEscape(
-                        lastText
+                      esc(
+                        last
                       )
                     }
 
@@ -1882,7 +2588,7 @@
 
                   <button
                     class="btn btn-gray w-full mt-3"
-                    onclick='openOutboundSkuDetailV1(${JSON.stringify(row.sku)})'>
+                    onclick='openOutboundDetailV3(${JSON.stringify(r.sku)})'>
 
                     查看每日明细
 
@@ -1890,33 +2596,24 @@
 
 
                 </div>
+
               `;
 
             }
           )
           .join('');
+
     };
 
 
-  /* =========================================================
-     SKU 每日出货明细
-  ========================================================= */
-
-  window.openOutboundSkuDetailV1 =
-    async function(sku){
+  window.openOutboundDetailV3=
+    async function(
+      sku
+    ){
 
 
-      if(
-        !APP
-          ?.warehouse
-          ?.id
-      ){
-        return;
-      }
-
-
-      const range =
-        getOutboundPeriodRange();
+      const r=
+        range();
 
 
       openModal(`
@@ -1933,7 +2630,7 @@
           class="font-semibold break-all">
 
           ${
-            outEscape(
+            esc(
               sku
             )
           }
@@ -1942,19 +2639,7 @@
 
 
         <div
-          class="small mt-1">
-
-          ${
-            outEscape(
-              outboundPeriodLabel()
-            )
-          }
-
-        </div>
-
-
-        <div
-          id="outboundDailyDetailV1"
+          id="outDetailV3"
           class="mt-4">
 
           正在读取...
@@ -1969,6 +2654,7 @@
           关闭
 
         </button>
+
       `);
 
 
@@ -1978,9 +2664,11 @@
         const {
           data,
           error
-        } =
+        }=
         await APP.sb.rpc(
+
           'get_outbound_daily_v1',
+
           {
 
             p_warehouse_id:
@@ -1990,37 +2678,33 @@
               sku,
 
             p_start:
-              range.start
+              r.start
                 .toISOString(),
 
             p_end:
-              range.end
+              r.end
                 .toISOString()
+
           }
+
         );
 
 
         if(error){
+
           throw error;
+
         }
 
 
-        const container =
-          document
-            .getElementById(
-              'outboundDailyDetailV1'
-            );
+        const el=
+          document.getElementById(
+            'outDetailV3'
+          );
 
 
-        if(
-          !container
-        ){
-          return;
-        }
-
-
-        const rows =
-          data ||
+        const rows=
+          data||
           [];
 
 
@@ -2028,7 +2712,7 @@
           !rows.length
         ){
 
-          container.innerHTML = `
+          el.innerHTML=`
 
             <div
               class="bg-gray-50 rounded-xl p-4 text-center text-gray-500">
@@ -2036,114 +2720,126 @@
               这个时间范围内没有出货
 
             </div>
+
           `;
 
           return;
+
         }
 
 
-        container.innerHTML =
+        el.innerHTML=
+
           rows
-            .map(row=>`
-
-              <div
-                class="flex items-center justify-between border-b py-3">
-
-                <div>
-
-                  ${
-                    outEscape(
-                      row.out_date
-                    )
-                  }
-
-                </div>
-
+            .map(
+              x=>`
 
                 <div
-                  class="text-right">
+                  class="flex items-center justify-between border-b py-3">
 
-                  <div
-                    class="font-bold">
+
+                  <div>
 
                     ${
-                      outFormatNumber(
-                        row.total_qty
+                      esc(
+                        x.out_date
                       )
-                    } 件
+                    }
 
                   </div>
 
 
                   <div
-                    class="small">
+                    class="text-right">
 
-                    ${
-                      outFormatNumber(
-                        row.shipment_count
-                      )
-                    } 次
+
+                    <div
+                      class="font-bold">
+
+                      ${
+                        fmt(
+                          x.total_qty
+                        )
+                      } 件
+
+                    </div>
+
+
+                    <div
+                      class="small">
+
+                      ${
+                        fmt(
+                          x.shipment_count
+                        )
+                      } 条记录
+
+                    </div>
+
 
                   </div>
+
 
                 </div>
 
-              </div>
-            `)
+              `
+            )
             .join('');
 
 
-      }catch(error){
+      }catch(
+        error
+      ){
 
 
-        const container =
-          document
-            .getElementById(
-              'outboundDailyDetailV1'
-            );
+        const el=
+          document.getElementById(
+            'outDetailV3'
+          );
 
 
-        if(container){
+        if(el){
 
-          container.innerHTML = `
+          el.innerHTML=`
 
             <div
               class="text-red-600">
 
               ${
-                outEscape(
+                esc(
                   error
-                    ?.message ||
+                    ?.message||
                   '读取失败'
                 )
               }
 
             </div>
+
           `;
+
         }
+
       }
+
     };
 
 
-  /* =========================================================
-     补登记未入库出货
-  ========================================================= */
-
-  window.openManualOutboundV1 =
+  window.openManualOutboundV3=
     function(){
 
 
-      const now =
+      const now=
         new Date();
 
 
-      const date =
-        outLocalDateValue(
+      const date=
+        dateValue(
           now
         );
 
 
-      const time =
+      const time=
+
         `${
 
           String(
@@ -2172,7 +2868,7 @@
         <h2
           class="text-xl font-bold mb-2">
 
-          ➕ 补登记出货
+          ✏️ 调整出货
 
         </h2>
 
@@ -2180,11 +2876,8 @@
         <div
           class="bg-yellow-50 rounded-xl p-3 text-sm mb-4">
 
-          用于没有入库、但实际已经出货的商品。
-
-          保存后只计入出货统计，
-
-          不会增加或减少库存。
+          用于漏登记或纠正统计。需要管理员密码。
+          这里不会直接改变库存数量。
 
         </div>
 
@@ -2192,13 +2885,44 @@
         <label
           class="block text-sm font-semibold mb-2">
 
+          操作 *
+
+        </label>
+
+
+        <select
+          id="outAdjustTypeV3">
+
+
+          <option
+            value="add">
+
+            ➕ 增加出货
+
+          </option>
+
+
+          <option
+            value="subtract">
+
+            ➖ 减少 / 冲销出货
+
+          </option>
+
+
+        </select>
+
+
+        <label
+          class="block text-sm font-semibold mb-2 mt-3">
+
           SKU *
 
         </label>
 
 
         <input
-          id="manualOutboundSkuV1"
+          id="outAdjustSkuV3"
           placeholder="输入 SKU">
 
 
@@ -2211,24 +2935,24 @@
 
 
         <input
-          id="manualOutboundNameV1"
+          id="outAdjustNameV3"
           placeholder="商品名称">
 
 
         <label
           class="block text-sm font-semibold mb-2 mt-3">
 
-          出货数量 *
+          数量 *
 
         </label>
 
 
         <input
-          id="manualOutboundQtyV1"
+          id="outAdjustQtyV3"
           type="number"
           min="1"
           step="1"
-          placeholder="数量">
+          placeholder="例如：5">
 
 
         <div
@@ -2237,23 +2961,27 @@
 
           <div>
 
+
             <label
               class="block text-sm font-semibold mb-2">
 
-              出货日期 *
+              日期 *
 
             </label>
 
+
             <input
-              id="manualOutboundDateV1"
+              id="outAdjustDateV3"
               type="date"
               min="2026-10-01"
               value="${date}">
+
 
           </div>
 
 
           <div>
+
 
             <label
               class="block text-sm font-semibold mb-2">
@@ -2262,10 +2990,12 @@
 
             </label>
 
+
             <input
-              id="manualOutboundTimeV1"
+              id="outAdjustTimeV3"
               type="time"
               value="${time}">
+
 
           </div>
 
@@ -2276,23 +3006,23 @@
         <label
           class="block text-sm font-semibold mb-2 mt-3">
 
-          备注
+          原因 / 备注 *
 
         </label>
 
 
         <textarea
-          id="manualOutboundNoteV1"
+          id="outAdjustNoteV3"
           rows="3"
-          placeholder="例如：未入库直接出货">
+          placeholder="例如：昨天漏登记 / 多登记5件，现冲销">
         </textarea>
 
 
         <button
           class="btn btn-blue w-full mt-4"
-          onclick="saveManualOutboundV1()">
+          onclick="saveManualOutboundV3()">
 
-          保存出货记录
+          确认调整
 
         </button>
 
@@ -2304,71 +3034,88 @@
           取消
 
         </button>
+
+
       `);
+
     };
 
 
-  window.saveManualOutboundV1 =
+  window.saveManualOutboundV3=
     async function(){
 
 
-      const sku =
+      const type=
         document
           .getElementById(
-            'manualOutboundSkuV1'
+            'outAdjustTypeV3'
+          )
+          ?.value;
+
+
+      const sku=
+        document
+          .getElementById(
+            'outAdjustSkuV3'
           )
           ?.value
           .trim();
 
 
-      const name =
+      const name=
         document
           .getElementById(
-            'manualOutboundNameV1'
+            'outAdjustNameV3'
           )
           ?.value
-          .trim() ||
+          .trim()
+        ||
         null;
 
 
-      const qty =
+      const qty=
         Math.floor(
-          outSafeNumber(
+
+          n(
+
             document
               .getElementById(
-                'manualOutboundQtyV1'
+                'outAdjustQtyV3'
               )
               ?.value,
+
             0
+
           )
+
         );
 
 
-      const date =
+      const date=
         document
           .getElementById(
-            'manualOutboundDateV1'
+            'outAdjustDateV3'
           )
           ?.value;
 
 
-      const time =
+      const time=
         document
           .getElementById(
-            'manualOutboundTimeV1'
+            'outAdjustTimeV3'
           )
-          ?.value ||
+          ?.value
+        ||
         '12:00';
 
 
-      const note =
+      const note=
         document
           .getElementById(
-            'manualOutboundNoteV1'
+            'outAdjustNoteV3'
           )
           ?.value
-          .trim() ||
-        null;
+          .trim();
 
 
       if(
@@ -2378,16 +3125,18 @@
         return showError(
           'SKU不能为空'
         );
+
       }
 
 
       if(
-        qty <= 0
+        qty<=0
       ){
 
         return showError(
           '数量必须大于0'
         );
+
       }
 
 
@@ -2396,23 +3145,36 @@
       ){
 
         return showError(
-          '请选择出货日期'
+          '请选择日期'
         );
+
       }
 
 
       if(
-        date <
-        OUTBOUND_START_DATE
+        date<
+        START_DATE
       ){
 
         return showError(
           '统计从2026-10-01开始'
         );
+
       }
 
 
-      const shippedAt =
+      if(
+        !note
+      ){
+
+        return showError(
+          '必须填写调整原因'
+        );
+
+      }
+
+
+      const shippedAt=
         new Date(
           `${date}T${time}:00`
         );
@@ -2420,14 +3182,70 @@
 
       if(
         Number.isNaN(
-          shippedAt
-            .getTime()
+          shippedAt.getTime()
         )
       ){
 
         return showError(
-          '出货时间格式错误'
+          '时间格式错误'
         );
+
+      }
+
+
+      const pin=
+        await verifyWarehouseAdminPassword(
+
+          type===
+          'subtract'
+
+          ? `减少出货：${sku} ${qty}件`
+
+          : `补登记出货：${sku} ${qty}件`
+
+        );
+
+
+      if(
+        !pin
+      ){
+
+        return;
+
+      }
+
+
+      const delta=
+
+        type===
+        'subtract'
+
+        ? -qty
+
+        : qty;
+
+
+      if(
+        !confirm(
+
+          `${
+
+            type===
+            'subtract'
+
+            ? '减少/冲销'
+
+            : '增加'
+
+          } ${sku} ${qty} 件？
+
+原因：${note}`
+
+        )
+      ){
+
+        return;
+
       }
 
 
@@ -2435,15 +3253,17 @@
 
 
         showInfo(
-          '正在保存出货记录...'
+          '正在保存出货调整...'
         );
 
 
         const {
           error
-        } =
+        }=
         await APP.sb.rpc(
-          'record_manual_outbound_v1',
+
+          'adjust_manual_outbound_v2',
+
           {
 
             p_warehouse_id:
@@ -2452,8 +3272,8 @@
             p_sku:
               sku,
 
-            p_qty:
-              qty,
+            p_delta:
+              delta,
 
             p_shipped_at:
               shippedAt
@@ -2463,13 +3283,22 @@
               name,
 
             p_note:
-              note
+              note,
+
+            p_admin_pin:
+              String(
+                pin
+              )
+
           }
+
         );
 
 
         if(error){
+
           throw error;
+
         }
 
 
@@ -2477,41 +3306,59 @@
 
 
         showOk(
-          '✅ 已补登记出货，不会改变库存'
+
+          type===
+          'subtract'
+
+          ? `✅ 已冲销 ${qty} 件出货`
+
+          : `✅ 已补登记 ${qty} 件出货`
+
         );
 
 
-        await loadOutboundStatsV1();
+        if(
+          OUTBOUND.loaded
+        ){
+
+          await loadOutboundV3(
+            OUTBOUND.viewMode
+          );
+
+        }
 
 
-      }catch(error){
+      }catch(
+        error
+      ){
 
 
         console.error(
-          '补登记失败',
           error
         );
 
 
         showError(
+
           error
-            ?.message ||
-          '补登记失败'
+            ?.message
+          ||
+          '出货调整失败'
+
         );
+
+
       }
+
     };
 
 
-  /* =========================================================
-     导出 Excel
-  ========================================================= */
-
-  window.exportOutboundExcelV1 =
+  window.exportOutboundV3=
     function(){
 
 
-      const rows =
-        getFilteredOutboundRows();
+      const rows=
+        filtered();
 
 
       if(
@@ -2521,6 +3368,7 @@
         return showError(
           '没有可以导出的数据'
         );
+
       }
 
 
@@ -2531,46 +3379,44 @@
         return showError(
           'Excel组件未加载'
         );
+
       }
 
 
-      const data =
+      const data=
         rows.map(
+
           (
-            row,
-            index
+            r,
+            i
           )=>({
 
             '序号':
-              index+1,
+              i+1,
 
             'SKU':
-              row.sku,
+              r.sku,
 
             '商品名称':
-              row.name ||
+              r.name||
               '',
 
-            [`${outboundPeriodLabel()}出货量`]:
+            [`${periodLabel()}出货量`]:
               Math.round(
-                row.periodQty
-              ),
-
-            '出货次数':
-              Math.round(
-                row.shipmentCount
+                r.periodQty
               ),
 
             '当前库存':
               Math.round(
-                row.stockQty
+                r.stockQty
               ),
 
             '最后出货时间':
-              row.lastShippedAt
+
+              r.lastShippedAt
 
               ? new Date(
-                  row.lastShippedAt
+                  r.lastShippedAt
                 )
                 .toLocaleString(
                   'zh-CN'
@@ -2579,22 +3425,25 @@
               : '从未出货',
 
             '未出货天数':
-              row.daysSince ===
+
+              r.daysSince===
               null
 
               ? '从未出货'
 
-              : row.daysSince
+              : r.daysSince
+
           })
+
         );
 
 
-      const wb =
+      const wb=
         XLSX.utils
           .book_new();
 
 
-      const ws =
+      const ws=
         XLSX.utils
           .json_to_sheet(
             data
@@ -2603,110 +3452,104 @@
 
       XLSX.utils
         .book_append_sheet(
+
           wb,
+
           ws,
+
           '出货统计'
-        );
 
-
-      const today =
-        outLocalDateValue(
-          new Date()
         );
 
 
       XLSX.writeFile(
+
         wb,
-        `出货统计_${outboundPeriodLabel()}_${today}.xlsx`
+
+        `出货统计_${modeLabel()}_${dateValue(new Date())}.xlsx`
+
       );
+
     };
 
 
-  /* =========================================================
-     初始化
-  ========================================================= */
-
-  function initOutboundModule(){
-
-    injectOutboundUI();
+  function init(){
 
 
-    const today =
-      outLocalDateValue(
+    inject();
+
+
+    OUTBOUND.customEnd=
+      dateValue(
         new Date()
       );
 
 
-    OUTBOUND.customEnd =
-      today;
+    const s=
+      document.getElementById(
+        'outStartV3'
+      );
 
 
-    const startInput =
-      document
-        .getElementById(
-          'outboundStartV1'
-        );
+    const e=
+      document.getElementById(
+        'outEndV3'
+      );
 
 
-    const endInput =
-      document
-        .getElementById(
-          'outboundEndV1'
-        );
+    if(s){
 
+      s.value=
+        START_DATE;
 
-    if(startInput){
-
-      startInput.value =
-        OUTBOUND_START_DATE;
     }
 
 
-    if(endInput){
+    if(e){
 
-      endInput.value =
-        today;
+      e.value=
+        OUTBOUND.customEnd;
+
     }
 
 
-    refreshOutboundPeriodButtons();
+    updatePeriodButtons();
 
 
-    setTimeout(
-      ()=>{
+    if(
+      APP
+        ?.currentPage===
+      'outbound'
+    ){
 
-        if(
-          APP
-            ?.currentPage ===
-          'outbound'
-        ){
+      window
+        .enforceCurrentPageVisibility();
 
-          window
-            .enforceCurrentPageVisibility();
 
-          loadOutboundStatsV1();
-        }
+      resetPage();
 
-      },
-      300
-    );
+    }
+
   }
 
 
   if(
-    document.readyState ===
+    document.readyState===
     'loading'
   ){
 
-    document
-      .addEventListener(
-        'DOMContentLoaded',
-        initOutboundModule
-      );
+    document.addEventListener(
+
+      'DOMContentLoaded',
+
+      init
+
+    );
 
   }else{
 
-    initOutboundModule();
+    init();
+
   }
 
 })();
