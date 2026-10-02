@@ -14758,5 +14758,915 @@ APP.sb.auth.onAuthStateChange(
 </script>
 <script src="./v1095_patch.js?v=1099"></script>
 <script src="./outbound_stats_v1.js?v=1"></script>
+<script>
+/* =========================================================
+   扫码入库 V11.0
+   功能：
+   1. 扫到 SKU 后不再直接默认旧库位
+   2. 无论 SKU 有 1 个还是多个库位，都先选择
+   3. 可以选择原有库位继续增加
+   4. 可以新增到“其他库位”
+   5. 同 SKU + 新库位 = 新建一条库存记录
+========================================================= */
+
+window.openExistingInboundV110 = function(id){
+
+  closeModal();
+
+  stockAction(
+    id,
+    'in'
+  );
+
+  setTimeout(()=>{
+
+    const qty =
+      document.getElementById(
+        'stockQty'
+      );
+
+    if(qty){
+
+      qty.value = '1';
+
+      qty.focus();
+
+      qty.select();
+
+    }
+
+    const note =
+      document.getElementById(
+        'stockNote'
+      );
+
+    if(
+      note &&
+      !note.value
+    ){
+
+      note.value =
+        '扫码入库';
+
+    }
+
+  },80);
+
+};
+
+
+window.openInboundBinChooserV110 =
+function(sku,matches){
+
+  APP.inboundSkuV110 =
+    String(
+      sku ||
+      ''
+    ).trim();
+
+  APP.inboundMatchesV110 =
+    matches ||
+    [];
+
+
+  let options = '';
+
+
+  (
+    matches ||
+    []
+  )
+  .forEach(item=>{
+
+    options += `
+
+      <button
+        class="btn btn-gray w-full mb-2 text-left"
+        onclick="openExistingInboundV110('${item.id}')">
+
+        <div
+          class="font-bold">
+
+          📍 ${
+            escapeHtml(
+              item.bin ||
+              '未设置货位'
+            )
+          }
+
+        </div>
+
+        <div
+          class="small mt-1">
+
+          SKU：
+          ${
+            escapeHtml(
+              item.sku ||
+              ''
+            )
+          }
+
+          · 当前库存
+
+          <strong>
+            ${
+              safeNumber(
+                item.qty,
+                0
+              )
+            }
+          </strong>
+
+        </div>
+
+      </button>
+
+    `;
+
+  });
+
+
+  openModal(`
+
+    <div
+      class="flex items-center justify-between mb-3">
+
+      <div>
+
+        <h2
+          class="text-xl font-bold">
+
+          📥 选择入库位置
+
+        </h2>
+
+        <div
+          class="small mt-1">
+
+          SKU：
+          <strong>
+            ${
+              escapeHtml(
+                sku
+              )
+            }
+          </strong>
+
+        </div>
+
+      </div>
+
+      <button
+        onclick="closeModal()"
+        class="text-gray-400 text-2xl">
+
+        ×
+
+      </button>
+
+    </div>
+
+
+    <div
+      class="bg-green-50 rounded-xl p-3 mb-3 text-sm">
+
+      请选择本次货物放在哪个库位。
+
+      <br>
+
+      如果要放到新的货架，请点下面的
+      <strong>“新增其他库位”</strong>。
+
+    </div>
+
+
+    ${
+      options
+    }
+
+
+    <button
+      class="btn btn-blue w-full mt-2"
+      onclick="openInboundNewBinV110()">
+
+      ➕ 新增其他库位
+
+    </button>
+
+
+    <button
+      class="btn btn-gray w-full mt-2"
+      onclick="closeModal()">
+
+      取消
+
+    </button>
+
+  `);
+
+};
+
+
+window.openInboundNewBinV110 =
+function(){
+
+  const sku =
+    String(
+      APP.inboundSkuV110 ||
+      ''
+    ).trim();
+
+
+  const matches =
+    APP.inboundMatchesV110 ||
+    [];
+
+
+  if(
+    !sku
+  ){
+
+    return showError(
+      '没有找到扫码 SKU'
+    );
+
+  }
+
+
+  const first =
+    matches[0] ||
+    {};
+
+
+  const name =
+    String(
+      first.name ||
+      sku
+    ).trim() ||
+    sku;
+
+
+  const alert =
+    Math.max(
+      0,
+      safeNumber(
+        first.alert ??
+        first.alert_qty,
+        10
+      )
+    );
+
+
+  APP.inboundNewBinContextV110 = {
+
+    sku,
+
+    name,
+
+    alert
+
+  };
+
+
+  openModal(`
+
+    <div
+      class="flex items-center justify-between mb-3">
+
+      <div>
+
+        <h2
+          class="text-xl font-bold">
+
+          ➕ 新增其他库位
+
+        </h2>
+
+        <div
+          class="small mt-1">
+
+          同一个 SKU 可以存放在多个库位
+
+        </div>
+
+      </div>
+
+      <button
+        onclick="closeModal()"
+        class="text-gray-400 text-2xl">
+
+        ×
+
+      </button>
+
+    </div>
+
+
+    <div
+      class="bg-blue-50 rounded-xl p-3 mb-4">
+
+      <div
+        class="small">
+
+        SKU
+
+      </div>
+
+      <div
+        class="font-bold break-all">
+
+        ${
+          escapeHtml(
+            sku
+          )
+        }
+
+      </div>
+
+      <div
+        class="small mt-2">
+
+        商品名称
+
+      </div>
+
+      <div
+        class="font-semibold break-all">
+
+        ${
+          escapeHtml(
+            name
+          )
+        }
+
+      </div>
+
+    </div>
+
+
+    <label
+      class="block text-sm font-semibold mb-2">
+
+      新库位 *
+
+    </label>
+
+    <input
+      id="inboundNewBinV110"
+      placeholder="例如：B2-3-01">
+
+
+    <label
+      class="block text-sm font-semibold mb-2 mt-4">
+
+      本次入库数量 *
+
+    </label>
+
+    <input
+      id="inboundNewQtyV110"
+      type="number"
+      min="1"
+      step="1"
+      value="1">
+
+
+    <label
+      class="block text-sm font-semibold mb-2 mt-4">
+
+      备注
+
+    </label>
+
+    <textarea
+      id="inboundNewNoteV110"
+      rows="3"
+      placeholder="例如：扫码入库">扫码入库</textarea>
+
+
+    <button
+      class="btn btn-green w-full mt-4"
+      onclick="saveInboundNewBinV110()">
+
+      📥 确认入库到新库位
+
+    </button>
+
+
+    <button
+      class="btn btn-gray w-full mt-2"
+      onclick="openInboundBinChooserV110(
+        APP.inboundSkuV110,
+        APP.inboundMatchesV110
+      )">
+
+      返回选择库位
+
+    </button>
+
+  `);
+
+
+  setTimeout(()=>{
+
+    const input =
+      document.getElementById(
+        'inboundNewBinV110'
+      );
+
+    if(input){
+
+      input.focus();
+
+    }
+
+  },80);
+
+};
+
+
+window.saveInboundNewBinV110 =
+async function(){
+
+  const ctx =
+    APP.inboundNewBinContextV110;
+
+
+  if(
+    !ctx ||
+    !ctx.sku
+  ){
+
+    return showError(
+      '扫码商品信息已经失效，请重新扫描'
+    );
+
+  }
+
+
+  const bin =
+    String(
+      document
+        .getElementById(
+          'inboundNewBinV110'
+        )
+        ?.value ||
+      ''
+    ).trim();
+
+
+  const qty =
+    Math.floor(
+      safeNumber(
+        document
+          .getElementById(
+            'inboundNewQtyV110'
+          )
+          ?.value,
+        0
+      )
+    );
+
+
+  const note =
+    String(
+      document
+        .getElementById(
+          'inboundNewNoteV110'
+        )
+        ?.value ||
+      ''
+    ).trim();
+
+
+  if(
+    !bin
+  ){
+
+    return showError(
+      '请输入新库位'
+    );
+
+  }
+
+
+  if(
+    qty <= 0
+  ){
+
+    return showError(
+      '入库数量必须大于0'
+    );
+
+  }
+
+
+  /*
+   * 防止用户输入一个已经存在的库位，
+   * 从而制造重复 SKU + 库位。
+   */
+  const existing =
+    activeInventory()
+      .find(item=>
+
+        normalizeShippingKey(
+          item.sku
+        )
+        ===
+        normalizeShippingKey(
+          ctx.sku
+        )
+
+        &&
+
+        String(
+          item.bin ||
+          ''
+        )
+        .trim()
+        .toLowerCase()
+        ===
+        bin
+          .toLowerCase()
+
+      );
+
+
+  if(
+    existing
+  ){
+
+    showInfo(
+      '这个 SKU 在该库位已经存在，正在切换为原库位入库...'
+    );
+
+    closeModal();
+
+    stockAction(
+      existing.id,
+      'in'
+    );
+
+    setTimeout(()=>{
+
+      const qtyInput =
+        document.getElementById(
+          'stockQty'
+        );
+
+      if(qtyInput){
+
+        qtyInput.value =
+          String(
+            qty
+          );
+
+      }
+
+
+      const noteInput =
+        document.getElementById(
+          'stockNote'
+        );
+
+      if(noteInput){
+
+        noteInput.value =
+          note ||
+          '扫码入库';
+
+      }
+
+    },80);
+
+    return;
+
+  }
+
+
+  try{
+
+    showInfo(
+      isSystemSuperAdminV109()
+        ? '正在新增库位并入库...'
+        : '正在提交新增库位入库申请...'
+    );
+
+
+    const result =
+      await submitInventoryActionV109(
+
+        'create',
+
+        null,
+
+        {
+
+          sku:
+            ctx.sku,
+
+          name:
+            ctx.name ||
+            ctx.sku,
+
+          bin,
+
+          qty,
+
+          target_qty:
+            qty,
+
+          alert:
+            ctx.alert ??
+            10,
+
+          note:
+            note ||
+            '扫码入库新增库位'
+
+        }
+
+      );
+
+
+    closeModal();
+
+
+    if(
+      result.executed
+    ){
+
+      await loadInventory();
+
+      renderInventoryList();
+
+      renderHome();
+
+      try{
+
+        await loadLogs({
+          silent:true
+        });
+
+      }catch(e){}
+
+
+      showOk(
+        `✅ 入库成功：${ctx.sku} → ${bin}，${qty} 件`
+      );
+
+    }else{
+
+      showOk(
+        '✅ 新库位入库申请已提交，管理员批准后生效'
+      );
+
+    }
+
+
+  }catch(error){
+
+    console.error(
+      '扫码新增库位失败',
+      error
+    );
+
+    showError(
+      error.message ||
+      '新增库位入库失败'
+    );
+
+  }
+
+};
+
+
+/*
+ * 覆盖原来的扫码入库处理。
+ * 最大区别：
+ * 即使只有一个旧库位，也必须先让用户选择
+ * “原库位”或者“新增其他库位”。
+ */
+window.startInboundScanner =
+async function(){
+
+  if(
+    !window.Html5Qrcode
+  ){
+
+    return showError(
+      '扫码组件加载失败'
+    );
+
+  }
+
+
+  try{
+
+    if(
+      APP.scannerRunning
+    ){
+
+      await stopScanner();
+
+    }
+
+
+    APP.scanner =
+      createWarehouseScanner(
+        'reader'
+      );
+
+
+    APP.scannerRunning =
+      true;
+
+
+    await APP.scanner.start(
+
+      {
+        facingMode:
+          'environment'
+      },
+
+      warehouseCameraScanConfig(),
+
+      async decodedText=>{
+
+        const raw =
+          String(
+            decodedText ||
+            ''
+          ).trim();
+
+
+        if(
+          !raw
+        ){
+
+          return;
+
+        }
+
+
+        await stopScanner();
+
+
+        let resolvedSku =
+          await resolveScannedSkuWithAlias(
+
+            raw,
+
+            activeInventory()
+              .map(
+                item=>
+                  item.sku
+              )
+
+          );
+
+
+        if(
+          !resolvedSku
+        ){
+
+          resolvedSku =
+            await promptBindUnknownBarcode(
+
+              raw,
+
+              activeInventory()
+                .map(
+                  item=>
+                    item.sku
+                )
+
+            );
+
+        }
+
+
+        const matches =
+          activeInventory()
+
+            .filter(item=>
+
+              resolvedSku
+
+              &&
+
+              normalizeShippingKey(
+                item.sku
+              )
+              ===
+              normalizeShippingKey(
+                resolvedSku
+              )
+
+            )
+
+            .sort(
+              (
+                a,
+                b
+              )=>
+
+                naturalCompare(
+
+                  a.bin ||
+                  '',
+
+                  b.bin ||
+                  ''
+
+                )
+
+            );
+
+
+        /*
+         * SKU 完全不存在：
+         * 继续沿用原来的安全逻辑，
+         * 不自动创建陌生 SKU。
+         */
+        if(
+          !matches.length
+        ){
+
+          closeModal();
+
+
+          showError(
+            `库存中找不到 SKU：${raw}`
+          );
+
+
+          showPage(
+            'inventory'
+          );
+
+
+          const search =
+            document.getElementById(
+              'inventorySearch'
+            );
+
+
+          if(search){
+
+            search.value =
+              raw;
+
+            renderInventoryList();
+
+          }
+
+
+          return;
+
+        }
+
+
+        /*
+         * 关键修改：
+         * 无论只有1个还是多个库位，
+         * 都先显示选择页面。
+         */
+        window.openInboundBinChooserV110(
+
+          resolvedSku,
+
+          matches
+
+        );
+
+      },
+
+      ()=>{}
+
+    );
+
+
+  }catch(error){
+
+    APP.scannerRunning =
+      false;
+
+
+    console.error(
+      error
+    );
+
+
+    showError(
+      '无法打开摄像头，请检查手机浏览器摄像头权限'
+    );
+
+  }
+
+};
+
+</script>
 </body>
 </html>
