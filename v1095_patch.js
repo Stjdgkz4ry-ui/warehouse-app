@@ -2780,8 +2780,8 @@
                   'shipping_labels'
                 )
                 .update({
-                  storage_path:null
-                })
+  storage_path:''
+})
                 .eq(
                   'warehouse_id',
                   APP.warehouse.id
