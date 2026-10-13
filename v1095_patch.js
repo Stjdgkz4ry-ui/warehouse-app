@@ -1806,3 +1806,456 @@
   );
 
 })();
+/* =========================================================
+   V11.3 面单 Storage 安全清理
+   放到 v1095_patch.js 最底部
+   - 只清理 7 天前已完成订单的 PDF
+   - 不删订单 / SKU / Tracking / 出货统计 / 库存 / 流水
+========================================================= */
+
+(function(){
+
+  const KEEP_DAYS = 7;
+
+  async function fetchAllCompletedOrdersForCleanup(){
+
+    if(!APP.warehouse?.id){
+      throw new Error('请先选择仓库');
+    }
+
+    const all = [];
+    const pageSize = 1000;
+    let from = 0;
+
+    while(true){
+
+      const {data,error} =
+        await APP.sb
+          .from('shipping_orders')
+          .select(
+            'id,status,is_archived,created_at,packed_at,shipped_at,archived_at'
+          )
+          .eq(
+            'warehouse_id',
+            APP.warehouse.id
+          )
+          .order(
+            'created_at',
+            {ascending:true}
+          )
+          .range(
+            from,
+            from + pageSize - 1
+          );
+
+      if(error){
+        throw error;
+      }
+
+      const rows = data || [];
+
+      all.push(...rows);
+
+      if(rows.length < pageSize){
+        break;
+      }
+
+      from += pageSize;
+    }
+
+    return all;
+  }
+
+
+  function completedTimeV113(order){
+
+    const value =
+      order.shipped_at ||
+      order.archived_at ||
+      order.packed_at ||
+      null;
+
+    if(!value){
+      return null;
+    }
+
+    const time =
+      new Date(value);
+
+    if(
+      Number.isNaN(
+        time.getTime()
+      )
+    ){
+      return null;
+    }
+
+    return time;
+  }
+
+
+  function isEligibleOrderV113(order,cutoff){
+
+    const status =
+      String(
+        order.status || ''
+      ).toLowerCase();
+
+    const completed =
+      status === 'packed' ||
+      status === 'shipped' ||
+      order.is_archived === true;
+
+    if(!completed){
+      return false;
+    }
+
+    const doneAt =
+      completedTimeV113(order);
+
+    if(!doneAt){
+      return false;
+    }
+
+    return doneAt < cutoff;
+  }
+
+
+  async function fetchLabelsForOrdersV113(orderIds){
+
+    if(!orderIds.length){
+      return [];
+    }
+
+    const result = [];
+    const chunkSize = 100;
+
+    for(
+      let i=0;
+      i<orderIds.length;
+      i+=chunkSize
+    ){
+
+      const chunk =
+        orderIds.slice(
+          i,
+          i + chunkSize
+        );
+
+      const {data,error} =
+        await APP.sb
+          .from('shipping_labels')
+          .select(
+            'id,order_id,storage_path,file_name,created_at'
+          )
+          .eq(
+            'warehouse_id',
+            APP.warehouse.id
+          )
+          .in(
+            'order_id',
+            chunk
+          );
+
+      if(error){
+        throw error;
+      }
+
+      result.push(
+        ...(data || [])
+      );
+    }
+
+    return result;
+  }
+
+
+  async function previewOldShippingLabelsV113(){
+
+    showInfo(
+      '正在计算可安全清理的旧面单...'
+    );
+
+    const cutoff =
+      new Date(
+        Date.now() -
+        KEEP_DAYS *
+        24 *
+        60 *
+        60 *
+        1000
+      );
+
+    const orders =
+      await fetchAllCompletedOrdersForCleanup();
+
+    const eligibleOrders =
+      orders.filter(
+        order =>
+          isEligibleOrderV113(
+            order,
+            cutoff
+          )
+      );
+
+    const orderIds =
+      eligibleOrders
+        .map(x=>x.id)
+        .filter(Boolean);
+
+    const labels =
+      await fetchLabelsForOrdersV113(
+        orderIds
+      );
+
+    const validLabels =
+      labels.filter(
+        x =>
+          String(
+            x.storage_path || ''
+          ).trim()
+      );
+
+    return {
+      cutoff,
+      eligibleOrders,
+      labels:validLabels
+    };
+  }
+
+
+  window.cleanupOldShippingLabelsV113 =
+  async function(){
+
+    if(
+      typeof isSystemSuperAdminV109 ===
+      'function'
+      &&
+      !isSystemSuperAdminV109()
+    ){
+      return showError(
+        '只有管理员可以清理旧面单'
+      );
+    }
+
+    try{
+
+      const preview =
+        await previewOldShippingLabelsV113();
+
+      if(
+        !preview.labels.length
+      ){
+        return showOk(
+          `没有超过 ${KEEP_DAYS} 天、且已完成的面单需要清理`
+        );
+      }
+
+      const cutoffText =
+        preview.cutoff
+          .toLocaleString(
+            'zh-CN'
+          );
+
+      const ok =
+        confirm(
+          `🧹 清理旧面单 PDF\n\n` +
+          `保留最近：${KEEP_DAYS} 天\n\n` +
+          `将删除：${preview.labels.length} 个 PDF 文件\n` +
+          `对应已完成订单：${preview.eligibleOrders.length} 单\n\n` +
+          `截止时间：${cutoffText}\n\n` +
+          `✅ 保留订单记录\n` +
+          `✅ 保留 SKU / 数量\n` +
+          `✅ 保留 Tracking\n` +
+          `✅ 保留出货统计\n` +
+          `✅ 保留库存和流水\n\n` +
+          `⚠️ 被删除的旧面单以后不能重新打印。\n\n` +
+          `确定继续吗？`
+        );
+
+      if(!ok){
+        return;
+      }
+
+      const adminPin =
+        typeof verifyWarehouseAdminPassword ===
+        'function'
+          ? await verifyWarehouseAdminPassword(
+              '清理7天前已完成面单 PDF'
+            )
+          : true;
+
+      if(!adminPin){
+        return;
+      }
+
+      showInfo(
+        `正在清理 ${preview.labels.length} 个旧面单...`
+      );
+
+      let deleted = 0;
+      const chunkSize = 100;
+
+      for(
+        let i=0;
+        i<preview.labels.length;
+        i+=chunkSize
+      ){
+
+        const rows =
+          preview.labels.slice(
+            i,
+            i + chunkSize
+          );
+
+        const paths =
+          rows
+            .map(
+              x =>
+                String(
+                  x.storage_path || ''
+                ).trim()
+            )
+            .filter(Boolean);
+
+        if(!paths.length){
+          continue;
+        }
+
+        const {error:removeError} =
+          await APP.sb.storage
+            .from('shipping-labels')
+            .remove(paths);
+
+        if(removeError){
+          throw new Error(
+            '删除 Storage 文件失败：' +
+            removeError.message
+          );
+        }
+
+        const labelIds =
+          rows
+            .map(x=>x.id)
+            .filter(Boolean);
+
+        if(labelIds.length){
+
+          const {error:updateError} =
+            await APP.sb
+              .from('shipping_labels')
+              .update({
+                storage_path:null
+              })
+              .in(
+                'id',
+                labelIds
+              );
+
+          if(updateError){
+            console.warn(
+              'PDF 已删除，但清空 storage_path 失败：',
+              updateError
+            );
+          }
+        }
+
+        deleted += paths.length;
+
+        showInfo(
+          `正在清理旧面单：${deleted} / ${preview.labels.length}`
+        );
+      }
+
+      showOk(
+        `✅ 清理完成：删除 ${deleted} 个旧面单 PDF。\n订单、库存、出货统计和流水都保留。`
+      );
+
+    }catch(error){
+
+      console.error(
+        '清理旧面单失败',
+        error
+      );
+
+      showError(
+        '清理失败：' +
+        (
+          error.message ||
+          '未知错误'
+        )
+      );
+    }
+  };
+
+
+  function addCleanupButtonV113(){
+
+    const page =
+      document.getElementById(
+        'pageSettings'
+      );
+
+    if(!page){
+      return;
+    }
+
+    if(
+      document.getElementById(
+        'labelCleanupCardV113'
+      )
+    ){
+      return;
+    }
+
+    const card =
+      document.createElement(
+        'div'
+      );
+
+    card.id =
+      'labelCleanupCardV113';
+
+    card.className =
+      'card p-4 mb-4';
+
+    card.innerHTML = `
+
+      <h2 class="font-bold mb-2">
+        🧹 面单空间清理
+      </h2>
+
+      <div class="small mb-3">
+        只删除 7 天前、已经完成贴单/出货的 PDF 面单。
+        不删除订单、库存、SKU、Tracking、出货统计和流水。
+      </div>
+
+      <button
+        class="btn btn-yellow w-full"
+        onclick="cleanupOldShippingLabelsV113()"
+      >
+        🧹 清理7天前面单
+      </button>
+
+    `;
+
+    const logoutCard =
+      page.lastElementChild;
+
+    if(logoutCard){
+      page.insertBefore(
+        card,
+        logoutCard
+      );
+    }else{
+      page.appendChild(card);
+    }
+  }
+
+
+  setTimeout(
+    addCleanupButtonV113,
+    500
+  );
+
+})();
