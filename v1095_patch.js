@@ -2964,7 +2964,7 @@
         class="btn btn-yellow w-full"
         onclick="cleanupOldShippingLabelsV113()"
       >
-        🧹 清理7天前面单
+        🧹 清理${KEEP_DAYS}天前面单
       </button>
 
     `;
