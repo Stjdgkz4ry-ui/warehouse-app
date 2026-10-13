@@ -2133,123 +2133,72 @@
 
 
 /* =========================================================
-   V11.3.1 面单 Storage 安全清理
-   - 修复大量订单分页重复
-   - 订单 ID 去重
-   - 面单 ID 去重
-   - 只清理当前仓库
-   - 只清理 7 天前已完成订单 PDF
-   - 不删除订单 / SKU / Tracking / 出货统计 / 库存 / 流水
+   V11.4 已归档面单 Storage 安全清理
+   - 只处理当前仓库
+   - 只处理 is_archived = true 的订单
+   - 未归档订单绝对不碰
+   - 只删除云端 PDF 文件
+   - 保留订单 / SKU / 数量 / Tracking
+   - 保留出货统计 / 库存 / 流水
+   - 保留 shipping_labels 数据记录
 ========================================================= */
 
 (function(){
+  'use strict';
 
-  const KEEP_DAYS = 3;
-
-
-  /* =====================================================
-     读取当前仓库全部订单
-  ===================================================== */
-
-  async function fetchAllCompletedOrdersForCleanup(){
+  async function fetchArchivedOrdersV114(){
 
     if(!APP.warehouse?.id){
-      throw new Error(
-        '请先选择仓库'
-      );
+      throw new Error('请先选择仓库');
     }
 
     const all = [];
-
     const pageSize = 1000;
-
     let from = 0;
-
 
     while(true){
 
       const {data,error} =
         await APP.sb
-          .from(
-            'shipping_orders'
-          )
+          .from('shipping_orders')
           .select(
-            'id,status,is_archived,created_at,packed_at,shipped_at,archived_at'
+            'id,status,is_archived,created_at,packed_at,shipped_at,archived_at,source_file,order_no,tracking_no'
           )
-          .eq(
-            'warehouse_id',
-            APP.warehouse.id
-          )
-          .order(
-            'created_at',
-            {ascending:true}
-          )
-          /*
-           * 关键修复：
-           * created_at 相同时再按唯一 id 排序。
-           * 防止 1000 条分页边界重复/漏数据。
-           */
-          .order(
-            'id',
-            {ascending:true}
-          )
+          .eq('warehouse_id',APP.warehouse.id)
+          .eq('is_archived',true)
+          .order('created_at',{ascending:true})
+          .order('id',{ascending:true})
           .range(
             from,
             from + pageSize - 1
           );
 
-
       if(error){
         throw error;
       }
 
+      const rows = data || [];
+      all.push(...rows);
 
-      const rows =
-        data || [];
-
-
-      all.push(
-        ...rows
-      );
-
-
-      if(
-        rows.length <
-        pageSize
-      ){
+      if(rows.length < pageSize){
         break;
       }
 
-
-      from +=
-        pageSize;
+      from += pageSize;
     }
 
-
-    /*
-     * 再做一道保险。
-     * 同一个订单 ID 最终只保留一次。
-     */
-    const uniqueMap =
-      new Map();
-
+    const uniqueMap = new Map();
 
     all.forEach(order=>{
-
-      if(
-        !order?.id
-      ){
+      if(!order?.id){
         return;
       }
-
 
       uniqueMap.set(
         String(order.id),
         order
       );
-
     });
-
 
     return Array.from(
       uniqueMap.values()
@@ -2257,106 +2206,11 @@
   }
 
 
-  /* =====================================================
-     判断完成时间
-  ===================================================== */
+  async function fetchArchivedLabelsV114(orderIds){
 
-  function completedTimeV113(
-    order
-  ){
-
-    const value =
-      order.shipped_at ||
-      order.archived_at ||
-      order.packed_at ||
-      null;
-
-
-    if(!value){
-      return null;
-    }
-
-
-    const time =
-      new Date(
-        value
-      );
-
-
-    if(
-      Number.isNaN(
-        time.getTime()
-      )
-    ){
-      return null;
-    }
-
-
-    return time;
-  }
-
-
-  /* =====================================================
-     判断订单是否允许清理
-  ===================================================== */
-
-  function isEligibleOrderV113(
-    order,
-    cutoff
-  ){
-
-    const status =
-      String(
-        order.status ||
-        ''
-      )
-      .toLowerCase();
-
-
-    const completed =
-      status === 'packed' ||
-      status === 'shipped' ||
-      order.is_archived ===
-      true;
-
-
-    if(!completed){
-      return false;
-    }
-
-
-    const doneAt =
-      completedTimeV113(
-        order
-      );
-
-
-    if(!doneAt){
-      return false;
-    }
-
-
-    return (
-      doneAt <
-      cutoff
-    );
-  }
-
-
-  /* =====================================================
-     按订单读取面单
-  ===================================================== */
-
-  async function fetchLabelsForOrdersV113(
-    orderIds
-  ){
-
-    if(
-      !orderIds.length
-    ){
+    if(!orderIds.length){
       return [];
     }
-
 
     const uniqueOrderIds =
       Array.from(
@@ -2367,17 +2221,12 @@
         )
       );
 
-
     const result = [];
-
-    const chunkSize =
-      100;
-
+    const chunkSize = 100;
 
     for(
       let i=0;
-      i<
-      uniqueOrderIds.length;
+      i<uniqueOrderIds.length;
       i+=chunkSize
     ){
 
@@ -2387,309 +2236,173 @@
           i+chunkSize
         );
 
-
       const {data,error} =
         await APP.sb
-          .from(
-            'shipping_labels'
-          )
+          .from('shipping_labels')
           .select(
-            'id,order_id,storage_path,file_name,created_at'
+            'id,order_id,storage_path,file_name,tracking_no,created_at'
           )
-          .eq(
-            'warehouse_id',
-            APP.warehouse.id
-          )
-          .in(
-            'order_id',
-            chunk
-          );
-
+          .eq('warehouse_id',APP.warehouse.id)
+          .in('order_id',chunk);
 
       if(error){
         throw error;
       }
-
 
       result.push(
         ...(data || [])
       );
     }
 
-
-    /*
-     * 面单按 ID 再去重。
-     */
-    const uniqueLabels =
-      new Map();
-
+    const uniqueMap = new Map();
 
     result.forEach(label=>{
-
-      if(
-        !label?.id
-      ){
+      if(!label?.id){
         return;
       }
 
-
-      uniqueLabels.set(
+      uniqueMap.set(
         String(label.id),
         label
       );
-
     });
 
-
     return Array.from(
-      uniqueLabels.values()
+      uniqueMap.values()
     );
   }
 
 
-  /* =====================================================
-     计算待清理数据
-  ===================================================== */
-
-  async function previewOldShippingLabelsV113(){
+  async function previewArchivedLabelsV114(){
 
     showInfo(
-      '正在计算可安全清理的旧面单...'
+      '正在检查已归档订单的面单文件...'
     );
 
-
-    const cutoff =
-      new Date(
-        Date.now() -
-        KEEP_DAYS *
-        24 *
-        60 *
-        60 *
-        1000
-      );
-
-
-    const allOrders =
-      await fetchAllCompletedOrdersForCleanup();
-
-
-    const eligibleOrders =
-      allOrders.filter(
-        order =>
-          isEligibleOrderV113(
-            order,
-            cutoff
-          )
-      );
-
+    const archivedOrders =
+      await fetchArchivedOrdersV114();
 
     const orderIds =
-      Array.from(
-        new Set(
-          eligibleOrders
-            .map(
-              x=>x.id
-            )
-            .filter(Boolean)
-            .map(String)
-        )
-      );
-
+      archivedOrders
+        .map(x=>x.id)
+        .filter(Boolean);
 
     const labels =
-      await fetchLabelsForOrdersV113(
+      await fetchArchivedLabelsV114(
         orderIds
       );
 
-
-    /*
-     * 只有 storage_path 真正存在，
-     * 才算可删除 PDF。
-     */
     const validLabels =
-      labels.filter(
-        label =>
-          String(
-            label.storage_path ||
-            ''
-          )
-          .trim()
+      labels.filter(label=>
+        String(
+          label.storage_path ||
+          ''
+        )
+        .trim()
       );
 
+    const finalMap = new Map();
 
-    /*
-     * 最终再按 label.id 去重。
-     */
-    const finalLabelMap =
-      new Map();
-
-
-    validLabels.forEach(
-      label=>{
-
-        if(
-          !label?.id
-        ){
-          return;
-        }
-
-
-        finalLabelMap.set(
-          String(
-            label.id
-          ),
-          label
-        );
-
+    validLabels.forEach(label=>{
+      if(!label?.id){
+        return;
       }
-    );
 
-
-    const finalLabels =
-      Array.from(
-        finalLabelMap.values()
+      finalMap.set(
+        String(label.id),
+        label
       );
-
+    });
 
     return {
-
-      cutoff,
-
-      eligibleOrders,
-
-      orderIds,
-
-      labels:
-        finalLabels
-
+      archivedOrders,
+      labels:Array.from(
+        finalMap.values()
+      )
     };
   }
 
 
-  /* =====================================================
-     正式清理
-  ===================================================== */
-
-  window.cleanupOldShippingLabelsV113 =
+  window.cleanupArchivedShippingLabelsV114 =
     async function(){
 
-      /*
-       * 只允许系统管理员执行
-       */
       if(
         typeof isSystemSuperAdminV109 ===
         'function'
         &&
         !isSystemSuperAdminV109()
       ){
-
         return showError(
-          '只有管理员可以清理旧面单'
+          '只有管理员可以清理已归档面单'
         );
-
       }
-
 
       try{
 
         const preview =
-          await previewOldShippingLabelsV113();
+          await previewArchivedLabelsV114();
 
+        if(
+          !preview.archivedOrders.length
+        ){
+          return showOk(
+            '当前仓库没有已归档订单'
+          );
+        }
 
         if(
           !preview.labels.length
         ){
-
           return showOk(
-            `没有超过 ${KEEP_DAYS} 天、且已完成的面单需要清理`
+            `当前有 ${preview.archivedOrders.length} 个已归档订单，但对应云端面单 PDF 已经全部清理完成。`
           );
-
         }
-
-
-        const cutoffText =
-          preview.cutoff
-            .toLocaleString(
-              'zh-CN'
-            );
-
 
         const ok =
           confirm(
-
-            `🧹 清理旧面单 PDF\n\n` +
-
-            `当前仓库：${
-              APP.warehouse?.name ||
-              '当前仓库'
-            }\n\n` +
-
-            `保留最近：${KEEP_DAYS} 天\n\n` +
-
-            `将删除：${preview.labels.length} 个 PDF 文件\n` +
-
-            `对应已完成订单：${preview.eligibleOrders.length} 单\n\n` +
-
-            `截止时间：${cutoffText}\n\n` +
-
+            `🧹 清理已归档面单 PDF\n\n` +
+            `当前仓库：${APP.warehouse?.name || '当前仓库'}\n\n` +
+            `已归档订单：${preview.archivedOrders.length} 单\n` +
+            `本次将删除：${preview.labels.length} 个 PDF 文件\n\n` +
+            `✅ 未归档订单绝对不会删除\n` +
             `✅ 保留订单记录\n` +
-
             `✅ 保留 SKU / 数量\n` +
-
             `✅ 保留 Tracking\n` +
-
             `✅ 保留出货统计\n` +
-
-            `✅ 保留库存和流水\n\n` +
-
-            `⚠️ 被删除的旧面单 PDF 以后不能重新打印。\n\n` +
-
+            `✅ 保留库存和流水\n` +
+            `✅ 保留面单历史记录\n\n` +
+            `⚠️ 删除的是已归档订单的云端 PDF 文件。\n` +
+            `⚠️ 删除以后这些旧面单将不能再次补打。\n\n` +
             `确定继续吗？`
-
           );
-
 
         if(!ok){
           return;
         }
 
-
-        /*
-         * 管理员密码二次验证
-         */
         const adminPin =
           typeof verifyWarehouseAdminPassword ===
           'function'
             ? await verifyWarehouseAdminPassword(
-                '清理7天前已完成面单 PDF'
+                '清理已归档订单面单 PDF'
               )
             : true;
-
 
         if(!adminPin){
           return;
         }
 
-
         showInfo(
-          `正在清理 ${preview.labels.length} 个旧面单...`
+          `正在清理 ${preview.labels.length} 个已归档面单 PDF...`
         );
 
-
         let deleted = 0;
+        let dbPathClearFailed = 0;
+        const chunkSize = 50;
 
-        const chunkSize =
-          100;
-
-
-        /*
-         * 每100个一批删除，
-         * 避免一次请求过大。
-         */
         for(
           let i=0;
-          i<
-          preview.labels.length;
+          i<preview.labels.length;
           i+=chunkSize
         ){
 
@@ -2699,89 +2412,60 @@
               i+chunkSize
             );
 
-
-          /*
-           * Storage 路径也去重。
-           */
           const paths =
             Array.from(
               new Set(
                 rows
-                  .map(
-                    x =>
-                      String(
-                        x.storage_path ||
-                        ''
-                      )
-                      .trim()
+                  .map(x=>
+                    String(
+                      x.storage_path ||
+                      ''
+                    )
+                    .trim()
                   )
                   .filter(Boolean)
               )
             );
 
-
-          if(
-            !paths.length
-          ){
+          if(!paths.length){
             continue;
           }
 
-
-          /*
-           * 真正删除 Storage PDF
-           */
           const {error:removeError} =
             await APP.sb.storage
-              .from(
-                'shipping-labels'
-              )
-              .remove(
-                paths
-              );
-
+              .from('shipping-labels')
+              .remove(paths);
 
           if(removeError){
-
             throw new Error(
-              '删除 Storage 文件失败：' +
-              removeError.message
+              '删除 Storage PDF 失败：' +
+              (
+                removeError.message ||
+                '未知错误'
+              )
             );
-
           }
 
+          deleted += paths.length;
 
-          /*
-           * Storage 成功删除以后，
-           * 只清空 shipping_labels.storage_path。
-           *
-           * 不删除 shipping_labels 记录，
-           * 所以 Tracking / 文件名历史仍然保留。
-           */
           const labelIds =
             Array.from(
               new Set(
                 rows
-                  .map(
-                    x=>x.id
-                  )
+                  .map(x=>x.id)
                   .filter(Boolean)
                   .map(String)
               )
             );
 
-
-          if(
-            labelIds.length
-          ){
+          if(labelIds.length){
 
             const {error:updateError} =
               await APP.sb
-                .from(
-                  'shipping_labels'
-                )
+                .from('shipping_labels')
                 .update({
-  storage_path:''
-})
+                  storage_path:''
+                })
                 .eq(
                   'warehouse_id',
                   APP.warehouse.id
@@ -2791,219 +2475,173 @@
                   labelIds
                 );
 
-
             if(updateError){
 
+              dbPathClearFailed +=
+                labelIds.length;
+
               console.warn(
-                'PDF 已删除，但清空 storage_path 失败：',
+                'PDF 已删除，但 storage_path 清空失败：',
                 updateError
               );
-
             }
-
           }
 
-
-          deleted +=
-            paths.length;
-
-
           showInfo(
-            `正在清理旧面单：${deleted} / ${preview.labels.length}`
+            `正在清理已归档面单：${deleted} / ${preview.labels.length}`
           );
-
         }
 
-
-        /*
-         * 当前页面内存同步更新。
-         */
         const deletedIds =
           new Set(
             preview.labels
-              .map(
-                x=>String(x.id)
-              )
+              .map(x=>String(x.id))
               .filter(Boolean)
           );
-
 
         (
           APP.shippingLabels ||
           []
         )
         .forEach(label=>{
-
           if(
             deletedIds.has(
-              String(
-                label.id
-              )
+              String(label.id)
             )
           ){
-
-            label.storage_path =
-              null;
-
+            label.storage_path = '';
           }
-
         });
-
 
         (
           APP.shippingHistoryLabels ||
           []
         )
         .forEach(label=>{
-
           if(
             deletedIds.has(
-              String(
-                label.id
-              )
+              String(label.id)
             )
           ){
-
-            label.storage_path =
-              null;
-
+            label.storage_path = '';
           }
-
         });
 
+        let message =
+          `✅ 已归档面单清理完成\n\n` +
+          `已删除：${deleted} 个 PDF\n` +
+          `已归档订单：${preview.archivedOrders.length} 单\n\n` +
+          `✅ 订单保留\n` +
+          `✅ SKU / 数量保留\n` +
+          `✅ Tracking 保留\n` +
+          `✅ 出货统计保留\n` +
+          `✅ 库存和流水保留`;
 
-        showOk(
+        if(dbPathClearFailed>0){
+          message +=
+            `\n\n⚠️ 有 ${dbPathClearFailed} 条面单记录的 storage_path 没有成功清空。` +
+            `\nPDF 已经删除，仓库业务不受影响。`;
+        }
 
-          `✅ 清理完成\n\n` +
-
-          `已删除：${deleted} 个旧面单 PDF\n\n` +
-
-          `订单、SKU、Tracking、库存、出货统计和流水全部保留。`
-
-        );
-
+        showOk(message);
 
       }catch(error){
 
         console.error(
-          '清理旧面单失败',
+          '清理已归档面单失败',
           error
         );
 
-
         showError(
-          '清理失败：' +
-          (
-            error.message ||
-            '未知错误'
-          )
+          `❌ 面单清理失败：${error.message || '未知错误'}\n\n` +
+          `订单、库存和归档状态没有被这个清理功能修改。`
         );
-
       }
-
     };
 
 
-  /* =====================================================
-     设置页面增加清理按钮
-  ===================================================== */
-
-  function addCleanupButtonV113(){
+  function addArchivedCleanupButtonV114(){
 
     const page =
       document.getElementById(
         'pageSettings'
       );
 
-
     if(!page){
       return;
     }
 
-
-    /*
-     * 防止重复加入按钮。
-     */
     if(
       document.getElementById(
-        'labelCleanupCardV113'
+        'labelCleanupCardV114'
       )
     ){
-
       return;
-
     }
 
+    const oldCard =
+      document.getElementById(
+        'labelCleanupCardV113'
+      );
+
+    if(oldCard){
+      oldCard.remove();
+    }
 
     const card =
       document.createElement(
         'div'
       );
 
-
     card.id =
-      'labelCleanupCardV113';
-
+      'labelCleanupCardV114';
 
     card.className =
       'card p-4 mb-4';
 
-
     card.innerHTML = `
 
       <h2 class="font-bold mb-2">
-        🧹 面单空间清理
+        🧹 已归档面单清理
       </h2>
 
       <div class="small mb-3">
-        只删除当前仓库 7 天前、已经完成贴单/出货的 PDF 面单。
-        不删除订单、库存、SKU、Tracking、出货统计和流水。
+        只清理当前仓库已经归档订单的云端 PDF 面单。
+        未归档订单绝对不会处理。
+        订单、SKU、数量、Tracking、库存、出货统计和流水全部保留。
       </div>
 
       <button
         class="btn btn-yellow w-full"
-        onclick="cleanupOldShippingLabelsV113()"
+        onclick="cleanupArchivedShippingLabelsV114()"
       >
-        🧹 清理${KEEP_DAYS}天前面单
+        🧹 清理已归档面单
       </button>
 
     `;
 
-
     const logoutCard =
       page.lastElementChild;
 
-
     if(logoutCard){
-
       page.insertBefore(
         card,
         logoutCard
       );
-
     }else{
-
       page.appendChild(
         card
       );
-
     }
-
   }
 
 
-  /*
-   * 第一次加载网页加入按钮。
-   */
   setTimeout(
-    addCleanupButtonV113,
+    addArchivedCleanupButtonV114,
     500
   );
 
 
-  /*
-   * 切回网页时再检查一次。
-   */
   document.addEventListener(
     'visibilitychange',
     ()=>{
@@ -3012,16 +2650,12 @@
         document.visibilityState ===
         'visible'
       ){
-
         setTimeout(
-          addCleanupButtonV113,
+          addArchivedCleanupButtonV114,
           300
         );
-
       }
-
     }
   );
-
 
 })();
