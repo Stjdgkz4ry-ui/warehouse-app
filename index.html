@@ -15713,6 +15713,722 @@ async function(){
 
 };
 
+<script>
+/* =========================================================
+   V11 库存完整流水
+   inventory_history_v11 = 新版真实数量变化流水
+   stock_logs = 旧版历史入库/出库
+   warehouse_audit_logs = 新建/编辑/下架/删除等
+========================================================= */
+
+window.loadLogs = async function(options = {}) {
+  if (!APP.warehouse) {
+    APP.logs = [];
+    APP.logsLoadedOnce = true;
+    renderLogs();
+    return;
+  }
+
+  if (APP.logsLoading) return;
+
+  APP.logsLoading = true;
+
+  const refreshBtn =
+    document.querySelector(
+      '#pageLogs button[onclick="loadLogs()"]'
+    );
+
+  if (refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = '同步中…';
+  }
+
+  try {
+
+    const [
+      historyResult,
+      stockResult,
+      auditResult
+    ] = await Promise.all([
+
+      APP.sb
+        .from('inventory_history_v11')
+        .select('*')
+        .eq('warehouse_id', APP.warehouse.id)
+        .order('created_at', { ascending:false })
+        .limit(3000),
+
+      APP.sb
+        .from('stock_logs')
+        .select('*')
+        .eq('warehouse_id', APP.warehouse.id)
+        .order('created_at', { ascending:false })
+        .limit(3000),
+
+      APP.sb
+        .from('warehouse_audit_logs')
+        .select('*')
+        .eq('warehouse_id', APP.warehouse.id)
+        .order('created_at', { ascending:false })
+        .limit(3000)
+
+    ]);
+
+    if (historyResult.error) {
+      throw new Error(
+        'V11 库存流水读取失败：' +
+        historyResult.error.message
+      );
+    }
+
+    if (stockResult.error) {
+      throw stockResult.error;
+    }
+
+    if (auditResult.error) {
+      throw auditResult.error;
+    }
+
+
+    const historyRows =
+      (historyResult.data || []).map(x => ({
+        ...x,
+        _source_table:'inventory_history_v11',
+        _log_kind:'history_v11'
+      }));
+
+
+    const stockRows =
+      (stockResult.data || []).map(x => ({
+        ...x,
+        _source_table:'stock_logs',
+        _log_kind:'stock'
+      }));
+
+
+    const auditRows =
+      (auditResult.data || []).map(x => ({
+        ...x,
+        _source_table:'warehouse_audit_logs',
+        _log_kind:'audit'
+      }));
+
+
+    /*
+      防止新版流水和旧 stock_logs
+      同一次操作出现两条。
+
+      如果 inventory_id 相同，
+      时间差 10 秒以内，
+      数量也相同，
+      就优先保留 V11。
+    */
+    const filteredStock =
+      stockRows.filter(oldLog => {
+
+        const oldTime =
+          new Date(oldLog.created_at || 0).getTime();
+
+        const oldQty =
+          Math.abs(
+            safeNumber(
+              oldLog.qty ??
+              oldLog.quantity ??
+              oldLog.change_qty,
+              0
+            )
+          );
+
+        const duplicated =
+          historyRows.some(newLog => {
+
+            if (
+              oldLog.inventory_id &&
+              newLog.inventory_id &&
+              String(oldLog.inventory_id) !==
+              String(newLog.inventory_id)
+            ) {
+              return false;
+            }
+
+            const newTime =
+              new Date(
+                newLog.created_at || 0
+              ).getTime();
+
+            const newQty =
+              Math.abs(
+                safeNumber(
+                  newLog.change_qty,
+                  0
+                )
+              );
+
+            return (
+              Math.abs(newTime - oldTime) <= 10000 &&
+              oldQty === newQty
+            );
+
+          });
+
+        return !duplicated;
+
+      });
+
+
+    APP.logs = [
+      ...historyRows,
+      ...filteredStock,
+      ...auditRows
+    ].sort(
+      (a,b) =>
+        new Date(b.created_at || 0) -
+        new Date(a.created_at || 0)
+    );
+
+    APP.logsLoadedOnce = true;
+
+    renderLogs();
+
+  } catch (error) {
+
+    console.error(
+      '加载流水失败：',
+      error
+    );
+
+    if (options.silent !== true) {
+      showError(
+        '流水同步失败：' +
+        (error.message || '未知错误')
+      );
+    }
+
+    renderLogs();
+
+  } finally {
+
+    APP.logsLoading = false;
+
+    if (refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = '刷新';
+    }
+
+    if (
+      typeof enforceCurrentPageVisibility ===
+      'function'
+    ) {
+      enforceCurrentPageVisibility();
+    }
+
+  }
+};
+
+
+
+window.getLogType = function(log) {
+
+  if (
+    log._log_kind === 'history_v11'
+  ) {
+
+    const change =
+      safeNumber(
+        log.change_qty,
+        0
+      );
+
+    if (log.action === 'delete') {
+      return {
+        label:'删除',
+        cls:'badge-red'
+      };
+    }
+
+    if (change > 0) {
+      return {
+        label:'入库',
+        cls:'badge-green'
+      };
+    }
+
+    if (change < 0) {
+      return {
+        label:'出库',
+        cls:'badge-yellow'
+      };
+    }
+
+    return {
+      label:'调整',
+      cls:'badge-gray'
+    };
+  }
+
+
+  const raw =
+    String(
+      log.action ||
+      log.type ||
+      ''
+    ).toLowerCase();
+
+
+  if (
+    raw.includes('新建') ||
+    raw.includes('create')
+  ) {
+    return {
+      label:'新建',
+      cls:'badge-green'
+    };
+  }
+
+
+  if (
+    raw.includes('编辑') ||
+    raw.includes('update')
+  ) {
+    return {
+      label:'编辑',
+      cls:'badge-gray'
+    };
+  }
+
+
+  if (
+    raw.includes('下架') ||
+    raw.includes('archive')
+  ) {
+    return {
+      label:'下架',
+      cls:'badge-yellow'
+    };
+  }
+
+
+  if (
+    raw.includes('恢复') ||
+    raw.includes('上架') ||
+    raw.includes('restore')
+  ) {
+    return {
+      label:'恢复',
+      cls:'badge-green'
+    };
+  }
+
+
+  if (
+    raw.includes('删除') ||
+    raw.includes('delete')
+  ) {
+    return {
+      label:'删除',
+      cls:'badge-red'
+    };
+  }
+
+
+  if (
+    raw.includes('stock_in') ||
+    raw.includes('入库') ||
+    raw === 'in'
+  ) {
+    return {
+      label:'入库',
+      cls:'badge-green'
+    };
+  }
+
+
+  if (
+    raw.includes('stock_out') ||
+    raw.includes('出库') ||
+    raw === 'out'
+  ) {
+    return {
+      label:'出库',
+      cls:'badge-yellow'
+    };
+  }
+
+
+  return {
+    label:
+      log.action ||
+      log.type ||
+      '操作',
+    cls:'badge-gray'
+  };
+};
+
+
+
+window.renderLogs = function() {
+
+  const container =
+    $('logsList');
+
+  if (!container) return;
+
+
+  const search =
+    (
+      $('logSearch')?.value ||
+      ''
+    )
+    .trim()
+    .toLowerCase();
+
+
+  const source =
+    Array.isArray(APP.logs)
+      ? APP.logs
+      : [];
+
+
+  const filtered =
+    source.filter(log => {
+
+      if (!search) return true;
+
+      const item =
+        typeof findInventoryForLog ===
+        'function'
+          ? findInventoryForLog(log)
+          : null;
+
+      const text = [
+        log.sku,
+        log.name,
+        log.bin,
+        log.note,
+        log.action,
+        log.type,
+        log.user_email,
+        log.operator_email,
+        item?.name,
+        item?.sku,
+        item?.bin,
+        log.before_qty,
+        log.change_qty,
+        log.after_qty
+      ]
+      .filter(
+        x =>
+          x !== null &&
+          x !== undefined
+      )
+      .join(' ')
+      .toLowerCase();
+
+      return text.includes(search);
+
+    });
+
+
+  if (
+    APP.logsLoading &&
+    !filtered.length
+  ) {
+
+    container.innerHTML = `
+      <div class="card p-8 text-center">
+        <div class="text-4xl mb-3">⏳</div>
+        <div class="font-bold">
+          正在读取流水…
+        </div>
+      </div>
+    `;
+
+    return;
+  }
+
+
+  if (!filtered.length) {
+
+    container.innerHTML = `
+      <div class="card p-8 text-center">
+        <div class="text-4xl mb-3">📋</div>
+        <div class="font-bold">
+          暂无库存流水
+        </div>
+        <div class="small mt-2">
+          入库、出库或修改库存后会自动记录
+        </div>
+      </div>
+    `;
+
+    return;
+  }
+
+
+  const visible =
+    filtered.slice(0,500);
+
+
+  const moreText =
+    filtered.length > visible.length
+      ? `
+        <div class="card p-3 text-center small mb-3">
+          已显示最近 ${visible.length} 条，
+          共 ${filtered.length} 条。
+          可通过 SKU / 商品 / 库位搜索。
+        </div>
+      `
+      : '';
+
+
+  container.innerHTML =
+    moreText +
+
+    visible.map(log => {
+
+      const item =
+        typeof findInventoryForLog ===
+        'function'
+          ? findInventoryForLog(log)
+          : null;
+
+
+      const type =
+        getLogType(log);
+
+
+      const isV11 =
+        log._log_kind ===
+        'history_v11';
+
+
+      const name =
+        log.name ||
+        item?.name ||
+        log.sku ||
+        '未知商品';
+
+
+      const sku =
+        log.sku ||
+        item?.sku ||
+        '—';
+
+
+      const bin =
+        log.bin ||
+        item?.bin ||
+        '未设置';
+
+
+      const operator =
+        log.user_email ||
+        log.operator_email ||
+        log.email ||
+        '系统';
+
+
+      const note =
+        String(
+          log.note || ''
+        ).trim();
+
+
+      let qtyHtml = '';
+
+
+      if (isV11) {
+
+        const before =
+          safeNumber(
+            log.before_qty,
+            0
+          );
+
+        const change =
+          safeNumber(
+            log.change_qty,
+            0
+          );
+
+        const after =
+          safeNumber(
+            log.after_qty,
+            0
+          );
+
+        const changeText =
+          change > 0
+            ? `+${change}`
+            : String(change);
+
+
+        qtyHtml = `
+          <div
+            class="mt-3 rounded-xl p-3"
+            style="background:#f8fafc;border:1px solid #e5e7eb;"
+          >
+            <div
+              style="
+                display:grid;
+                grid-template-columns:1fr 1fr 1fr;
+                gap:6px;
+                text-align:center;
+              "
+            >
+              <div>
+                <div class="small text-gray-500">
+                  原库存
+                </div>
+                <div class="font-bold text-lg">
+                  ${before}
+                </div>
+              </div>
+
+              <div>
+                <div class="small text-gray-500">
+                  本次变化
+                </div>
+                <div
+                  class="font-bold text-lg"
+                  style="
+                    color:${
+                      change > 0
+                        ? '#16a34a'
+                        : change < 0
+                        ? '#d97706'
+                        : '#6b7280'
+                    };
+                  "
+                >
+                  ${escapeHtml(changeText)}
+                </div>
+              </div>
+
+              <div>
+                <div class="small text-gray-500">
+                  变化后
+                </div>
+                <div class="font-bold text-lg">
+                  ${after}
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+
+      } else {
+
+        const rawQty =
+          log.qty ??
+          log.quantity ??
+          log.change_qty;
+
+        if (
+          rawQty !== null &&
+          rawQty !== undefined &&
+          rawQty !== ''
+        ) {
+
+          qtyHtml = `
+            <div class="small mt-2">
+              数量：
+              <strong>
+                ${escapeHtml(
+                  String(rawQty)
+                )}
+              </strong>
+            </div>
+          `;
+
+        }
+
+      }
+
+
+      return `
+        <div class="log-row">
+
+          <div
+            class="flex items-center justify-between gap-3"
+          >
+            <span class="badge ${type.cls}">
+              ${escapeHtml(type.label)}
+            </span>
+
+            <div class="small text-gray-500">
+              ${
+                typeof formatDate ===
+                'function'
+                  ? formatDate(log.created_at)
+                  : new Date(
+                      log.created_at
+                    ).toLocaleString('zh-CN')
+              }
+            </div>
+          </div>
+
+
+          <div
+            class="font-bold mt-3 break-all"
+          >
+            ${escapeHtml(name)}
+          </div>
+
+
+          <div class="small mt-1 break-all">
+            SKU：
+            ${escapeHtml(sku)}
+          </div>
+
+
+          <div class="small mt-1 break-all">
+            库位：
+            ${escapeHtml(bin)}
+          </div>
+
+
+          ${qtyHtml}
+
+
+          ${
+            note
+              ? `
+                <div
+                  class="text-sm text-gray-600 mt-3"
+                >
+                  📝 备注：
+                  ${escapeHtml(note)}
+                </div>
+              `
+              : ''
+          }
+
+
+          <div class="small mt-3 break-all">
+            👤 操作人：
+            ${escapeHtml(operator)}
+          </div>
+
+
+          ${
+            isV11
+              ? `
+                <div
+                  class="text-xs text-gray-400 mt-1"
+                >
+                  V11 自动库存审计记录
+                </div>
+              `
+              : ''
+          }
+
+        </div>
+      `;
+
+    }).join('');
+
+};
 </script>
 </body>
 </html>
