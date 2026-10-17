@@ -5159,7 +5159,7 @@ async function runImport(type){
            */
           const {error:createError} =
             await APP.sb.rpc(
-              'create_inventory',
+           'create_inventory_bulk_safe',
               {
                 p_warehouse_id:
                   APP.warehouse.id,
