@@ -5124,8 +5124,8 @@ async function runImport(type){
            */
           if(diff !== 0){
             const {error:stockError} =
-              await APP.sb.rpc(
-                'adjust_inventory',
+  await APP.sb.rpc(
+    'adjust_inventory_bulk_safe',
                 {
                   p_inventory_id:
                     existing.id,
