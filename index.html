@@ -5084,8 +5084,8 @@ async function runImport(type){
            * 元数据覆盖：名称 / SKU / 库位 / 预警 / 备注。
            */
           const {error:infoError} =
-            await APP.sb.rpc(
-              'update_inventory_info',
+  await APP.sb.rpc(
+    'update_inventory_info_bulk_safe',
               {
                 p_inventory_id:
                   existing.id,
